@@ -1,0 +1,11 @@
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+Thumbs.db
+.DS_Store

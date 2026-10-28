@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Doner Bros — Doner Kebab Restaurant, Sargodha</title>
+  <meta name="description" content="Doner Bros serves fresh, hand-carved doner kebabs, wraps and plates in Shalimar City, Sargodha. See our menu, opening hours and location.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+  <!-- Icon sprite -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 7l9 6 9-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-scooter" viewBox="0 0 24 24"><circle cx="6" cy="17" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="17" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 17h6l-2-8h3M13 9l-1-3H9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 10h8M8 13h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l-1 13H6L5 8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+
+    <!-- Food illustrations -->
+    <symbol id="f-wrap" viewBox="0 0 120 120"><path d="M28 96L78 22c8-6 22 2 20 12L48 104c-8 6-24-2-20-8z" fill="#F5A623"/><path d="M78 22c8-6 22 2 20 12-6 8-26-2-20-12z" fill="#FFD27A"/><path d="M76 30c4 4 10 6 16 6M70 40c6 4 12 6 18 6M62 52c6 4 12 6 18 6" stroke="#7A3E10" stroke-width="4" stroke-linecap="round"/><circle cx="84" cy="28" r="4" fill="#3BA55C"/><circle cx="90" cy="34" r="3" fill="#E5484D"/></symbol>
+    <symbol id="f-plate" viewBox="0 0 120 120"><ellipse cx="60" cy="68" rx="50" ry="34" fill="#FFFFFF"/><ellipse cx="60" cy="66" rx="40" ry="26" fill="#F3F4F6"/><path d="M30 64c6-14 24-18 32-10 8-10 26-6 30 8-8 12-54 14-62 2z" fill="#B5651D"/><path d="M36 60h20M62 56h22M42 66h36" stroke="#7A3E10" stroke-width="3" stroke-linecap="round"/><circle cx="40" cy="76" r="5" fill="#3BA55C"/><circle cx="52" cy="80" r="4" fill="#E5484D"/><circle cx="76" cy="78" r="5" fill="#FFD27A"/><circle cx="86" cy="72" r="4" fill="#3BA55C"/></symbol>
+    <symbol id="f-box" viewBox="0 0 120 120"><path d="M22 50h76l-8 50H30z" fill="#F5A623"/><path d="M22 50l10-14h56l10 14z" fill="#FFD27A"/><path d="M34 46c6-10 46-10 52 0" fill="#B5651D"/><path d="M40 44l6-8M56 42l2-9M72 44l-4-9" stroke="#FFE7B0" stroke-width="5" stroke-linecap="round"/><path d="M40 66h40" stroke="#1A1A1A" stroke-width="4" stroke-linecap="round" opacity=".25"/></symbol>
+    <symbol id="f-fries" viewBox="0 0 120 120"><path d="M42 44l-2-26M52 42l-1-30M62 42l1-28M72 44l3-24M80 48l6-20" stroke="#FFD27A" stroke-width="8" stroke-linecap="round"/><path d="M32 46h56l-8 56H40z" fill="#E5484D"/><path d="M48 70c4 6 20 6 24 0" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" fill="none"/></symbol>
+    <symbol id="f-drink" viewBox="0 0 120 120"><path d="M38 34h44l-6 70H44z" fill="#FFFFFF"/><path d="M40 52h40l-4 52H44z" fill="#F5A623" opacity=".9"/><path d="M34 28h52v8H34z" fill="#24282B"/><path d="M66 28l8-18" stroke="#24282B" stroke-width="5" stroke-linecap="round"/><circle cx="52" cy="70" r="3" fill="#FFFFFF"/><circle cx="62" cy="82" r="2.5" fill="#FFFFFF"/></symbol>
+    <symbol id="f-falafel" viewBox="0 0 120 120"><ellipse cx="60" cy="74" rx="46" ry="26" fill="#FFFFFF"/><circle cx="44" cy="64" r="13" fill="#8A5A1F"/><circle cx="68" cy="60" r="13" fill="#9C6A2A"/><circle cx="58" cy="78" r="13" fill="#7A4C17"/><circle cx="82" cy="76" r="10" fill="#3BA55C"/><path d="M30 80c6 4 12 4 16 0" stroke="#3BA55C" stroke-width="4" stroke-linecap="round"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- Location popup -->
+  <dialog class="location-modal" id="location-modal" aria-labelledby="location-title">
+    <form class="location-form" id="location-form" method="dialog">
+      <button type="button" class="modal-close" id="location-close" aria-label="Close">
+        <svg class="icon"><use href="#i-close"/></svg>
+      </button>
+
+      <img class="logo-mark logo-mark-lg" src="images/logo.png" alt="" width="96" height="96">
+      <h2 id="location-title">Select your order type</h2>
+
+      <div class="order-toggle" role="radiogroup" aria-label="Order type">
+        <label>
+          <input type="radio" name="orderType" value="delivery" checked>
+          <span><svg class="icon"><use href="#i-scooter"/></svg>Delivery</span>
+        </label>
+        <label>
+          <input type="radio" name="orderType" value="pickup">
+          <span><svg class="icon"><use href="#i-bag"/></svg>Pick-Up</span>
+        </label>
+      </div>
+
+      <p class="modal-subtitle" id="location-prompt">Please select your location</p>
+
+      <div class="field">
+        <label for="city">City / Region</label>
+        <div class="select-wrap">
+          <select id="city" name="city">
+            <option value="Sargodha" selected>Sargodha</option>
+          </select>
+          <svg class="icon"><use href="#i-chevron"/></svg>
+        </div>
+      </div>
+
+      <div class="field" id="area-field">
+        <label for="area">Area / Sub Region</label>
+        <div class="select-wrap">
+          <select id="area" name="area">
+            <option value="" selected disabled>Select area / sub region</option>
+            <option>Shalimar City</option>
+            <option>Satellite Town</option>
+            <option>University Road</option>
+            <option>Cantt</option>
+            <option>Faisalabad Road</option>
+            <option>Lahore Road</option>
+            <option>Old City</option>
+          </select>
+          <svg class="icon"><use href="#i-chevron"/></svg>
+        </div>
+      </div>
+
+      <div class="pickup-branch" id="pickup-branch" hidden>
+        <svg class="icon"><use href="#i-pin"/></svg>
+        <div>
+          <strong>Doner Bros — Shalimar City</strong>
+          <span>Next to Papa John's, Sargodha</span>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-block" id="location-submit" disabled>Select</button>
+    </form>
+  </dialog>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="#top" class="logo" aria-label="Doner Bros home">
+        <img class="logo-mark" src="images/logo.png" alt="" width="52" height="52">
+        <span class="logo-text">Doner <span>Bros</span></span>
+      </a>
+
+      <button type="button" class="location-chip" id="location-chip" aria-haspopup="dialog">
+        <svg class="icon"><use href="#i-pin"/></svg>
+        <span id="location-label">Select location</span>
+        <svg class="icon icon-sm"><use href="#i-chevron"/></svg>
+      </button>
+
+      <nav class="site-nav" aria-label="Main navigation">
+        <ul>
+          <li><a href="#menu">Menu</a></li>
+          <li><a href="#about">About</a></li>
+          <li><a href="#visit">Visit</a></li>
+        </ul>
+      </nav>
+
+      <a href="tel:+923415846569" class="btn btn-small header-call">
+        <svg class="icon"><use href="#i-phone"/></svg>
+        <span>Call to order</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- Hero slider -->
+    <section class="hero" id="top" aria-roledescription="carousel" aria-label="Featured">
+      <div class="slides" id="slides">
+
+        <div class="slide is-active slide-1" role="group" aria-roledescription="slide" aria-label="1 of 3">
+          <div class="container slide-inner">
+            <div class="slide-copy">
+              <p class="eyebrow">Fresh off the grill, every day</p>
+              <h1>Proper doners,<br>made by bros.</h1>
+              <p>Hand-carved meat, warm bread baked in-house and our signature sauces.</p>
+              <div class="slide-actions">
+                <a href="#menu" class="btn">See the menu</a>
+                <a href="tel:+923415846569" class="btn btn-ghost">Call to order</a>
+              </div>
+            </div>
+            <svg class="slide-art" aria-hidden="true"><use href="#f-wrap"/></svg>
+          </div>
+        </div>
+
+        <div class="slide slide-2" role="group" aria-roledescription="slide" aria-label="2 of 3" aria-hidden="true">
+          <div class="container slide-inner">
+            <div class="slide-copy">
+              <p class="eyebrow">Bestseller</p>
+              <h2 class="slide-title">Mixed Doner Plate</h2>
+              <p>Lamb and chicken doner with rice or chips, fresh salad, bread and two sauces.</p>
+              <p class="slide-price">Rs 1,450</p>
+              <div class="slide-actions">
+                <a href="#cat-plates" class="btn" tabindex="-1">View plates</a>
+              </div>
+            </div>
+            <svg class="slide-art" aria-hidden="true"><use href="#f-plate"/></svg>
+          </div>
+        </div>
+
+        <div class="slide slide-3" role="group" aria-roledescription="slide" aria-label="3 of 3" aria-hidden="true">
+          <div class="container slide-inner">
+            <div class="slide-copy">
+              <p class="eyebrow">Now open</p>
+              <h2 class="slide-title">Shalimar City, Sargodha</h2>
+              <p>Find us next to Papa John's. Eat in, take away or order for delivery.</p>
+              <div class="slide-actions">
+                <a href="#visit" class="btn" tabindex="-1">Opening hours</a>
+                <a href="https://maps.google.com/?q=Shalimar+City+Sargodha" class="btn btn-ghost" target="_blank" rel="noopener noreferrer" tabindex="-1">Get directions</a>
+              </div>
+            </div>
+            <svg class="slide-art" aria-hidden="true"><use href="#f-box"/></svg>
+          </div>
+        </div>
+
+      </div>
+
+      <button type="button" class="slide-arrow slide-prev" id="slide-prev" aria-label="Previous slide">
+        <svg class="icon"><use href="#i-left"/></svg>
+      </button>
+      <button type="button" class="slide-arrow slide-next" id="slide-next" aria-label="Next slide">
+        <svg class="icon"><use href="#i-right"/></svg>
+      </button>
+
+      <div class="slide-dots" id="slide-dots">
+        <button type="button" class="is-active" aria-label="Go to slide 1" aria-current="true"></button>
+        <button type="button" aria-label="Go to slide 2"></button>
+        <button type="button" aria-label="Go to slide 3"></button>
+      </div>
+    </section>
+
+    <!-- Menu -->
+    <section class="menu" id="menu" aria-labelledby="menu-title">
+
+      <div class="category-bar">
+        <div class="container">
+          <nav class="category-tabs" id="category-tabs" aria-label="Menu categories">
+            <a href="#cat-doners" class="is-active">Doners &amp; Wraps</a>
+            <a href="#cat-plates">Plates</a>
+            <a href="#cat-boxes">Boxes</a>
+            <a href="#cat-sides">Sides</a>
+            <a href="#cat-drinks">Drinks</a>
+          </nav>
+        </div>
+      </div>
+
+      <div class="container menu-body">
+        <div class="menu-head">
+          <h2 id="menu-title">Our Menu</h2>
+          <p>All prices in PKR and include GST. Ask staff about allergens before ordering.</p>
+        </div>
+
+        <section class="category" id="cat-doners" aria-labelledby="h-doners">
+          <h3 class="category-title" id="h-doners">Doners &amp; Wraps</h3>
+          <div class="product-grid">
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-wrap"/></svg><span class="badge">Bestseller</span></div>
+              <div class="product-info">
+                <h4>Classic Doner Kebab</h4>
+                <p>Lamb and beef doner in warm bread with lettuce, tomato, onion, garlic and chilli sauce.</p>
+                <div class="product-foot"><span class="price">Rs 750</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-wrap"/></svg></div>
+              <div class="product-info">
+                <h4>Chicken Doner Wrap</h4>
+                <p>Marinated chicken doner in a toasted flatbread with salad and herb yoghurt sauce.</p>
+                <div class="product-foot"><span class="price">Rs 650</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-wrap"/></svg><span class="badge badge-hot">Spicy</span></div>
+              <div class="product-info">
+                <h4>Zinger Doner Wrap</h4>
+                <p>Chicken doner with crispy zinger strips, jalapeños, cheese and fiery chilli mayo.</p>
+                <div class="product-foot"><span class="price">Rs 800</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-falafel"/></svg><span class="badge badge-veg">Vegetarian</span></div>
+              <div class="product-info">
+                <h4>Falafel Wrap</h4>
+                <p>Crispy house-made falafel with hummus, pickles, salad and tahini in a toasted flatbread.</p>
+                <div class="product-foot"><span class="price">Rs 550</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="category" id="cat-plates" aria-labelledby="h-plates">
+          <h3 class="category-title" id="h-plates">Plates</h3>
+          <div class="product-grid">
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-plate"/></svg><span class="badge">Bestseller</span></div>
+              <div class="product-info">
+                <h4>Mixed Doner Plate</h4>
+                <p>Lamb and chicken doner with rice or chips, fresh salad, bread and two sauces.</p>
+                <div class="product-foot"><span class="price">Rs 1,450</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-plate"/></svg></div>
+              <div class="product-info">
+                <h4>Chicken Doner Plate</h4>
+                <p>Chicken doner over buttery rice with salad, garlic sauce and a warm flatbread.</p>
+                <div class="product-foot"><span class="price">Rs 1,150</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-plate"/></svg></div>
+              <div class="product-info">
+                <h4>Iskender Plate</h4>
+                <p>Sliced doner on toasted bread with tomato butter sauce and cool yoghurt.</p>
+                <div class="product-foot"><span class="price">Rs 1,350</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="category" id="cat-boxes" aria-labelledby="h-boxes">
+          <h3 class="category-title" id="h-boxes">Boxes</h3>
+          <div class="product-grid">
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-box"/></svg></div>
+              <div class="product-info">
+                <h4>Doner Box</h4>
+                <p>Your choice of doner meat over seasoned chips, topped with cheese and your favourite sauce.</p>
+                <div class="product-foot"><span class="price">Rs 850</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-box"/></svg><span class="badge badge-hot">Loaded</span></div>
+              <div class="product-info">
+                <h4>Loaded Bro Box</h4>
+                <p>Double doner, chips, cheese sauce, jalapeños and crispy onions. Made for sharing.</p>
+                <div class="product-foot"><span class="price">Rs 1,250</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="category" id="cat-sides" aria-labelledby="h-sides">
+          <h3 class="category-title" id="h-sides">Sides</h3>
+          <div class="product-grid">
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-fries"/></svg></div>
+              <div class="product-info">
+                <h4>Seasoned Chips</h4>
+                <p>Thick-cut chips tossed in our secret spice blend. Add cheese for Rs 100.</p>
+                <div class="product-foot"><span class="price">Rs 350</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-falafel"/></svg><span class="badge badge-veg">Vegetarian</span></div>
+              <div class="product-info">
+                <h4>Halloumi Fries</h4>
+                <p>Golden fried halloumi sticks with pomegranate, mint and sweet chilli dip.</p>
+                <div class="product-foot"><span class="price">Rs 700</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="category" id="cat-drinks" aria-labelledby="h-drinks">
+          <h3 class="category-title" id="h-drinks">Drinks</h3>
+          <div class="product-grid">
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-drink"/></svg></div>
+              <div class="product-info">
+                <h4>Ayran</h4>
+                <p>Chilled, lightly salted yoghurt drink. The classic doner partner.</p>
+                <div class="product-foot"><span class="price">Rs 150</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+            <article class="product">
+              <div class="product-img"><svg aria-hidden="true"><use href="#f-drink"/></svg></div>
+              <div class="product-info">
+                <h4>Soft Drinks</h4>
+                <p>A choice of chilled canned soft drinks or still and sparkling water.</p>
+                <div class="product-foot"><span class="price">Rs 150</span><a href="tel:+923415846569" class="btn btn-small">Order</a></div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section class="section about" id="about">
+      <div class="container about-inner">
+        <div class="about-text">
+          <p class="eyebrow">Our story</p>
+          <h2>Two brothers, one grill, zero shortcuts.</h2>
+          <p>
+            Doner Bros started with a simple idea: a doner should be something you crave,
+            not something you settle for. We marinate our meat overnight, stack it by hand
+            every morning and slow-roast it on the vertical grill until it's perfectly crisp.
+          </p>
+          <p>
+            Our bread is baked fresh throughout the day, our salads are chopped to order and
+            every sauce is made from our own family recipes.
+          </p>
+        </div>
+        <ul class="about-features">
+          <li>
+            <strong>Marinated overnight</strong>
+            <span>Spices and yoghurt for tender, full-flavoured meat.</span>
+          </li>
+          <li>
+            <strong>Fresh-baked bread</strong>
+            <span>Soft, warm and made in-house all day.</span>
+          </li>
+          <li>
+            <strong>House-made sauces</strong>
+            <span>Garlic, chilli and herb, all made from scratch.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Hours & Location -->
+    <section class="section visit" id="visit">
+      <div class="container visit-inner">
+        <div class="visit-card">
+          <p class="eyebrow"><svg class="icon"><use href="#i-clock"/></svg>Opening hours</p>
+          <h2>Come hungry</h2>
+          <table class="hours">
+            <tbody>
+              <tr><th scope="row">Monday – Thursday</th><td>11:00 – 23:00</td></tr>
+              <tr><th scope="row">Friday – Saturday</th><td>11:00 – 02:00</td></tr>
+              <tr><th scope="row">Sunday</th><td>12:00 – 22:00</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="visit-card">
+          <p class="eyebrow"><svg class="icon"><use href="#i-pin"/></svg>Find us</p>
+          <h2>Location</h2>
+          <address>
+            Doner Bros<br>
+            Shalimar City, next to Papa John's<br>
+            Sargodha, Pakistan
+          </address>
+          <p class="contact">
+            <a href="tel:+923415846569"><svg class="icon"><use href="#i-phone"/></svg>0341 5846569</a>
+            <a href="mailto:fasehbasra111@gmail.com"><svg class="icon"><use href="#i-mail"/></svg>fasehbasra111@gmail.com</a>
+          </p>
+          <a class="btn" href="https://maps.google.com/?q=Shalimar+City+Sargodha" target="_blank" rel="noopener noreferrer">Get directions</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        <a href="#top" class="logo" aria-label="Doner Bros home">
+          <img class="logo-mark" src="images/logo.png" alt="" width="52" height="52">
+          <span class="logo-text">Doner <span>Bros</span></span>
+        </a>
+        <p class="footer-tagline">Proper doners, made by bros.</p>
+      </div>
+      <nav aria-label="Footer navigation">
+        <ul class="footer-links">
+          <li><a href="#menu">Menu</a></li>
+          <li><a href="#about">About</a></li>
+          <li><a href="#visit">Hours &amp; Location</a></li>
+          <li><a href="tel:+923415846569">0341 5846569</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="container footer-bottom">
+      <p>&copy; 2026 Doner Bros. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <!-- CafeBot chat widget -->
+  <div class="chat-widget">
+    <section class="chat-window" id="chat-window" role="dialog" aria-labelledby="chat-title" hidden>
+      <header class="chat-header">
+        <img src="images/logo.png" alt="" width="40" height="40">
+        <div>
+          <h2 id="chat-title">CafeBot</h2>
+          <p>Usually replies instantly</p>
+        </div>
+        <button type="button" class="chat-close" id="chat-close" aria-label="Close chat">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </header>
+
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
+        <div class="chat-bubble chat-bubble-bot">Hi! Ask me anything about Doner Bros.</div>
+      </div>
+
+      <form class="chat-form" id="chat-form" autocomplete="off">
+        <label for="chat-input" class="visually-hidden">Type your message</label>
+        <input type="text" id="chat-input" placeholder="Type your message..." maxlength="500">
+        <button type="submit" class="chat-send" id="chat-send" aria-label="Send message" disabled>
+          <svg class="icon"><use href="#i-send"/></svg>
+        </button>
+      </form>
+    </section>
+
+    <button type="button" class="chat-toggle" id="chat-toggle" aria-label="Open chat" aria-expanded="false" aria-controls="chat-window">
+      <svg class="icon icon-chat"><use href="#i-chat"/></svg>
+      <svg class="icon icon-close"><use href="#i-close"/></svg>
+    </button>
+  </div>
+
+</body>
+</html>
