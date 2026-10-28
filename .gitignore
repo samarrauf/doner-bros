@@ -1,6 +1,9 @@
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
+# Dependencies
+node_modules/
+
 # Secrets
 .env
 .env.*
