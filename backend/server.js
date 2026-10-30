@@ -6,6 +6,9 @@ const path = require("path");
 const dotenv = require("dotenv");
 const express = require("express");
 const { GoogleGenAI } = require("@google/genai");
+const { createClient } = require("@supabase/supabase-js");
+const { todayInRestaurant, isPromotionLive, placeOrder } = require("./orders");
+const { SessionStore, recordOrderAttempt, readSessionId, sessionCookie } = require("./order-session");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -25,7 +28,7 @@ const MAX_HISTORY_ENTRY_LENGTH = 2000;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 20000;
 const RESTAURANT_PHONE_FALLBACK = "0301 8474036";
-const RESTAURANT_TIMEZONE = "Asia/Karachi";
+const SUPABASE_TIMEOUT_MS = 10000;
 
 // Per-visitor limit so the paid Gemini API can't be spammed.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -52,7 +55,8 @@ function formatMenu(menu) {
   return menu.categories
     .map((category) => {
       const items = category.items.map((item) => {
-        const lines = [`- ${item.name}: ${formatRupees(item.pricePaisa)}. ${item.description}`];
+        // The id is what submit_order needs; the server prices the order from it.
+        const lines = [`- ${item.name} [id: ${item.id}]: ${formatRupees(item.pricePaisa)}. ${item.description}`];
         if (item.tags && item.tags.length) lines.push(`  Tags: ${item.tags.join(", ")}`);
         if (item.options) item.options.forEach((option) => lines.push(`  Option ${formatOption(option)}`));
         if (item.notes) lines.push(`  Note: ${item.notes}`);
@@ -80,26 +84,6 @@ function formatContact(contact) {
   ].join("\n");
 }
 
-function todayInRestaurant(now) {
-  return {
-    date: new Intl.DateTimeFormat("en-CA", { timeZone: RESTAURANT_TIMEZONE }).format(now),
-    weekday: new Intl.DateTimeFormat("en-US", { timeZone: RESTAURANT_TIMEZONE, weekday: "long" }).format(now),
-  };
-}
-
-// Only real, switched-on offers inside their dates reach the model, so it can't apply
-// inactive, sample or expired ones. Order-based conditions are checked by the prompt's rules.
-function isPromotionLive(promotion, today) {
-  const conditions = promotion.conditions || {};
-  return (
-    promotion.active === true &&
-    promotion.sample !== true &&
-    (!conditions.startDate || today.date >= conditions.startDate) &&
-    (!conditions.endDate || today.date <= conditions.endDate) &&
-    (!conditions.daysOfWeek || conditions.daysOfWeek.includes(today.weekday))
-  );
-}
-
 function formatDiscount(discount) {
   if (discount.type === "percent") return `${discount.value}% off`;
   return `${formatRupees(discount.valuePaisa)} off${discount.perItem ? " each eligible item" : " the order"}`;
@@ -107,7 +91,7 @@ function formatDiscount(discount) {
 
 function formatPromotion(promotion, itemNames) {
   const conditions = promotion.conditions || {};
-  const lines = [`- ${promotion.name}: ${formatDiscount(promotion.discount)}. ${promotion.description}`];
+  const lines = [`- ${promotion.name} [id: ${promotion.id}]: ${formatDiscount(promotion.discount)}. ${promotion.description}`];
   lines.push(`  Code required: ${promotion.code || "none"}`);
   if (conditions.minOrderPaisa) lines.push(`  Minimum order: ${formatRupees(conditions.minOrderPaisa)}`);
   if (conditions.orderTypes) lines.push(`  Order types: ${conditions.orderTypes.join(", ")} only`);
@@ -120,6 +104,7 @@ function formatPromotion(promotion, itemNames) {
 
 function formatPromotions(promotions, menu, now) {
   const today = todayInRestaurant(now);
+  // Only live offers reach the model, so it can't apply inactive, sample or expired ones.
   const live = promotions.filter((promotion) => isPromotionLive(promotion, today));
   if (live.length === 0) return "No promotions are running right now.";
 
@@ -142,9 +127,30 @@ const MENU = readJson("data/menu.json");
 const PROMOTIONS = readJson("data/promotions.json").promotions;
 const SYSTEM_PROMPT = buildSystemPrompt();
 
-// Promotions are filled in per request so an offer stops the day it ends, without a restart.
-function currentSystemPrompt() {
-  return SYSTEM_PROMPT.replace("{{PROMOTIONS}}", formatPromotions(PROMOTIONS, MENU, new Date()));
+function formatOrderState(state) {
+  if (state.status === "open") return "No order has been submitted in this chat yet.";
+  if (state.status === "needs_changes") {
+    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.`;
+  }
+
+  const lines = state.items.map((line) => {
+    const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
+    return `- ${line.quantity} x ${line.name}${options}`;
+  });
+  const summary = [...lines, `Total ${formatRupees(state.totalPaisa)} for ${state.orderType}.`].join("\n");
+  if (state.status === "saved") {
+    return `Order ${state.orderNumber} was saved in this chat:\n${summary}\nDon't submit it again. For changes, the customer must call. Only submit a new order if they clearly ask for a separate one.`;
+  }
+  return `The last order could not be saved, and the customer was told to call:\n${summary}\nOnly submit it again if the customer asks to retry.`;
+}
+
+// Promotions and this chat's order are filled in per request, so an offer stops the day it
+// ends and the bot always sees the order's latest state.
+function currentSystemPrompt(orderState) {
+  return SYSTEM_PROMPT.replace("{{PROMOTIONS}}", formatPromotions(PROMOTIONS, MENU, new Date())).replace(
+    "{{ORDER}}",
+    formatOrderState(orderState)
+  );
 }
 
 /* ---------- Gemini client ---------- */
@@ -153,6 +159,29 @@ const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.en
 if (!gemini) {
   console.warn("GEMINI_API_KEY is not set; /api/chat will return 503 until it is added to .env.");
 }
+
+/* ---------- Supabase (orders) ---------- */
+
+// The service role key bypasses Row Level Security, so it stays here on the server: it is
+// never sent to the browser, and the orders table blocks every other key.
+const supabase =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(SUPABASE_TIMEOUT_MS) }) },
+      })
+    : null;
+if (!supabase) {
+  console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set; chat orders can't be saved until both are in .env.");
+}
+
+async function insertOrder(row) {
+  const { data, error } = await supabase.from("orders").insert(row).select("order_number").single();
+  if (error) throw error;
+  return data.order_number;
+}
+
+const saveOrder = supabase ? insertOrder : null;
 
 // conversationHistory uses { role: "user" | "assistant", content } entries; Gemini calls the
 // assistant role "model".
@@ -173,30 +202,106 @@ function toGeminiContents(history, message) {
 
 const OVERLOAD_RETRY_DELAY_MS = 1500;
 
-function generateReply(contents) {
+// The model fills these in from the conversation; orders.js re-checks every field.
+const SUBMIT_ORDER_TOOL = {
+  name: "submit_order",
+  description:
+    "Save the customer's order. Call only after reading the full order back and getting a clear yes.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      customerConfirmed: { type: "boolean", description: "True only if the customer clearly said yes to the read-back." },
+      orderType: { type: "string", enum: ["pickup", "delivery"] },
+      customerName: { type: "string" },
+      customerPhone: { type: "string" },
+      deliveryAddress: { type: "string", description: "Required for delivery; leave out for pickup." },
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            itemId: { type: "string", description: "The [id: ...] shown for the item in the menu." },
+            quantity: { type: "integer" },
+            options: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { name: { type: "string" }, choice: { type: "string" } },
+                required: ["name", "choice"],
+              },
+            },
+          },
+          required: ["itemId", "quantity"],
+        },
+      },
+      promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>, if one applies." },
+      promotionCode: { type: "string", description: "The code the customer gave, if the promotion needs one." },
+    },
+    required: ["customerConfirmed", "orderType", "customerName", "customerPhone", "items"],
+  },
+};
+
+function generateReply(contents, { allowOrder, orderState }) {
   return gemini.models.generateContent({
     model: GEMINI_MODEL,
     contents,
     config: {
-      systemInstruction: currentSystemPrompt(),
+      systemInstruction: currentSystemPrompt(orderState),
       temperature: 0.4,
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+      ...(allowOrder ? { tools: [{ functionDeclarations: [SUBMIT_ORDER_TOOL] }] } : {}),
     },
   });
 }
 
-async function askGemini(history, message) {
-  const contents = toGeminiContents(history, message);
-  let response;
+async function generateWithRetry(contents, options) {
   try {
-    response = await generateReply(contents);
+    return await generateReply(contents, options);
   } catch (error) {
     // 503 = Gemini briefly overloaded; one retry usually gets through. Other errors aren't retried.
     if (error.status !== 503) throw error;
     await new Promise((resolve) => setTimeout(resolve, OVERLOAD_RETRY_DELAY_MS));
-    response = await generateReply(contents);
+    return generateReply(contents, options);
   }
+}
+
+// Saved and failed orders get a fixed reply from the server, so the customer is told exactly
+// what happened. Only a problem the customer can fix goes back to the model to explain.
+async function handleOrderCall(call, contents, response, orderState) {
+  const result = await placeOrder({
+    args: call.args,
+    menu: MENU,
+    promotions: PROMOTIONS,
+    today: todayInRestaurant(new Date()),
+    saveOrder,
+    phone: RESTAURANT_PHONE_FALLBACK,
+  });
+  recordOrderAttempt(orderState, result);
+
+  if (result.status === "saved") {
+    console.log(`Order ${result.orderNumber} saved.`);
+    return result.reply;
+  }
+  if (result.status === "failed") {
+    console.error(`Order not saved (${result.reason}).`);
+    return result.reply;
+  }
+
+  contents.push(response.candidates[0].content, {
+    role: "user",
+    parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error } } }],
+  });
+  const followUp = await generateWithRetry(contents, { allowOrder: false, orderState });
+  return (followUp.text || "").trim();
+}
+
+async function askGemini(history, message, orderState) {
+  const contents = toGeminiContents(history, message);
+  const response = await generateWithRetry(contents, { allowOrder: true, orderState });
+
+  const orderCall = (response.functionCalls || []).find((call) => call.name === SUBMIT_ORDER_TOOL.name);
+  if (orderCall) return handleOrderCall(orderCall, contents, response, orderState);
 
   return (response.text || "").trim();
 }
@@ -248,6 +353,18 @@ function isRateLimited(clientId) {
   return recent.length > RATE_LIMIT_MAX_REQUESTS;
 }
 
+const orderSessions = new SessionStore();
+
+// An unknown or expired cookie gets a fresh session with a new id, never the one sent.
+function getOrderState(req, res) {
+  const existing = orderSessions.get(readSessionId(req.headers.cookie));
+  if (existing) return existing;
+
+  const { id, state } = orderSessions.create();
+  res.setHeader("Set-Cookie", sessionCookie(id, req.secure));
+  return state;
+}
+
 /* ---------- App ---------- */
 
 const app = express();
@@ -270,9 +387,10 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const { message, conversationHistory = [] } = req.body;
+  const orderState = getOrderState(req, res);
 
   try {
-    const reply = await askGemini(conversationHistory, message.trim());
+    const reply = await askGemini(conversationHistory, message.trim(), orderState);
     if (!reply) {
       return res.json({
         reply: `Sorry, I couldn't answer that. Please try rephrasing, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
