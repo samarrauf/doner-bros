@@ -25,8 +25,10 @@ const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
 const { addStaffRoutes } = require("./staff");
+const { createSupabaseSessionStore } = require("./supabase-sessions");
+const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = require("./rate-limit");
 const {
-  SessionStore,
+  createMemorySessionStore,
   recordOrderAttempt,
   addToCart,
   replaceCartLine,
@@ -49,7 +51,8 @@ const { suggestItems } = require("./recommendations");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
-if (envResult.error) {
+// On Vercel the settings come from the project's Environment Variables instead.
+if (envResult.error && !process.env.VERCEL) {
   console.warn("No .env file found; using defaults. Copy .env.example to .env to configure.");
 }
 
@@ -1109,42 +1112,63 @@ function validateChatRequest(body) {
   return null;
 }
 
-const requestLog = new Map();
+// With Supabase set up, chats and rate limits are kept there, so they hold across every copy of
+// the server on Vercel. Without it (local use), they're kept in memory.
+const sessionStore = supabase ? createSupabaseSessionStore(supabase) : createMemorySessionStore();
+const rateLimiter = supabase ? createSupabaseRateLimiter(supabase) : createMemoryRateLimiter();
+const CHAT_UNAVAILABLE = `AI Order Taker can't load your chat right now. Please try again in a minute, or call us on ${RESTAURANT_PHONE_FALLBACK}.`;
 
-function isRateLimited(clientId) {
-  const now = Date.now();
-  const recent = (requestLog.get(clientId) || []).filter((time) => now - time < RATE_LIMIT_WINDOW_MS);
-  recent.push(now);
-  requestLog.set(clientId, recent);
-  return recent.length > RATE_LIMIT_MAX_REQUESTS;
+async function isRateLimited(ip) {
+  const hits = await rateLimiter.hit(rateLimitKey("chat", ip), RATE_LIMIT_WINDOW_MS, true);
+  return hits > RATE_LIMIT_MAX_REQUESTS;
 }
 
-const orderSessions = new SessionStore();
-
 // An unknown or expired cookie gets a fresh session with a new id, never the one sent.
-function getOrderState(req, res) {
-  const existing = orderSessions.get(readSessionId(req.headers.cookie));
-  if (existing) return existing;
+async function loadOrderSession(req, res) {
+  const id = readSessionId(req.headers.cookie);
+  const existing = await sessionStore.load(id);
+  if (existing) return { id, state: existing };
 
-  const { id, state } = orderSessions.create();
-  res.setHeader("Set-Cookie", sessionCookie(id, req.secure));
-  return state;
+  const created = await sessionStore.create();
+  res.setHeader("Set-Cookie", sessionCookie(created.id, req.secure));
+  return created;
+}
+
+// Resolves to false (and logs why) if the chat's state couldn't be saved.
+async function saveOrderSession(session) {
+  try {
+    await sessionStore.save(session.id, session.state);
+    return true;
+  } catch (error) {
+    console.error("Chat session save failed:", error.code || error.message);
+    return false;
+  }
 }
 
 /* ---------- App ---------- */
 
 const app = express();
 
+// On Vercel, requests arrive through its proxy, which sets X-Forwarded-For to the visitor's IP
+// (overwriting any the visitor sent) and X-Forwarded-Proto. Trusting that one hop gives each
+// visitor their own rate limit and lets the session cookie be marked Secure.
+if (process.env.VERCEL) app.set("trust proxy", 1);
+
 app.use(express.static(FRONTEND_DIR));
 app.use(express.json({ limit: "100kb" }));
 
 // Staff dashboard at /staff, behind STAFF_PASSWORD. Uses the same server-only Supabase client.
 if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
-addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin") });
+addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
 
 app.post("/api/chat", async (req, res) => {
-  if (isRateLimited(req.ip)) {
-    return res.status(429).json({ error: "Too many messages. Please wait a minute and try again." });
+  try {
+    if (await isRateLimited(req.ip)) {
+      return res.status(429).json({ error: "Too many messages. Please wait a minute and try again." });
+    }
+  } catch (error) {
+    console.error("Chat rate limit check failed:", error.code || error.message);
+    return res.status(503).json({ error: CHAT_UNAVAILABLE });
   }
 
   const validationError = validateChatRequest(req.body);
@@ -1157,7 +1181,15 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const { message, conversationHistory = [] } = req.body;
-  const orderState = getOrderState(req, res);
+  let session;
+  try {
+    session = await loadOrderSession(req, res);
+  } catch (error) {
+    console.error("Chat session load failed:", error.code || error.message);
+    return res.status(503).json({ error: CHAT_UNAVAILABLE });
+  }
+  const orderState = session.state;
+  const ordersSavedBefore = orderState.savedOrderCount || 0;
 
   try {
     const reply = await askGemini(conversationHistory, message.trim(), orderState);
@@ -1165,6 +1197,12 @@ app.post("/api/chat", async (req, res) => {
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
     recordShownSummary(orderState, orderState.lastReply);
+    // If the chat can't be saved, the customer is asked to resend rather than lose a change
+    // silently, except when an order was just placed: its number must still reach them.
+    const sessionSaved = await saveOrderSession(session);
+    if (!sessionSaved && (orderState.savedOrderCount || 0) === ordersSavedBefore) {
+      return res.status(503).json({ error: CHAT_UNAVAILABLE });
+    }
     if (!reply) {
       return res.json({
         reply: `Sorry, I couldn't answer that. Please try rephrasing, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
@@ -1174,6 +1212,8 @@ app.post("/api/chat", async (req, res) => {
   } catch (error) {
     // Log only the status and message: never the request, which could hold customer details.
     console.error("Gemini request failed:", error.status || error.name, String(error.message).slice(0, 200));
+    // Tools may have changed the cart before the failure; keep those changes.
+    await saveOrderSession(session);
 
     // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
     if (error.status === 429) {
@@ -1205,15 +1245,20 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: "Something went wrong. Please try again." });
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${GEMINI_MODEL})`);
-});
+// Vercel runs the exported app itself (see /server.js at the project root); locally it listens on PORT.
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
+    console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${GEMINI_MODEL})`);
+  });
 
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use. Set a different PORT in .env.`);
-  } else {
-    console.error("Server failed to start:", error.message);
-  }
-  process.exit(1);
-});
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} is already in use. Set a different PORT in .env.`);
+    } else {
+      console.error("Server failed to start:", error.message);
+    }
+    process.exit(1);
+  });
+}
+
+module.exports = app;

@@ -4,6 +4,7 @@
 
 const crypto = require("crypto");
 const path = require("path");
+const { rateLimitKey, createMemoryRateLimiter } = require("./rate-limit");
 
 const STATUS_FLOW = ["NEW", "PREPARING", "READY", "COMPLETED"];
 const ORDER_ID_PATTERN = /^DB-\d{8}-[A-HJ-NP-Z2-9]{6}$/;
@@ -31,25 +32,33 @@ function isStaffPassword(authorizationHeader, password) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function createLoginLimiter({ windowMs = LOGIN_WINDOW_MS, maxFailures = MAX_FAILED_LOGINS } = {}) {
-  const failures = new Map();
-  const recent = (ip, now) => (failures.get(ip) || []).filter((time) => now - time < windowMs);
+// rateLimiter: from rate-limit.js, so failures are counted across every copy of the server.
+function createLoginLimiter(rateLimiter, { windowMs = LOGIN_WINDOW_MS, maxFailures = MAX_FAILED_LOGINS } = {}) {
+  const key = (ip) => rateLimitKey("staff-login", ip);
   return {
-    isBlocked: (ip, now = Date.now()) => recent(ip, now).length >= maxFailures,
-    recordFailure: (ip, now = Date.now()) => failures.set(ip, [...recent(ip, now), now]),
+    isBlocked: async (ip, now) => (await rateLimiter.hit(key(ip), windowMs, false, now)) >= maxFailures,
+    recordFailure: (ip, now) => rateLimiter.hit(key(ip), windowMs, true, now),
   };
 }
 
 // app: the Express app. client: Supabase client using the service role key, or null if not set up.
-function addStaffRoutes(app, { client, password, adminDir }) {
-  const limiter = createLoginLimiter();
+// rateLimiter: from rate-limit.js; in memory if not given.
+function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createMemoryRateLimiter() }) {
+  const limiter = createLoginLimiter(rateLimiter);
 
-  function requireStaff(req, res, next) {
+  async function requireStaff(req, res, next) {
     res.setHeader("Cache-Control", "no-store"); // customer details must not be cached
     if (!password) return res.status(503).json({ error: "Staff dashboard isn't set up: add STAFF_PASSWORD to .env." });
-    if (limiter.isBlocked(req.ip)) return res.status(429).json({ error: "Too many wrong passwords. Try again in 15 minutes." });
-    if (isStaffPassword(req.headers.authorization, password)) return next();
-    if (req.headers.authorization) limiter.recordFailure(req.ip);
+    let allowed;
+    try {
+      if (await limiter.isBlocked(req.ip)) return res.status(429).json({ error: "Too many wrong passwords. Try again in 15 minutes." });
+      allowed = isStaffPassword(req.headers.authorization, password);
+      if (!allowed && req.headers.authorization) await limiter.recordFailure(req.ip);
+    } catch (error) {
+      console.error("Staff login limit check failed:", error.code || error.message);
+      return res.status(503).json({ error: "Couldn't check the password right now. Try again in a minute." });
+    }
+    if (allowed) return next();
     res.setHeader("WWW-Authenticate", 'Basic realm="Doner Bros staff", charset="UTF-8"');
     return res.status(401).json({ error: "Staff password required." });
   }

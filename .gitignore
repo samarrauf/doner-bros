@@ -4,6 +4,10 @@
 # Dependencies
 node_modules/
 
+# Vercel: public/ is copied from frontend/ at build time (vercel.json); .vercel/ is the CLI's link
+public/
+.vercel/
+
 # Secrets
 .env
 .env.*

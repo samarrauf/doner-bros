@@ -1,0 +1,14 @@
+{
+  "name": "doner-bros",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Doner Bros on Vercel: installs the backend's dependencies for /server.js. Keep them in step with backend/package.json.",
+  "main": "server.js",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/genai": "^2.32.0",
+    "@supabase/supabase-js": "^2.118.0",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0"
+  }
+}
