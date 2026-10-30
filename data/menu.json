@@ -8,34 +8,46 @@
         {
           "id": "classic-doner-kebab",
           "name": "Classic Doner Kebab",
+          "category": "Doners & Wraps",
           "description": "Lamb and beef doner in warm bread with lettuce, tomato, onion, garlic and chilli sauce.",
           "pricePaisa": 75000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": ["Bestseller"],
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "chicken-doner-wrap",
           "name": "Chicken Doner Wrap",
+          "category": "Doners & Wraps",
           "description": "Marinated chicken doner in a toasted flatbread with salad and herb yoghurt sauce.",
           "pricePaisa": 65000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": [],
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "zinger-doner-wrap",
           "name": "Zinger Doner Wrap",
+          "category": "Doners & Wraps",
           "description": "Chicken doner with crispy zinger strips, jalapeños, cheese and fiery chilli mayo.",
           "pricePaisa": 80000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": ["Spicy"],
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "falafel-wrap",
           "name": "Falafel Wrap",
+          "category": "Doners & Wraps",
           "description": "Crispy house-made falafel with hummus, pickles, salad and tahini in a toasted flatbread.",
           "pricePaisa": 55000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": ["Vegetarian"],
-          "available": true
+          "availability": "unknown"
         }
       ]
     },
@@ -45,30 +57,39 @@
         {
           "id": "mixed-doner-plate",
           "name": "Mixed Doner Plate",
+          "category": "Plates",
           "description": "Lamb and chicken doner with rice or chips, fresh salad, bread and two sauces.",
           "pricePaisa": 145000,
-          "tags": ["Bestseller"],
+          "size": "unknown",
           "options": [
             { "name": "Base", "choices": ["Rice", "Chips"], "required": true }
           ],
+          "allergens": "unknown",
+          "tags": ["Bestseller"],
           "notes": "Comes with two sauces; the sauce list isn't on the menu, so ask the customer to confirm sauces with staff.",
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "chicken-doner-plate",
           "name": "Chicken Doner Plate",
+          "category": "Plates",
           "description": "Chicken doner over buttery rice with salad, garlic sauce and a warm flatbread.",
           "pricePaisa": 115000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": [],
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "iskender-plate",
           "name": "Iskender Plate",
+          "category": "Plates",
           "description": "Sliced doner on toasted bread with tomato butter sauce and cool yoghurt.",
           "pricePaisa": 135000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": [],
-          "available": true
+          "availability": "unknown"
         }
       ]
     },
@@ -78,22 +99,28 @@
         {
           "id": "doner-box",
           "name": "Doner Box",
+          "category": "Boxes",
           "description": "Your choice of doner meat over seasoned chips, topped with cheese and your favourite sauce.",
           "pricePaisa": 85000,
-          "tags": [],
+          "size": "unknown",
           "options": [
             { "name": "Meat", "choices": ["Lamb and beef doner", "Chicken doner"], "required": true }
           ],
+          "allergens": "unknown",
+          "tags": [],
           "notes": "Includes a sauce; the sauce list isn't on the menu, so ask the customer to confirm their sauce with staff.",
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "loaded-bro-box",
           "name": "Loaded Bro Box",
+          "category": "Boxes",
           "description": "Double doner, chips, cheese sauce, jalapeños and crispy onions. Made for sharing.",
           "pricePaisa": 125000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": ["Loaded"],
-          "available": true
+          "availability": "unknown"
         }
       ]
     },
@@ -103,21 +130,27 @@
         {
           "id": "seasoned-chips",
           "name": "Seasoned Chips",
+          "category": "Sides",
           "description": "Thick-cut chips tossed in our secret spice blend.",
           "pricePaisa": 35000,
-          "tags": [],
+          "size": "unknown",
           "options": [
             { "name": "Extras", "choices": [{ "name": "Add cheese", "pricePaisa": 10000 }], "required": false }
           ],
-          "available": true
+          "allergens": "unknown",
+          "tags": [],
+          "availability": "unknown"
         },
         {
           "id": "halloumi-fries",
           "name": "Halloumi Fries",
+          "category": "Sides",
           "description": "Golden fried halloumi sticks with pomegranate, mint and sweet chilli dip.",
           "pricePaisa": 70000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": ["Vegetarian"],
-          "available": true
+          "availability": "unknown"
         }
       ]
     },
@@ -127,24 +160,31 @@
         {
           "id": "ayran",
           "name": "Ayran",
+          "category": "Drinks",
           "description": "Chilled, lightly salted yoghurt drink. The classic doner partner.",
           "pricePaisa": 15000,
+          "size": "unknown",
+          "allergens": "unknown",
           "tags": [],
-          "available": true
+          "availability": "unknown"
         },
         {
           "id": "soft-drinks",
           "name": "Soft Drinks",
+          "category": "Drinks",
           "description": "A choice of chilled canned soft drinks or still and sparkling water.",
           "pricePaisa": 15000,
-          "tags": [],
+          "size": "unknown",
           "options": [
             { "name": "Type", "choices": ["Canned soft drink", "Still water", "Sparkling water"], "required": true }
           ],
+          "allergens": "unknown",
+          "tags": [],
           "notes": "Specific soft drink brands and flavours aren't listed; ask the customer to confirm with staff.",
-          "available": true
+          "availability": "unknown"
         }
       ]
     }
-  ]
+  ],
+  "unknownValue": "unknown = not stated on the website; confirm with staff"
 }

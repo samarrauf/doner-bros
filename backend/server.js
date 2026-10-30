@@ -55,7 +55,10 @@ function formatMenu(menu) {
         if (item.tags && item.tags.length) lines.push(`  Tags: ${item.tags.join(", ")}`);
         if (item.options) item.options.forEach((option) => lines.push(`  Option ${formatOption(option)}`));
         if (item.notes) lines.push(`  Note: ${item.notes}`);
-        if (!item.available) lines.push("  Currently UNAVAILABLE.");
+        // "unknown" means the website doesn't say; the prompt's rules send those questions to staff.
+        lines.push(`  Allergens: ${item.allergens}`);
+        if (item.availability === "unavailable") lines.push("  Currently UNAVAILABLE.");
+        else if (item.availability === "unknown") lines.push("  Availability: unknown, confirm with staff.");
         return lines.join("\n");
       });
       return `${category.name}:\n${items.join("\n")}`;
