@@ -55,7 +55,10 @@ function recordOrderAttempt(state, result) {
 // line comes from orders.priceCartItem, so its price is the server's. Adding after an order
 // was saved or failed starts a new cart rather than editing that order.
 function addToCart(state, line) {
-  if (state.status === "saved" || state.status === "not_saved") Object.assign(state, createOrderState());
+  // suggestionsOffered (set by recommendations.js) is kept so a declined suggestion stays declined.
+  if (state.status === "saved" || state.status === "not_saved") {
+    Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [] });
+  }
   if (state.items.length >= MAX_CART_LINES) return { error: `the cart is limited to ${MAX_CART_LINES} lines.` };
 
   state.items.push({ ...line, options: line.options.map((o) => ({ ...o })) });
@@ -117,6 +120,27 @@ function removeFromCart(state, index, quantity) {
   state.totalPaisa = state.subtotalPaisa;
   state.confirmed = false;
   return { removed: { ...line, quantity: removing, lineTotalPaisa: line.unitPricePaisa * removing } };
+}
+
+// check comes from orders.checkCartPromotion. The customer's code is kept so the discount can
+// be re-checked whenever the cart changes.
+function applyDiscount(state, check, { promotionCode, orderType }) {
+  state.discount = {
+    promotionId: check.promotion.id,
+    promotionName: check.promotion.name,
+    amountPaisa: check.discountPaisa,
+    code: check.promotion.code ? promotionCode : null,
+  };
+  if (orderType) state.orderType = orderType;
+  state.totalPaisa = state.subtotalPaisa - check.discountPaisa;
+  state.confirmed = false;
+  return state;
+}
+
+function clearDiscount(state) {
+  state.discount = { promotionId: null, promotionName: null, amountPaisa: 0 };
+  state.totalPaisa = state.subtotalPaisa;
+  return state;
 }
 
 // Itemized cart for viewCart: line numbers, quantities and chosen options only, no prices or totals.
@@ -185,4 +209,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, cartSummary, SessionStore, readSessionId, sessionCookie };
+module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, cartSummary, SessionStore, readSessionId, sessionCookie };

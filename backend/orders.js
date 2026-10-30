@@ -212,6 +212,50 @@ function checkPromotion(args, promotions, today, customer, lines, subtotalPaisa)
   return { promotion, discountPaisa: calculateDiscount(promotion, lines, subtotalPaisa) };
 }
 
+// For applyPromotion: the same checks as submit_order, against this chat's cart. Returns
+// { promotion, discountPaisa }, { needsOrderType: [...] } or { error }. Unknown and inactive
+// codes get the same answer, so a guess can't tell whether a code exists.
+function checkCartPromotion(state, request, promotions, today) {
+  if (state.items.length === 0) return { error: "the cart is empty, so there's nothing to discount yet." };
+  const promotionId = trimmedString(request.promotionId);
+  const promotionCode = trimmedString(request.promotionCode);
+  if (!promotionId && !promotionCode) return { error: "no promotion or code was given." };
+
+  const promotion = promotions.find((p) =>
+    promotionId ? p.id === promotionId : p.code && sameText(p.code, promotionCode)
+  );
+  if (!promotion || !isPromotionLive(promotion, today)) {
+    return {
+      error: promotionId
+        ? "that promotion isn't running right now, so it can't be applied."
+        : "that code isn't valid right now, so it can't be applied.",
+    };
+  }
+
+  const orderTypes = promotion.conditions && promotion.conditions.orderTypes;
+  const orderType = ORDER_TYPES.includes(request.orderType) ? request.orderType : null;
+  if (!orderType && orderTypes && !ORDER_TYPES.every((type) => orderTypes.includes(type))) {
+    return { needsOrderType: orderTypes };
+  }
+  // Without an order type the offer covers both, so either one passes the check.
+  const checkedType = orderType || (orderTypes ? orderTypes[0] : null);
+  return checkPromotion({ promotionId: promotion.id, promotionCode }, promotions, today, { orderType: checkedType }, state.items, state.subtotalPaisa);
+}
+
+// Live promotions the cart already qualifies for. Offers that need a code are left out: only
+// a customer who already has the code can use one.
+function eligibleCartPromotions(state, promotions, today, orderType) {
+  const eligible = [];
+  for (const promotion of promotions.filter((p) => !p.code && isPromotionLive(p, today))) {
+    let check = checkCartPromotion(state, { promotionId: promotion.id, orderType }, promotions, today);
+    const needsOrderType = check.needsOrderType || null;
+    // Order type not known yet: still check the other conditions, as if it were an allowed one.
+    if (needsOrderType) check = checkCartPromotion(state, { promotionId: promotion.id, orderType: needsOrderType[0] }, promotions, today);
+    if (check.promotion && check.discountPaisa > 0) eligible.push({ promotion, discountPaisa: check.discountPaisa, needsOrderType });
+  }
+  return eligible;
+}
+
 /* ---------- Whole order ---------- */
 
 // Returns { order } ready to save, or { error } explaining what the customer needs to fix.
@@ -297,4 +341,14 @@ async function placeOrder({ args, menu, promotions, today, saveOrder, phone }) {
   }
 }
 
-module.exports = { todayInRestaurant, isPromotionLive, validateOrder, priceCartItem, priceModifiedLine, toOrderRow, placeOrder };
+module.exports = {
+  todayInRestaurant,
+  isPromotionLive,
+  validateOrder,
+  priceCartItem,
+  priceModifiedLine,
+  checkCartPromotion,
+  eligibleCartPromotions,
+  toOrderRow,
+  placeOrder,
+};

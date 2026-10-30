@@ -7,7 +7,15 @@ const dotenv = require("dotenv");
 const express = require("express");
 const { GoogleGenAI } = require("@google/genai");
 const { createClient } = require("@supabase/supabase-js");
-const { todayInRestaurant, isPromotionLive, priceCartItem, priceModifiedLine, placeOrder } = require("./orders");
+const {
+  todayInRestaurant,
+  isPromotionLive,
+  priceCartItem,
+  priceModifiedLine,
+  checkCartPromotion,
+  eligibleCartPromotions,
+  placeOrder,
+} = require("./orders");
 const {
   SessionStore,
   recordOrderAttempt,
@@ -15,11 +23,14 @@ const {
   replaceCartLine,
   findCartLine,
   removeFromCart,
+  applyDiscount,
+  clearDiscount,
   cartSummary,
   readSessionId,
   sessionCookie,
 } = require("./order-session");
 const { GET_MENU_TOOL, getMenu } = require("./menu-tool");
+const { suggestItems } = require("./recommendations");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -103,7 +114,8 @@ function formatDiscount(discount) {
 function formatPromotion(promotion, itemNames) {
   const conditions = promotion.conditions || {};
   const lines = [`- ${promotion.name} [id: ${promotion.id}]: ${formatDiscount(promotion.discount)}. ${promotion.description}`];
-  lines.push(`  Code required: ${promotion.code || "none"}`);
+  // The code itself is never shown to the model, so it can't reveal or fill one in.
+  lines.push(`  Code required: ${promotion.code ? "yes (the customer must give it)" : "none"}`);
   if (conditions.minOrderPaisa) lines.push(`  Minimum order: ${formatRupees(conditions.minOrderPaisa)}`);
   if (conditions.orderTypes) lines.push(`  Order types: ${conditions.orderTypes.join(", ")} only`);
   if (conditions.itemIds) {
@@ -142,7 +154,12 @@ function formatCart(state) {
   if (state.items.length === 0) return "The cart is empty.";
   // Numbered so modifyItem can name a line.
   const lines = state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
-  return `Cart (added with addItemToCart):\n${lines.join("\n")}\nCart subtotal: ${formatRupees(state.subtotalPaisa)}`;
+  const cart = `Cart (added with addItemToCart):\n${lines.join("\n")}\nCart subtotal: ${formatRupees(state.subtotalPaisa)}`;
+  if (!state.discount.promotionId) return cart;
+  return (
+    `${cart}\nPromotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}], ` +
+    `-${formatRupees(state.discount.amountPaisa)}\nCart total: ${formatRupees(state.totalPaisa)}`
+  );
 }
 
 function formatOrderState(state) {
@@ -302,11 +319,20 @@ function addItemToCart(args, orderState) {
 
   const result = addToCart(orderState, priced.line);
   if (result.error) return { added: false, error: result.error };
+  const suggestions = suggestItems(orderState, MENU);
   return {
     added: true,
     item: describeCartLine(priced.line),
     cart: orderState.items.map(describeCartLine),
     cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    ...(suggestions.length
+      ? {
+          suggestions: suggestions.map((s) => ({ itemId: s.itemId, name: s.name, price: formatRupees(s.pricePaisa), reason: s.reason })),
+          suggestionInstruction:
+            "You may offer these once, briefly, after confirming the item was added. Suggest nothing else. " +
+            "If the customer declines, accept it and don't bring them up again. Don't add one unless they ask.",
+        }
+      : {}),
   };
 }
 
@@ -423,16 +449,118 @@ const VIEW_CART_TOOL = {
     "Call this when the customer asks what's in their cart or order.",
 };
 
+// Only codes and promotion ids go in; the server finds the offer, checks it and works out the discount.
+const APPLY_PROMOTION_TOOL = {
+  name: "applyPromotion",
+  description:
+    "Apply a promotion to this customer's cart. Pass promotionCode only when the customer gave a code, exactly as they " +
+    "gave it; never guess, complete or suggest a code. Pass promotionId for an offer from <promotions> that needs no code. " +
+    "With neither, lists the running offers this cart already qualifies for. If the result has an error, nothing was " +
+    "applied: tell the customer, and don't try other codes or ids.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>." },
+      promotionCode: { type: "string", description: "The code exactly as the customer gave it." },
+      orderType: { type: "string", enum: ["pickup", "delivery"], description: "Only if the customer has said." },
+    },
+  },
+};
+
+// True if one of the customer's own messages contains the code as a whole word.
+function customerGaveCode(contents, code) {
+  const wanted = String(code).trim().toLowerCase();
+  if (!wanted) return false;
+  const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const asWord = new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`);
+  return contents
+    .filter((turn) => turn.role === "user")
+    .flatMap((turn) => turn.parts || [])
+    .some((part) => typeof part.text === "string" && asWord.test(part.text.toLowerCase()));
+}
+
+function applyPromotion(args, orderState, contents) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return { applied: false, error: "that order was already submitted, so a promotion can't be added in chat." };
+  }
+  if (args.promotionCode && !customerGaveCode(contents, args.promotionCode)) {
+    return { applied: false, error: "the customer hasn't given that code.", instruction: "Nothing was applied. Never supply a code yourself; only use one the customer gives." };
+  }
+  const today = todayInRestaurant(new Date());
+  const givenType = ["pickup", "delivery"].includes(args.orderType) ? args.orderType : null;
+  const orderType = givenType || orderState.orderType;
+
+  if (!args.promotionId && !args.promotionCode) {
+    const eligible = eligibleCartPromotions(orderState, PROMOTIONS, today, orderType);
+    if (eligible.length === 0) {
+      return { eligible: [], instruction: "No promotion applies to this cart right now. Don't offer one." };
+    }
+    return {
+      eligible: eligible.map(({ promotion, discountPaisa, needsOrderType }) => ({
+        promotionId: promotion.id,
+        name: promotion.name,
+        discount: formatRupees(discountPaisa),
+        ...(needsOrderType ? { onlyFor: needsOrderType } : {}),
+      })),
+      instruction: "Nothing was applied yet. You may offer these; apply one only if the customer wants it.",
+    };
+  }
+
+  const check = checkCartPromotion(orderState, { ...args, orderType }, PROMOTIONS, today);
+  if (check.needsOrderType) {
+    return { applied: false, needsOrderType: check.needsOrderType, instruction: "Ask whether this is for pickup or delivery, then try again." };
+  }
+  if (check.error) {
+    return { applied: false, error: check.error, instruction: "Nothing was applied. Tell the customer simply; don't guess or try another code." };
+  }
+
+  applyDiscount(orderState, check, { promotionCode: args.promotionCode, orderType: givenType });
+  return {
+    applied: true,
+    promotion: check.promotion.name,
+    discount: `-${formatRupees(check.discountPaisa)}`,
+    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    cartTotal: formatRupees(orderState.totalPaisa),
+    instruction: "The final total is confirmed when the order is saved.",
+  };
+}
+
+// After any cart change an applied promotion is checked again, so the discount always matches the cart.
+function recheckPromotion(orderState) {
+  const discount = orderState.discount;
+  if (!discount.promotionId) return null;
+  const check = checkCartPromotion(
+    orderState,
+    { promotionId: discount.promotionId, promotionCode: discount.code, orderType: orderState.orderType },
+    PROMOTIONS,
+    todayInRestaurant(new Date())
+  );
+  if (check.error || check.needsOrderType) {
+    clearDiscount(orderState);
+    return { removed: discount.promotionName, reason: check.error || "it needs the order type confirmed again." };
+  }
+  applyDiscount(orderState, check, { promotionCode: discount.code });
+  return { applied: discount.promotionName, discount: `-${formatRupees(check.discountPaisa)}`, cartTotal: formatRupees(orderState.totalPaisa) };
+}
+
+const CART_CHANGING_TOOLS = ["addItemToCart", "modifyItem", "removeItem"];
+
 // Tools that only read or update this chat's data; the model sees the result and carries on.
-function runDataTool(call, orderState) {
+function runDataTool(call, orderState, contents) {
   if (call.name === GET_MENU_TOOL.name) {
     console.log("Gemini called getMenu.");
     return getMenu();
   }
   if (call.name === VIEW_CART_TOOL.name) return cartSummary(orderState);
-  if (call.name === MODIFY_ITEM_TOOL.name) return modifyItem(call.args || {}, orderState);
-  if (call.name === REMOVE_ITEM_TOOL.name) return removeItem(call.args || {}, orderState);
-  return addItemToCart(call.args || {}, orderState);
+  if (call.name === APPLY_PROMOTION_TOOL.name) return applyPromotion(call.args || {}, orderState, contents);
+
+  let result;
+  if (call.name === MODIFY_ITEM_TOOL.name) result = modifyItem(call.args || {}, orderState);
+  else if (call.name === REMOVE_ITEM_TOOL.name) result = removeItem(call.args || {}, orderState);
+  else result = addItemToCart(call.args || {}, orderState);
+
+  const promotion = CART_CHANGING_TOOLS.includes(call.name) ? recheckPromotion(orderState) : null;
+  return promotion ? { ...result, promotion } : result;
 }
 
 const DATA_TOOL_NAMES = [
@@ -441,6 +569,7 @@ const DATA_TOOL_NAMES = [
   MODIFY_ITEM_TOOL.name,
   REMOVE_ITEM_TOOL.name,
   VIEW_CART_TOOL.name,
+  APPLY_PROMOTION_TOOL.name,
 ];
 
 // Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
@@ -456,7 +585,7 @@ function generateReply(contents, { useTools, orderState }) {
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
       ...(useTools
-        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, SUBMIT_ORDER_TOOL] }] }
+        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, APPLY_PROMOTION_TOOL, SUBMIT_ORDER_TOOL] }] }
         : {}),
     },
   });
@@ -520,7 +649,7 @@ async function askGemini(history, message, orderState) {
     contents.push(response.candidates[0].content, {
       role: "user",
       parts: dataCalls.map((call) => ({
-        functionResponse: { id: call.id, name: call.name, response: runDataTool(call, orderState) },
+        functionResponse: { id: call.id, name: call.name, response: runDataTool(call, orderState, contents) },
       })),
     });
     // Past the cap, tools are switched off so the model has to reply in text.
