@@ -1,0 +1,150 @@
+{
+  "currency": "PKR",
+  "priceUnit": "paisa (100 paisa = Rs 1)",
+  "categories": [
+    {
+      "name": "Doners & Wraps",
+      "items": [
+        {
+          "id": "classic-doner-kebab",
+          "name": "Classic Doner Kebab",
+          "description": "Lamb and beef doner in warm bread with lettuce, tomato, onion, garlic and chilli sauce.",
+          "pricePaisa": 75000,
+          "tags": ["Bestseller"],
+          "available": true
+        },
+        {
+          "id": "chicken-doner-wrap",
+          "name": "Chicken Doner Wrap",
+          "description": "Marinated chicken doner in a toasted flatbread with salad and herb yoghurt sauce.",
+          "pricePaisa": 65000,
+          "tags": [],
+          "available": true
+        },
+        {
+          "id": "zinger-doner-wrap",
+          "name": "Zinger Doner Wrap",
+          "description": "Chicken doner with crispy zinger strips, jalapeños, cheese and fiery chilli mayo.",
+          "pricePaisa": 80000,
+          "tags": ["Spicy"],
+          "available": true
+        },
+        {
+          "id": "falafel-wrap",
+          "name": "Falafel Wrap",
+          "description": "Crispy house-made falafel with hummus, pickles, salad and tahini in a toasted flatbread.",
+          "pricePaisa": 55000,
+          "tags": ["Vegetarian"],
+          "available": true
+        }
+      ]
+    },
+    {
+      "name": "Plates",
+      "items": [
+        {
+          "id": "mixed-doner-plate",
+          "name": "Mixed Doner Plate",
+          "description": "Lamb and chicken doner with rice or chips, fresh salad, bread and two sauces.",
+          "pricePaisa": 145000,
+          "tags": ["Bestseller"],
+          "options": [
+            { "name": "Base", "choices": ["Rice", "Chips"], "required": true }
+          ],
+          "notes": "Comes with two sauces; the sauce list isn't on the menu, so ask the customer to confirm sauces with staff.",
+          "available": true
+        },
+        {
+          "id": "chicken-doner-plate",
+          "name": "Chicken Doner Plate",
+          "description": "Chicken doner over buttery rice with salad, garlic sauce and a warm flatbread.",
+          "pricePaisa": 115000,
+          "tags": [],
+          "available": true
+        },
+        {
+          "id": "iskender-plate",
+          "name": "Iskender Plate",
+          "description": "Sliced doner on toasted bread with tomato butter sauce and cool yoghurt.",
+          "pricePaisa": 135000,
+          "tags": [],
+          "available": true
+        }
+      ]
+    },
+    {
+      "name": "Boxes",
+      "items": [
+        {
+          "id": "doner-box",
+          "name": "Doner Box",
+          "description": "Your choice of doner meat over seasoned chips, topped with cheese and your favourite sauce.",
+          "pricePaisa": 85000,
+          "tags": [],
+          "options": [
+            { "name": "Meat", "choices": ["Lamb and beef doner", "Chicken doner"], "required": true }
+          ],
+          "notes": "Includes a sauce; the sauce list isn't on the menu, so ask the customer to confirm their sauce with staff.",
+          "available": true
+        },
+        {
+          "id": "loaded-bro-box",
+          "name": "Loaded Bro Box",
+          "description": "Double doner, chips, cheese sauce, jalapeños and crispy onions. Made for sharing.",
+          "pricePaisa": 125000,
+          "tags": ["Loaded"],
+          "available": true
+        }
+      ]
+    },
+    {
+      "name": "Sides",
+      "items": [
+        {
+          "id": "seasoned-chips",
+          "name": "Seasoned Chips",
+          "description": "Thick-cut chips tossed in our secret spice blend.",
+          "pricePaisa": 35000,
+          "tags": [],
+          "options": [
+            { "name": "Extras", "choices": [{ "name": "Add cheese", "pricePaisa": 10000 }], "required": false }
+          ],
+          "available": true
+        },
+        {
+          "id": "halloumi-fries",
+          "name": "Halloumi Fries",
+          "description": "Golden fried halloumi sticks with pomegranate, mint and sweet chilli dip.",
+          "pricePaisa": 70000,
+          "tags": ["Vegetarian"],
+          "available": true
+        }
+      ]
+    },
+    {
+      "name": "Drinks",
+      "items": [
+        {
+          "id": "ayran",
+          "name": "Ayran",
+          "description": "Chilled, lightly salted yoghurt drink. The classic doner partner.",
+          "pricePaisa": 15000,
+          "tags": [],
+          "available": true
+        },
+        {
+          "id": "soft-drinks",
+          "name": "Soft Drinks",
+          "description": "A choice of chilled canned soft drinks or still and sparkling water.",
+          "pricePaisa": 15000,
+          "tags": [],
+          "options": [
+            { "name": "Type", "choices": ["Canned soft drink", "Still water", "Sparkling water"], "required": true }
+          ],
+          "notes": "Specific soft drink brands and flavours aren't listed; ask the customer to confirm with staff.",
+          "available": true
+        }
+      ]
+    }
+  ]
+}

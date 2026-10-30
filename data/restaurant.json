@@ -1,0 +1,14 @@
+{
+  "name": "Doner Bros",
+  "hours": [
+    { "days": "Monday – Thursday", "open": "11:00", "close": "23:00" },
+    { "days": "Friday – Saturday", "open": "11:00", "close": "02:00 (next day)" },
+    { "days": "Sunday", "open": "12:00", "close": "22:00" }
+  ],
+  "contact": {
+    "address": "Shalimar City, next to Papa John's, Sargodha, Pakistan",
+    "phone": "0341 5846569",
+    "email": "fasehbasra111@gmail.com",
+    "orderMethods": "Pick-up from the Shalimar City branch, or delivery within Sargodha. Orders are placed by phone."
+  }
+}
