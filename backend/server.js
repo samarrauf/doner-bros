@@ -743,9 +743,21 @@ const CONFIRM_DELIVERY_ADDRESS_TOOL = {
     "unclear is not confirmation: ask again. If they correct it, call setDeliveryDetails instead.",
 };
 
-function confirmAddress(orderState) {
+function confirmAddress(orderState, contents) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return { confirmed: false, error: "that order was already submitted, so its details can't be changed in chat." };
+  }
+  // The server reads the customer's reply itself, so a correction or an unclear answer never confirms the address.
+  const reply = checkConfirmation(latestCustomerMessage(contents));
+  if (!reply.confirmed) {
+    const readBack = deliveryAddressReadBack(orderState);
+    return {
+      confirmed: false,
+      error: `the customer hasn't clearly confirmed the address: ${reply.reason}`,
+      instruction: readBack
+        ? `If they corrected anything, call setDeliveryDetails with the correction. Otherwise ${readBackInstruction(readBack)}`
+        : "Ask the customer for what's missing first.",
+    };
   }
   const result = confirmDeliveryAddress(orderState, orderState.lastReply);
   if (result.error) {
@@ -801,22 +813,36 @@ function reviewOrder(orderState) {
   };
 }
 
-// The order must have been reviewed as it stands now, and the summary shown in the bot's last
-// message (kept by the server), so the customer confirms exactly what will be saved.
-function checkReviewedOrder(orderState) {
-  if (orderState.items.length === 0) return "the cart is empty. Add the items with addItemToCart first.";
-  cartTotals(orderState);
-  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== orderFingerprint(orderState)) {
-    return "the order hasn't been reviewed as it stands now. Call reviewOrder, show the customer the summary, and ask them to confirm.";
-  }
-  const shown = normaliseForReadBack(orderState.lastReply);
+// True if the bot's reply showed the reviewed order's summary: its items and total.
+function summaryShownIn(orderState, reply) {
+  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== orderFingerprint(orderState)) return false;
+  const shown = normaliseForReadBack(reply);
   const { summary } = buildOrderSummary(orderState, cartTotals(orderState), [], PRICING);
   const required = [
     ...summary.items.map((item) => `${item.quantity} x ${item.name}`),
     `total: ${summary.totals.total}`,
   ];
-  if (!required.every((part) => shown.includes(normaliseForReadBack(part)))) {
-    return "the order summary wasn't shown to the customer in your last message. Show the reviewOrder summary exactly and ask them to confirm.";
+  return required.every((part) => shown.includes(normaliseForReadBack(part)));
+}
+
+// After each reply: which version of the order, if any, the customer has now seen summarised.
+function recordShownSummary(orderState, reply) {
+  orderState.shownFingerprint = summaryShownIn(orderState, reply) ? orderState.reviewedFingerprint : null;
+}
+
+// The order must have been reviewed as it stands now, and that summary shown in the bot's last
+// message (kept by the server), so the customer confirms exactly what will be saved. A change
+// made in the same message as the yes (a new option, time or instruction) means the customer
+// hasn't seen it yet.
+function checkReviewedOrder(orderState) {
+  if (orderState.items.length === 0) return "the cart is empty. Add the items with addItemToCart first.";
+  cartTotals(orderState);
+  const current = orderFingerprint(orderState);
+  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== current) {
+    return "the order hasn't been reviewed as it stands now. Call reviewOrder, show the customer the summary, and ask them to confirm.";
+  }
+  if (orderState.shownFingerprint !== current) {
+    return "the order summary, as the order stands now, wasn't shown to the customer in your last message. Show the reviewOrder summary exactly and ask them to confirm.";
   }
   return null;
 }
@@ -833,7 +859,7 @@ function runDataTool(call, orderState, contents) {
   if (call.name === APPLY_PROMOTION_TOOL.name) return applyPromotion(call.args || {}, orderState, contents);
   if (call.name === SET_PICKUP_DETAILS_TOOL.name) return setPickup(call.args || {}, orderState);
   if (call.name === SET_DELIVERY_DETAILS_TOOL.name) return setDelivery(call.args || {}, orderState);
-  if (call.name === CONFIRM_DELIVERY_ADDRESS_TOOL.name) return confirmAddress(orderState);
+  if (call.name === CONFIRM_DELIVERY_ADDRESS_TOOL.name) return confirmAddress(orderState, contents);
   if (call.name === REVIEW_ORDER_TOOL.name) return reviewOrder(orderState);
 
   let result;
@@ -1138,6 +1164,7 @@ app.post("/api/chat", async (req, res) => {
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
+    recordShownSummary(orderState, orderState.lastReply);
     if (!reply) {
       return res.json({
         reply: `Sorry, I couldn't answer that. Please try rephrasing, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,

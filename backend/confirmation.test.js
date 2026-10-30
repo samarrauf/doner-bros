@@ -28,6 +28,12 @@ test("negatives next to a yes still don't count", () => {
   assert.match(checkConfirmation("don't place it yet, yes").reason, /"don't"/);
 });
 
+test("a yes that carries anything extra doesn't count, since it may be a change", () => {
+  for (const reply of ["yes with chips", "yes make it 2", "yes, deliver at 10pm", "yes and a coke", "yes for 3 people", "yes, Street 5"]) {
+    assert.match(checkConfirmation(reply).reason, /says more than yes/, reply);
+  }
+});
+
 test("a long message is never taken as a plain yes", () => {
   const long = "yes " + "the food here is always great and my family loves it ".repeat(2);
   assert.match(checkConfirmation(long).reason, /too long/);

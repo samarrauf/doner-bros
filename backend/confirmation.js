@@ -22,6 +22,11 @@ const NOT_CLEAR = [
   "nahi", "nahin", "mat", "نہیں",
 ];
 
+// Polite words that may go with a yes. Anything else left over ("yes with chips", "yes make it 2")
+// might be asking for a change, so the reply isn't a plain yes.
+const FILLER = ["please", "thank you", "thanks", "ji", "jee", "sir", "bhai"];
+const PLAIN_YES_PHRASES = [...AFFIRMATIVE, ...FILLER].sort((a, b) => b.length - a.length);
+
 function normalise(text) {
   return String(text || "")
     .toLowerCase()
@@ -35,6 +40,15 @@ function hasPhrase(text, phrase) {
   return ` ${text} `.includes(` ${phrase} `);
 }
 
+// What's left of the reply once the yes phrases and polite words are taken out.
+function leftOver(text) {
+  let rest = ` ${text} `;
+  for (const phrase of PLAIN_YES_PHRASES) {
+    while (rest.includes(` ${phrase} `)) rest = rest.replace(` ${phrase} `, " ");
+  }
+  return rest.trim();
+}
+
 // Returns { confirmed: true } or { confirmed: false, reason }.
 function checkConfirmation(reply) {
   const text = normalise(reply);
@@ -46,6 +60,8 @@ function checkConfirmation(reply) {
   if (!AFFIRMATIVE.some((phrase) => hasPhrase(text, phrase))) {
     return { confirmed: false, reason: "the reply doesn't clearly say yes." };
   }
+  const extra = leftOver(text);
+  if (extra) return { confirmed: false, reason: `the reply says more than yes ("${extra}"), so it may be asking for a change.` };
   return { confirmed: true };
 }
 
