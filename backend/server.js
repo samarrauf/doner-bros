@@ -24,6 +24,7 @@ const { checkPricing, calculateOrderTotals } = require("./totals");
 const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
+const { addStaffRoutes } = require("./staff");
 const {
   SessionStore,
   recordOrderAttempt,
@@ -1110,6 +1111,10 @@ const app = express();
 
 app.use(express.static(FRONTEND_DIR));
 app.use(express.json({ limit: "100kb" }));
+
+// Staff dashboard at /staff, behind STAFF_PASSWORD. Uses the same server-only Supabase client.
+if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
+addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin") });
 
 app.post("/api/chat", async (req, res) => {
   if (isRateLimited(req.ip)) {

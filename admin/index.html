@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Doner Bros Staff Orders</title>
+  <style>
+    :root {
+      --ink: #0b0b0b;
+      --muted: #5f666d;
+      --line: #ebebeb;
+      --surface: #f5f6f8;
+      --white: #ffffff;
+      --accent: #f5a623;
+      --accent-dark: #d98c0a;
+      --green: #2f7d4f;
+      --red: #d93a3a;
+      --radius: 14px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--ink); font: 16px/1.5 var(--font); }
+    header {
+      position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      justify-content: space-between; padding: 12px 16px; background: var(--white); border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; font-size: 1.15rem; }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .tab {
+      min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px;
+      background: var(--white); font: inherit; cursor: pointer;
+    }
+    .tab[aria-pressed="true"] { background: var(--ink); color: var(--white); border-color: var(--ink); }
+    #updated { color: var(--muted); font-size: 0.85rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    #message { margin: 0 0 12px; }
+    #message.error { color: var(--red); font-weight: 600; }
+    #orders { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+    .order { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+    .order-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .order-id { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .time { color: var(--muted); font-size: 0.85rem; }
+    .status { display: inline-block; margin-top: 6px; padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+    .status-NEW { background: #fde8e8; color: var(--red); }
+    .status-PREPARING { background: #fff4e0; color: var(--accent-dark); }
+    .status-READY { background: #e3f3ea; color: var(--green); }
+    .status-COMPLETED { background: var(--surface); color: var(--muted); }
+    h2 { margin: 12px 0 4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    ul { margin: 0; padding-left: 18px; }
+    p { margin: 0; }
+    .total { margin-top: 12px; font-weight: 700; }
+    .note { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+    .advance {
+      width: 100%; min-height: 44px; margin-top: 12px; border: 0; border-radius: 10px;
+      background: var(--accent); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer;
+    }
+    .advance:hover { background: var(--accent-dark); }
+    .advance:disabled { opacity: 0.6; cursor: wait; }
+    .advance:focus-visible, .tab:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+    .empty { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Doner Bros orders</h1>
+    <div class="controls">
+      <button class="tab" type="button" data-view="active" aria-pressed="true">Active</button>
+      <button class="tab" type="button" data-view="completed" aria-pressed="false">Completed</button>
+      <span id="updated" aria-live="polite"></span>
+    </div>
+  </header>
+  <main>
+    <p id="message" role="status"></p>
+    <div id="orders"></div>
+  </main>
+
+  <script>
+    // Everything shown comes from customers, so it's set with textContent, never innerHTML.
+    const NEXT = { NEW: "PREPARING", PREPARING: "READY", READY: "COMPLETED" };
+    const ACTION = { NEW: "Start preparing", PREPARING: "Mark ready", READY: "Mark completed" };
+    const REFRESH_MS = 20000;
+    let view = "active";
+
+    const ordersEl = document.getElementById("orders");
+    const messageEl = document.getElementById("message");
+    const updatedEl = document.getElementById("updated");
+
+    const rupees = (paisa) => `Rs ${(paisa / 100).toLocaleString("en-PK")}`;
+    const time = (iso) =>
+      new Date(iso).toLocaleString("en-PK", { timeZone: "Asia/Karachi", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function section(card, title, lines) {
+      card.append(el("h2", null, title));
+      for (const line of lines) if (line) card.append(el("p", null, line));
+    }
+
+    function renderOrder(order) {
+      const card = el("article", "order");
+      const head = el("div", "order-head");
+      head.append(el("span", "order-id", order.order_id), el("span", "time", time(order.created_at)));
+      card.append(head, el("span", `status status-${order.status}`, order.status));
+
+      card.append(el("h2", null, "Items"));
+      const list = el("ul");
+      for (const item of order.items || []) {
+        const options = (item.options || []).map((o) => `${o.name}: ${o.choice}`).join(", ");
+        list.append(el("li", null, `${item.quantity} x ${item.name}${options ? ` (${options})` : ""}`));
+      }
+      card.append(list);
+
+      if (order.order_type === "pickup") {
+        section(card, "Pickup", [`Time: ${order.pickup_time || "as soon as possible"}`]);
+      } else {
+        section(card, "Delivery", [
+          order.delivery_address + (order.delivery_unit ? `, ${order.delivery_unit}` : ""),
+          order.delivery_instructions ? `Instructions: ${order.delivery_instructions}` : null,
+        ]);
+      }
+      section(card, "Customer", [order.customer_name, order.customer_phone]);
+
+      const total = el("p", "total", `Total: ${rupees(order.total_paisa)}`);
+      if (order.order_type === "delivery" && order.delivery_fee_paisa === null) {
+        total.append(" ", el("span", "note", "(delivery fee not included)"));
+      }
+      card.append(total);
+
+      if (NEXT[order.status]) {
+        const button = el("button", "advance", ACTION[order.status]);
+        button.type = "button";
+        button.addEventListener("click", () => advance(order, button));
+        card.append(button);
+      }
+      return card;
+    }
+
+    function showMessage(text, isError) {
+      messageEl.textContent = text || "";
+      messageEl.className = isError ? "error" : "";
+    }
+
+    async function load() {
+      try {
+        const response = await fetch(`/api/staff/orders${view === "completed" ? "?completed=1" : ""}`, { cache: "no-store" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Couldn't load orders.");
+        ordersEl.replaceChildren(...body.orders.map(renderOrder));
+        if (body.orders.length === 0) ordersEl.append(el("p", "empty", view === "active" ? "No active orders." : "No completed orders yet."));
+        showMessage("");
+        updatedEl.textContent = `Updated ${new Date().toLocaleTimeString("en-PK", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    async function advance(order, button) {
+      button.disabled = true;
+      let problem = null;
+      try {
+        const response = await fetch(`/api/staff/orders/${encodeURIComponent(order.order_id)}/advance`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from: order.status }),
+        });
+        const body = await response.json();
+        if (!response.ok) problem = body.error || "Couldn't update the order.";
+      } catch {
+        problem = "Couldn't reach the server. Check the connection.";
+      }
+      await load();
+      if (problem) showMessage(problem, true); // after load, which clears the message
+    }
+
+    for (const tab of document.querySelectorAll(".tab")) {
+      tab.addEventListener("click", () => {
+        view = tab.dataset.view;
+        for (const other of document.querySelectorAll(".tab")) other.setAttribute("aria-pressed", String(other === tab));
+        load();
+      });
+    }
+
+    load();
+    setInterval(load, REFRESH_MS);
+  </script>
+</body>
+</html>

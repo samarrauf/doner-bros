@@ -10,8 +10,8 @@ create table if not exists public.orders (
   -- be inserted twice (a double click or a retry gets the existing order back instead).
   submission_key   text not null unique check (submission_key ~ '^[0-9a-f]{64}$'),
   created_at       timestamptz not null default now(),
-  -- Every order starts as NEW. Later statuses are for staff to set; they must be upper case.
-  status           text not null default 'NEW' check (status ~ '^[A-Z_]{2,30}$'),
+  -- Every order starts as NEW; staff move it on from the dashboard, one step at a time.
+  status           text not null default 'NEW' check (status in ('NEW', 'PREPARING', 'READY', 'COMPLETED')),
   order_type       text not null check (order_type in ('pickup', 'delivery')),
   customer_name    text not null check (char_length(customer_name) between 1 and 100),
   customer_phone   text not null check (char_length(customer_phone) between 7 and 20),
@@ -47,3 +47,5 @@ revoke all on public.orders from anon, authenticated;
 -- Newer Supabase projects don't grant new tables to service_role automatically. The backend only
 -- inserts orders and reads back their order ID (also to find an existing order on a duplicate).
 grant select, insert on public.orders to service_role;
+-- The staff dashboard (through the backend) may change an order's status, and nothing else.
+grant update (status) on public.orders to service_role;
