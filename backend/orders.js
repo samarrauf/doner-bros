@@ -1,6 +1,8 @@
 // Doner Bros — order checks, pricing and saving. Everything the AI Order Taker submits is
 // re-checked here against menu.json and promotions.json; nothing it calculates is trusted.
 
+const { NO_TAX_NO_FEE, calculateOrderTotals } = require("./totals");
+
 const RESTAURANT_TIMEZONE = "Asia/Karachi";
 const ORDER_TYPES = ["pickup", "delivery"];
 const MAX_ORDER_LINES = 20;
@@ -39,6 +41,15 @@ function trimmedString(value) {
 
 /* ---------- Order details ---------- */
 
+const MAX_ADDRESS_LENGTH = 300;
+const MAX_UNIT_LENGTH = 50;
+const MAX_INSTRUCTIONS_LENGTH = 300;
+const PICKUP_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/; // set by pickup-time.js after checking opening hours
+
+function isValidPhone(phone) {
+  return /^\+?\d{10,13}$/.test(phone.replace(/[\s()-]/g, ""));
+}
+
 function validateCustomer(args) {
   const orderType = trimmedString(args.orderType).toLowerCase();
   if (!ORDER_TYPES.includes(orderType)) return { error: 'orderType must be "pickup" or "delivery".' };
@@ -47,18 +58,74 @@ function validateCustomer(args) {
   if (customerName.length < 1 || customerName.length > 100) return { error: "customer name is missing." };
 
   const customerPhone = trimmedString(args.customerPhone);
-  if (!/^\+?\d{10,13}$/.test(customerPhone.replace(/[\s()-]/g, ""))) {
+  if (!isValidPhone(customerPhone)) {
     return { error: "customer phone number is missing or not a valid phone number." };
   }
 
   let deliveryAddress = null;
+  let deliveryUnit = null;
+  let deliveryInstructions = null;
   if (orderType === "delivery") {
     deliveryAddress = trimmedString(args.deliveryAddress);
     if (deliveryAddress.length < 5) return { error: "delivery orders need the customer's delivery address." };
-    if (deliveryAddress.length > 300) return { error: "delivery address is too long." };
+    if (deliveryAddress.length > MAX_ADDRESS_LENGTH) return { error: "delivery address is too long." };
+    deliveryUnit = trimmedString(args.deliveryUnit) || null;
+    if (deliveryUnit && deliveryUnit.length > MAX_UNIT_LENGTH) return { error: "apartment/unit is too long." };
+    deliveryInstructions = trimmedString(args.deliveryInstructions) || null;
+    if (deliveryInstructions && deliveryInstructions.length > MAX_INSTRUCTIONS_LENGTH) return { error: "delivery instructions are too long." };
   }
 
-  return { customer: { orderType, customerName, customerPhone, deliveryAddress } };
+  let pickupTime = null;
+  if (orderType === "pickup" && args.pickupTime !== undefined && args.pickupTime !== null) {
+    if (!PICKUP_TIME_PATTERN.test(args.pickupTime)) return { error: "pickup time must be a time like 18:30." };
+    pickupTime = args.pickupTime;
+  }
+
+  return { customer: { orderType, customerName, customerPhone, deliveryAddress, deliveryUnit, deliveryInstructions, pickupTime } };
+}
+
+// For setDeliveryDetails: checks only the fields the customer gave. Unit and instructions may be
+// "" when the customer said there are none. Returns { details } or { error }.
+function validateDeliveryDetails(args) {
+  const contact = validatePickupDetails(args);
+  if (contact.error) return contact;
+  const details = contact.details;
+
+  if (args.deliveryAddress !== undefined && args.deliveryAddress !== null) {
+    const deliveryAddress = trimmedString(args.deliveryAddress);
+    if (deliveryAddress.length < 5) return { error: "the delivery address is too short to find; ask for the full address." };
+    if (deliveryAddress.length > MAX_ADDRESS_LENGTH) return { error: "the delivery address is too long." };
+    details.deliveryAddress = deliveryAddress;
+  }
+  if (args.noApartmentOrUnit === true) details.deliveryUnit = "";
+  else if (trimmedString(args.apartmentOrUnit)) {
+    const deliveryUnit = trimmedString(args.apartmentOrUnit);
+    if (deliveryUnit.length > MAX_UNIT_LENGTH) return { error: "the apartment/unit is too long." };
+    details.deliveryUnit = deliveryUnit;
+  }
+  if (args.noDeliveryInstructions === true) details.deliveryInstructions = "";
+  else if (trimmedString(args.deliveryInstructions)) {
+    const deliveryInstructions = trimmedString(args.deliveryInstructions);
+    if (deliveryInstructions.length > MAX_INSTRUCTIONS_LENGTH) return { error: "the delivery instructions are too long." };
+    details.deliveryInstructions = deliveryInstructions;
+  }
+  return { details };
+}
+
+// For setPickupDetails: checks only the fields the customer gave. Returns { details } or { error }.
+function validatePickupDetails(args) {
+  const details = {};
+  if (args.customerName !== undefined && args.customerName !== null) {
+    const customerName = trimmedString(args.customerName);
+    if (customerName.length < 1 || customerName.length > 100) return { error: "the name must be 1 to 100 characters." };
+    details.customerName = customerName;
+  }
+  if (args.customerPhone !== undefined && args.customerPhone !== null) {
+    const customerPhone = trimmedString(args.customerPhone);
+    if (!isValidPhone(customerPhone)) return { error: "that isn't a valid phone number." };
+    details.customerPhone = customerPhone;
+  }
+  return { details };
 }
 
 // Returns the chosen options and their extra cost, or an error naming what's wrong.
@@ -259,7 +326,7 @@ function eligibleCartPromotions(state, promotions, today, orderType) {
 /* ---------- Whole order ---------- */
 
 // Returns { order } ready to save, or { error } explaining what the customer needs to fix.
-function validateOrder(args, menu, promotions, today) {
+function validateOrder(args, menu, promotions, today, pricing = NO_TAX_NO_FEE) {
   if (!args || typeof args !== "object") return { error: "no order details were sent." };
   if (args.customerConfirmed !== true) {
     return { error: "the customer hasn't clearly confirmed the order yet. Read it back and ask them to confirm." };
@@ -275,16 +342,11 @@ function validateOrder(args, menu, promotions, today) {
   const promo = checkPromotion(args, promotions, today, customer.customer, priced.lines, subtotalPaisa);
   if (promo.error) return promo;
 
-  return {
-    order: {
-      ...customer.customer,
-      lines: priced.lines,
-      subtotalPaisa,
-      discountPaisa: promo.discountPaisa,
-      totalPaisa: subtotalPaisa - promo.discountPaisa,
-      promotion: promo.promotion,
-    },
-  };
+  const totals = calculateOrderTotals(
+    { lines: priced.lines, discountPaisa: promo.discountPaisa, orderType: customer.customer.orderType },
+    pricing
+  );
+  return { order: { ...customer.customer, lines: priced.lines, ...totals, promotion: promo.promotion } };
 }
 
 function toOrderRow(order) {
@@ -293,9 +355,14 @@ function toOrderRow(order) {
     customer_name: order.customerName,
     customer_phone: order.customerPhone,
     delivery_address: order.deliveryAddress,
+    delivery_unit: order.deliveryUnit,
+    delivery_instructions: order.deliveryInstructions,
+    pickup_time: order.pickupTime,
     items: order.lines,
     subtotal_paisa: order.subtotalPaisa,
     discount_paisa: order.discountPaisa,
+    tax_paisa: order.taxPaisa,
+    delivery_fee_paisa: order.deliveryFeePaisa,
     total_paisa: order.totalPaisa,
     promotion_id: order.promotion ? order.promotion.id : null,
   };
@@ -308,7 +375,20 @@ function formatSavedOrder(orderNumber, order, phone) {
   });
   const totals = [`Subtotal: ${formatRupees(order.subtotalPaisa)}`];
   if (order.discountPaisa > 0) totals.push(`Discount (${order.promotion.name}): -${formatRupees(order.discountPaisa)}`);
+  if (order.taxPaisa > 0) totals.push(`Tax: ${formatRupees(order.taxPaisa)}`);
+  if (order.orderType === "delivery") {
+    totals.push(
+      order.deliveryFeePaisa === null
+        ? "Delivery fee: not included; the restaurant will confirm it"
+        : `Delivery fee: ${formatRupees(order.deliveryFeePaisa)}`
+    );
+  }
   totals.push(`Total: ${formatRupees(order.totalPaisa)} for ${order.orderType}`);
+  if (order.orderType === "pickup") totals.push(`Pickup time requested: ${order.pickupTime || "as soon as possible"}`);
+  if (order.orderType === "delivery") {
+    totals.push(`Deliver to: ${order.deliveryAddress}${order.deliveryUnit ? `, ${order.deliveryUnit}` : ""}`);
+    if (order.deliveryInstructions) totals.push(`Delivery instructions: ${order.deliveryInstructions}`);
+  }
 
   // Saved is all we can promise: nothing here tells staff, so never say they've accepted it.
   return [
@@ -327,8 +407,8 @@ function orderNotSavedMessage(phone) {
 }
 
 // saveOrder(row) resolves to the new order number, or throws if the database can't save it.
-async function placeOrder({ args, menu, promotions, today, saveOrder, phone }) {
-  const result = validateOrder(args, menu, promotions, today);
+async function placeOrder({ args, menu, promotions, today, saveOrder, phone, pricing }) {
+  const result = validateOrder(args, menu, promotions, today, pricing);
   if (result.error) return { status: "invalid", error: result.error };
 
   const { order } = result;
@@ -342,6 +422,7 @@ async function placeOrder({ args, menu, promotions, today, saveOrder, phone }) {
 }
 
 module.exports = {
+  formatRupees,
   todayInRestaurant,
   isPromotionLive,
   validateOrder,
@@ -349,6 +430,8 @@ module.exports = {
   priceModifiedLine,
   checkCartPromotion,
   eligibleCartPromotions,
+  validatePickupDetails,
+  validateDeliveryDetails,
   toOrderRow,
   placeOrder,
 };

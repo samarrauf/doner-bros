@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const dotenv = require("dotenv");
 const express = require("express");
 const { GoogleGenAI } = require("@google/genai");
@@ -14,8 +15,15 @@ const {
   priceModifiedLine,
   checkCartPromotion,
   eligibleCartPromotions,
+  validatePickupDetails,
+  validateDeliveryDetails,
   placeOrder,
 } = require("./orders");
+const { checkPickupTime } = require("./pickup-time");
+const { checkPricing, calculateOrderTotals } = require("./totals");
+const { orderFingerprint, buildOrderSummary } = require("./order-summary");
+const { checkConfirmation } = require("./confirmation");
+const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
 const {
   SessionStore,
   recordOrderAttempt,
@@ -25,6 +33,12 @@ const {
   removeFromCart,
   applyDiscount,
   clearDiscount,
+  setPickupDetails,
+  setDeliveryDetails,
+  missingCheckoutDetails,
+  deliveryAddressReadBack,
+  confirmDeliveryAddress,
+  normaliseForReadBack,
   cartSummary,
   readSessionId,
   sessionCookie,
@@ -148,31 +162,89 @@ function buildSystemPrompt() {
 // Read once at startup; a missing or broken data file stops the server with a clear error.
 const MENU = readJson("data/menu.json");
 const PROMOTIONS = readJson("data/promotions.json").promotions;
+const OPENING_HOURS = readJson("data/restaurant.json").hours;
+const PRICING = (() => {
+  const checked = checkPricing(readJson("data/pricing.json"));
+  if (checked.error) throw new Error(checked.error);
+  return checked.pricing;
+})();
 const SYSTEM_PROMPT = buildSystemPrompt();
+
+// The cart's totals, worked out from server prices only; also keeps state.totalPaisa in step.
+function cartTotals(state) {
+  const totals = calculateOrderTotals(
+    { lines: state.items, discountPaisa: state.discount.amountPaisa, orderType: state.orderType },
+    PRICING
+  );
+  state.totalPaisa = totals.totalPaisa;
+  return totals;
+}
+
+function formatCartTotals(state) {
+  const totals = cartTotals(state);
+  const lines = [`Cart subtotal: ${formatRupees(totals.subtotalPaisa)}`];
+  if (state.discount.promotionId) {
+    lines.push(
+      `Promotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}], -${formatRupees(totals.discountPaisa)}`
+    );
+  }
+  if (PRICING.taxPercent > 0) lines.push(`Tax (${PRICING.taxPercent}%): ${formatRupees(totals.taxPaisa)}`);
+  if (state.orderType === "delivery") {
+    lines.push(
+      totals.deliveryFeePaisa === null
+        ? "Delivery fee: not set; not included in the total. Say the restaurant will confirm it; never estimate it."
+        : `Delivery fee: ${formatRupees(totals.deliveryFeePaisa)}`
+    );
+  }
+  lines.push(`Cart total: ${formatRupees(totals.totalPaisa)} (worked out by the server; quote it exactly, never add prices up yourself)`);
+  return lines.join("\n");
+}
 
 function formatCart(state) {
   if (state.items.length === 0) return "The cart is empty.";
   // Numbered so modifyItem can name a line.
   const lines = state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
-  const cart = `Cart (added with addItemToCart):\n${lines.join("\n")}\nCart subtotal: ${formatRupees(state.subtotalPaisa)}`;
-  if (!state.discount.promotionId) return cart;
-  return (
-    `${cart}\nPromotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}], ` +
-    `-${formatRupees(state.discount.amountPaisa)}\nCart total: ${formatRupees(state.totalPaisa)}`
-  );
+  return `Cart (added with addItemToCart):\n${lines.join("\n")}\n${formatCartTotals(state)}`;
+}
+
+// What the customer has already given for checkout, and what is still missing, so the bot asks only for that.
+function formatCheckoutDetails(state) {
+  const given = [];
+  if (state.orderType) given.push(`Order type: ${state.orderType}`);
+  if (state.customer.name) given.push(`Name: ${state.customer.name}`);
+  if (state.customer.phone) given.push(`Phone: ${state.customer.phone}`);
+  if (state.orderType === "pickup") given.push(`Pickup time: ${state.pickupTime || "as soon as possible (customer may give a time)"}`);
+  if (state.orderType === "delivery") {
+    const { deliveryAddress, deliveryUnit, deliveryInstructions } = state.customer;
+    if (deliveryAddress) given.push(`Address: ${deliveryAddress}`);
+    if (deliveryUnit !== null) given.push(`Apartment/unit: ${deliveryUnit || "none"}`);
+    if (deliveryInstructions !== null) given.push(`Delivery instructions: ${deliveryInstructions || "none"}`);
+    const readBack = deliveryAddressReadBack(state);
+    if (readBack) given.push(`Address to read back: "${readBack}" (${state.deliveryAddressConfirmed ? "confirmed by the customer" : "not confirmed yet"})`);
+  }
+  const missing = missingCheckoutDetails(state);
+  return [
+    `Checkout details: ${given.length ? given.join("; ") : "none yet"}`,
+    `Still needed before submit_order: ${missing.length ? missing.join(", ") : "nothing"}`,
+  ].join("\n");
 }
 
 function formatOrderState(state) {
-  if (state.status === "open") return `No order has been submitted in this chat yet.\n${formatCart(state)}`;
+  if (state.status === "open") return `No order has been submitted in this chat yet.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
   if (state.status === "needs_changes") {
-    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.\n${formatCart(state)}`;
+    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
   }
 
   const lines = state.items.map((line) => {
     const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
     return `- ${line.quantity} x ${line.name}${options}`;
   });
-  const summary = [...lines, `Total ${formatRupees(state.totalPaisa)} for ${state.orderType}.`].join("\n");
+  const { deliveryAddress, deliveryUnit } = state.customer;
+  const when =
+    state.orderType === "pickup"
+      ? `, pickup ${state.pickupTime ? `at ${state.pickupTime}` : "as soon as possible"}`
+      : `, to ${deliveryAddress}${deliveryUnit ? `, ${deliveryUnit}` : ""}`;
+  const summary = [...lines, `Total ${formatRupees(state.totalPaisa)} for ${state.orderType}${when}.`].join("\n");
   if (state.status === "saved") {
     return `Order ${state.orderNumber} was saved in this chat:\n${summary}\nDon't submit it again. For changes, the customer must call. Only submit a new order if they clearly ask for a separate one.`;
   }
@@ -209,14 +281,19 @@ const supabase =
 if (!supabase) {
   console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set; chat orders can't be saved until both are in .env.");
 }
+const orderStore = supabase ? createSupabaseOrderStore(supabase) : null;
 
-async function insertOrder(row) {
-  const { data, error } = await supabase.from("orders").insert(row).select("order_number").single();
-  if (error) throw error;
-  return data.order_number;
+// The save function for one checkout: its submission key ties the row to this chat and to how
+// many orders the chat has already saved, so the database refuses a second copy of the same order.
+function saveOrderFor(orderState) {
+  if (!orderStore) return null;
+  if (!orderState.chatSecret) orderState.chatSecret = crypto.randomUUID();
+  return async (row) => {
+    const { orderId, duplicate } = await orderStore.save(row, submissionKey(orderState.chatSecret, orderState.savedOrderCount || 0, row));
+    if (duplicate) console.warn(`Duplicate submission; returned the existing order ${orderId}.`);
+    return orderId;
+  };
 }
-
-const saveOrder = supabase ? insertOrder : null;
 
 // conversationHistory uses { role: "user" | "assistant", content } entries; Gemini calls the
 // assistant role "model".
@@ -241,7 +318,8 @@ const OVERLOAD_RETRY_DELAY_MS = 1500;
 const SUBMIT_ORDER_TOOL = {
   name: "submit_order",
   description:
-    "Save the customer's order. Call only after reading the full order back and getting a clear yes.",
+    "Save the customer's order. Call only after showing the reviewOrder summary and getting a clear yes. The items, " +
+    "promotion and customer details saved are the reviewed cart's, not anything passed here.",
   parametersJsonSchema: {
     type: "object",
     properties: {
@@ -249,7 +327,7 @@ const SUBMIT_ORDER_TOOL = {
       orderType: { type: "string", enum: ["pickup", "delivery"] },
       customerName: { type: "string" },
       customerPhone: { type: "string" },
-      deliveryAddress: { type: "string", description: "Required for delivery; leave out for pickup." },
+      deliveryAddress: { type: "string", description: "Leave out: delivery details are taken from setDeliveryDetails." },
       items: {
         type: "array",
         items: {
@@ -272,7 +350,8 @@ const SUBMIT_ORDER_TOOL = {
       promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>, if one applies." },
       promotionCode: { type: "string", description: "The code the customer gave, if the promotion needs one." },
     },
-    required: ["customerConfirmed", "orderType", "customerName", "customerPhone", "items"],
+    // Items, promotion and customer details come from the reviewed cart and session (see withReviewedCart).
+    required: ["customerConfirmed"],
   },
 };
 
@@ -520,7 +599,7 @@ function applyPromotion(args, orderState, contents) {
     promotion: check.promotion.name,
     discount: `-${formatRupees(check.discountPaisa)}`,
     cartSubtotal: formatRupees(orderState.subtotalPaisa),
-    cartTotal: formatRupees(orderState.totalPaisa),
+    cartTotal: formatRupees(cartTotals(orderState).totalPaisa),
     instruction: "The final total is confirmed when the order is saved.",
   };
 }
@@ -540,7 +619,205 @@ function recheckPromotion(orderState) {
     return { removed: discount.promotionName, reason: check.error || "it needs the order type confirmed again." };
   }
   applyDiscount(orderState, check, { promotionCode: discount.code });
-  return { applied: discount.promotionName, discount: `-${formatRupees(check.discountPaisa)}`, cartTotal: formatRupees(orderState.totalPaisa) };
+  return { applied: discount.promotionName, discount: `-${formatRupees(check.discountPaisa)}` };
+}
+
+// Name, phone and time are only what the customer said; the server checks each and keeps them for submit_order.
+const SET_PICKUP_DETAILS_TOOL = {
+  name: "setPickupDetails",
+  description:
+    "Record that this order is for pickup, with the details the customer has given. Include only fields the customer " +
+    "actually said; leave out anything already shown in <current_order>. pickupTime is optional: include it only if the " +
+    "customer asked for a specific time. The result lists what is still missing: ask only for that.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      customerName: { type: "string" },
+      customerPhone: { type: "string" },
+      pickupTime: { type: "string", description: "The time the customer asked for, like 18:30 or 6:30 pm." },
+      pickupAsSoonAsPossible: { type: "boolean", description: "True if the customer changed their mind and wants it as soon as possible." },
+    },
+  },
+};
+
+function setPickup(args, orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return { saved: false, error: "that order was already submitted, so its details can't be changed in chat." };
+  }
+  const checked = validatePickupDetails(args);
+  if (checked.error) {
+    return { saved: false, error: checked.error, instruction: "Nothing was changed. Ask the customer to check it; don't guess." };
+  }
+
+  const details = checked.details;
+  if (args.pickupAsSoonAsPossible === true) details.pickupTime = null;
+  else if (typeof args.pickupTime === "string" && args.pickupTime.trim()) {
+    const time = checkPickupTime(args.pickupTime, new Date(), OPENING_HOURS);
+    if (time.error) {
+      return { saved: false, error: time.error, instruction: "Nothing was changed. Ask for another time, or offer as soon as possible." };
+    }
+    details.pickupTime = time.time;
+  }
+
+  setPickupDetails(orderState, details);
+  const missing = missingCheckoutDetails(orderState);
+  return {
+    saved: true,
+    orderType: "pickup",
+    customerName: orderState.customer.name,
+    pickupTime: orderState.pickupTime || "as soon as possible",
+    stillNeeded: missing,
+    instruction: missing.length
+      ? "Ask the customer only for what's in stillNeeded."
+      : "Nothing else is needed. Read the order back and ask the customer to confirm.",
+  };
+}
+
+// Every field is only what the customer said; the server checks each and keeps them for submit_order.
+const SET_DELIVERY_DETAILS_TOOL = {
+  name: "setDeliveryDetails",
+  description:
+    "Record that this order is for delivery, with the details the customer has given. Include only what the customer " +
+    "actually said, in their words; never guess, complete or tidy up an address, and leave out anything already shown in " +
+    "<current_order>. The result lists what is still missing: ask only for that.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      customerName: { type: "string" },
+      customerPhone: { type: "string" },
+      deliveryAddress: { type: "string", description: "The full address (house/street and area) exactly as the customer gave it." },
+      apartmentOrUnit: { type: "string", description: "Apartment, flat or unit number, if the customer gave one." },
+      noApartmentOrUnit: { type: "boolean", description: "True only if the customer said there isn't one." },
+      deliveryInstructions: { type: "string", description: "Instructions for the rider, as the customer gave them." },
+      noDeliveryInstructions: { type: "boolean", description: "True only if the customer said they have none." },
+    },
+  },
+};
+
+function setDelivery(args, orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return { saved: false, error: "that order was already submitted, so its details can't be changed in chat." };
+  }
+  const checked = validateDeliveryDetails(args);
+  if (checked.error) {
+    return { saved: false, error: checked.error, instruction: "Nothing was changed. Ask the customer to check it; don't guess." };
+  }
+
+  setDeliveryDetails(orderState, checked.details);
+  const { name, phone, deliveryAddress, deliveryUnit, deliveryInstructions } = orderState.customer;
+  const missing = missingCheckoutDetails(orderState);
+  const readBack = deliveryAddressReadBack(orderState);
+  const onlyConfirmationLeft = missing.length === 1 && !orderState.deliveryAddressConfirmed && readBack;
+  return {
+    saved: true,
+    orderType: "delivery",
+    customerName: name,
+    customerPhone: phone,
+    deliveryAddress,
+    apartmentOrUnit: deliveryUnit === null ? null : deliveryUnit || "none",
+    deliveryInstructions: deliveryInstructions === null ? null : deliveryInstructions || "none",
+    ...(readBack ? { addressToReadBack: readBack, addressConfirmed: orderState.deliveryAddressConfirmed } : {}),
+    stillNeeded: missing,
+    instruction: onlyConfirmationLeft
+      ? readBackInstruction(readBack)
+      : missing.length
+        ? "Ask the customer only for what's in stillNeeded; don't fill anything in yourself."
+        : "Nothing else is needed. Read the order back and ask the customer to confirm.",
+  };
+}
+
+function readBackInstruction(readBack) {
+  return (
+    `Repeat the full delivery address to the customer exactly as written here: "${readBack}". Ask them to confirm it ` +
+    "or correct it, and wait for their answer. If they clearly confirm, call confirmDeliveryAddress; if they correct " +
+    "anything, call setDeliveryDetails with the correction."
+  );
+}
+
+const CONFIRM_DELIVERY_ADDRESS_TOOL = {
+  name: "confirmDeliveryAddress",
+  description:
+    "Record that the customer explicitly confirmed the delivery address you read back in your previous message. Call it " +
+    "only when the customer's latest message clearly says the address is right (a plain yes or equivalent). Anything " +
+    "unclear is not confirmation: ask again. If they correct it, call setDeliveryDetails instead.",
+};
+
+function confirmAddress(orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return { confirmed: false, error: "that order was already submitted, so its details can't be changed in chat." };
+  }
+  const result = confirmDeliveryAddress(orderState, orderState.lastReply);
+  if (result.error) {
+    return {
+      confirmed: false,
+      error: result.error,
+      instruction: result.readBack ? readBackInstruction(result.readBack) : "Ask the customer for what's missing first.",
+    };
+  }
+  return { confirmed: true, address: result.readBack, stillNeeded: missingCheckoutDetails(orderState) };
+}
+
+// No parameters: the summary is built from this chat's order state and the server's totals.
+const REVIEW_ORDER_TOOL = {
+  name: "reviewOrder",
+  description:
+    "Get the complete order summary to show the customer before checkout: items, quantities, customizations, pickup or " +
+    "delivery details, any valid promotion, and the total. Call it once all details are collected, show the customer " +
+    "the text exactly as returned, and ask them to confirm. submit_order is refused unless this summary was shown for " +
+    "the order as it stands.",
+};
+
+function reviewOrder(orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return { ready: false, error: "that order was already submitted." };
+  }
+  orderState.reviewedFingerprint = null;
+  if (orderState.items.length === 0) return { ready: false, error: "the cart is empty.", instruction: "Help the customer add items first." };
+
+  // Promotions are re-checked here, so only one that is still valid appears in the summary.
+  const promotionUpdate = recheckPromotion(orderState);
+  const totals = cartTotals(orderState);
+  const { summary, text } = buildOrderSummary(orderState, totals, missingCheckoutDetails(orderState), PRICING);
+  if (!summary.readyForCheckout) {
+    return {
+      ready: false,
+      summary,
+      ...(promotionUpdate && promotionUpdate.removed ? { promotionRemoved: promotionUpdate } : {}),
+      instruction: "Not ready for checkout. Ask the customer only for what's in stillNeeded, then call reviewOrder again.",
+    };
+  }
+
+  orderState.reviewedFingerprint = orderFingerprint(orderState);
+  return {
+    ready: true,
+    summary,
+    text,
+    ...(promotionUpdate && promotionUpdate.removed ? { promotionRemoved: promotionUpdate } : {}),
+    instruction:
+      "Show the customer this summary exactly as written in text, every line, then ask them to reply \"yes\" to place " +
+      "the order or say what to change. Call submit_order only if their next message is a plain yes; replies like " +
+      "\"ok\", \"sure\", \"maybe\" or \"yes but...\" are not confirmation, so ask again.",
+  };
+}
+
+// The order must have been reviewed as it stands now, and the summary shown in the bot's last
+// message (kept by the server), so the customer confirms exactly what will be saved.
+function checkReviewedOrder(orderState) {
+  if (orderState.items.length === 0) return "the cart is empty. Add the items with addItemToCart first.";
+  cartTotals(orderState);
+  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== orderFingerprint(orderState)) {
+    return "the order hasn't been reviewed as it stands now. Call reviewOrder, show the customer the summary, and ask them to confirm.";
+  }
+  const shown = normaliseForReadBack(orderState.lastReply);
+  const { summary } = buildOrderSummary(orderState, cartTotals(orderState), [], PRICING);
+  const required = [
+    ...summary.items.map((item) => `${item.quantity} x ${item.name}`),
+    `total: ${summary.totals.total}`,
+  ];
+  if (!required.every((part) => shown.includes(normaliseForReadBack(part)))) {
+    return "the order summary wasn't shown to the customer in your last message. Show the reviewOrder summary exactly and ask them to confirm.";
+  }
+  return null;
 }
 
 const CART_CHANGING_TOOLS = ["addItemToCart", "modifyItem", "removeItem"];
@@ -553,6 +830,10 @@ function runDataTool(call, orderState, contents) {
   }
   if (call.name === VIEW_CART_TOOL.name) return cartSummary(orderState);
   if (call.name === APPLY_PROMOTION_TOOL.name) return applyPromotion(call.args || {}, orderState, contents);
+  if (call.name === SET_PICKUP_DETAILS_TOOL.name) return setPickup(call.args || {}, orderState);
+  if (call.name === SET_DELIVERY_DETAILS_TOOL.name) return setDelivery(call.args || {}, orderState);
+  if (call.name === CONFIRM_DELIVERY_ADDRESS_TOOL.name) return confirmAddress(orderState);
+  if (call.name === REVIEW_ORDER_TOOL.name) return reviewOrder(orderState);
 
   let result;
   if (call.name === MODIFY_ITEM_TOOL.name) result = modifyItem(call.args || {}, orderState);
@@ -560,7 +841,9 @@ function runDataTool(call, orderState, contents) {
   else result = addItemToCart(call.args || {}, orderState);
 
   const promotion = CART_CHANGING_TOOLS.includes(call.name) ? recheckPromotion(orderState) : null;
-  return promotion ? { ...result, promotion } : result;
+  // The total is always the server's, worked out after the cart and any promotion settle.
+  const withTotal = result.cartSubtotal ? { ...result, cartTotal: formatRupees(cartTotals(orderState).totalPaisa) } : result;
+  return promotion ? { ...withTotal, promotion } : withTotal;
 }
 
 const DATA_TOOL_NAMES = [
@@ -570,6 +853,10 @@ const DATA_TOOL_NAMES = [
   REMOVE_ITEM_TOOL.name,
   VIEW_CART_TOOL.name,
   APPLY_PROMOTION_TOOL.name,
+  SET_PICKUP_DETAILS_TOOL.name,
+  SET_DELIVERY_DETAILS_TOOL.name,
+  CONFIRM_DELIVERY_ADDRESS_TOOL.name,
+  REVIEW_ORDER_TOOL.name,
 ];
 
 // Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
@@ -585,7 +872,7 @@ function generateReply(contents, { useTools, orderState }) {
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
       ...(useTools
-        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, APPLY_PROMOTION_TOOL, SUBMIT_ORDER_TOOL] }] }
+        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, APPLY_PROMOTION_TOOL, SET_PICKUP_DETAILS_TOOL, SET_DELIVERY_DETAILS_TOOL, CONFIRM_DELIVERY_ADDRESS_TOOL, REVIEW_ORDER_TOOL, SUBMIT_ORDER_TOOL] }] }
         : {}),
     },
   });
@@ -604,18 +891,119 @@ async function generateWithRetry(contents, options) {
 
 // Saved and failed orders get a fixed reply from the server, so the customer is told exactly
 // what happened. Only a problem the customer can fix goes back to the model to explain.
+// Delivery details only ever come from setDeliveryDetails, never from the model's arguments,
+// and every one must have been answered before the order can be submitted.
+function withDeliveryDetails(merged, orderState) {
+  if (orderState.orderType !== "delivery") {
+    return { error: "delivery details haven't been collected. Call setDeliveryDetails with what the customer gives first." };
+  }
+  const missing = missingCheckoutDetails(orderState);
+  if (missing.length) return { error: `still needed from the customer: ${missing.join(", ")}.` };
+  const { name, phone, deliveryAddress, deliveryUnit, deliveryInstructions } = orderState.customer;
+  return { args: { ...merged, customerName: name, customerPhone: phone, deliveryAddress, deliveryUnit, deliveryInstructions } };
+}
+
+// Pickup details the customer gave through setPickupDetails fill any gaps in the model's
+// arguments. The pickup time only ever comes from there, and is checked again at submit.
+function withCheckoutDetails(args, orderState) {
+  const merged = { ...(args || {}), pickupTime: null, deliveryUnit: null, deliveryInstructions: null };
+  if (!merged.orderType && orderState.orderType) merged.orderType = orderState.orderType;
+  if (merged.orderType === "delivery") return withDeliveryDetails(merged, orderState);
+  if (orderState.orderType !== "pickup" || (merged.orderType && merged.orderType !== "pickup")) return { args: merged };
+  merged.orderType = "pickup";
+  if (!merged.customerName) merged.customerName = orderState.customer.name;
+  if (!merged.customerPhone) merged.customerPhone = orderState.customer.phone;
+  merged.pickupTime = orderState.pickupTime;
+  if (orderState.pickupTime) {
+    const time = checkPickupTime(orderState.pickupTime, new Date(), OPENING_HOURS);
+    if (time.error) return { error: `the pickup time ${orderState.pickupTime} no longer works: ${time.error} Ask for a new time or as soon as possible.` };
+  }
+  return { args: merged };
+}
+
+// Items and promotion come from the reviewed cart, not from the model's arguments.
+function withReviewedCart(args, orderState) {
+  const problem = checkReviewedOrder(orderState);
+  if (problem) return { error: problem };
+  return {
+    args: {
+      ...(args || {}),
+      items: orderState.items.map((line) => ({
+        itemId: line.itemId,
+        quantity: line.quantity,
+        options: line.options.map((o) => ({ name: o.name, choice: o.choice })),
+      })),
+      promotionId: orderState.discount.promotionId || undefined,
+      promotionCode: orderState.discount.code || undefined,
+    },
+  };
+}
+
+// The customer's own latest message: the last user turn with text (tool results have none).
+function latestCustomerMessage(contents) {
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i].role !== "user") continue;
+    const part = (contents[i].parts || []).find((p) => typeof p.text === "string");
+    if (part) return part.text;
+  }
+  return "";
+}
+
+// The confirmation gate: nothing is saved unless the customer's reply to the summary, read by
+// the server rather than judged by the model, is an explicit yes.
+function checkCustomerConfirmed(contents) {
+  const result = checkConfirmation(latestCustomerMessage(contents));
+  if (result.confirmed) return null;
+  return (
+    `nothing was saved: the customer's reply isn't an explicit confirmation (${result.reason}) ` +
+    "Show the reviewOrder summary again, exactly, and ask them plainly to reply \"yes\" to place it, or to say what to change."
+  );
+}
+
+// A second submit of an order this chat already saved, or one sent while a save is still
+// running (e.g. a double click), is refused here, before anything reaches the database.
+function duplicateSubmission(orderState) {
+  if (orderState.status === "saved") {
+    return `this order was already saved as ${orderState.orderNumber}. Don't submit it again; tell the customer it's already placed. For changes they must call the restaurant.`;
+  }
+  if (orderState.checkoutInProgress) return "this order is already being saved. Don't submit it again; wait for the result.";
+  return null;
+}
+
+async function submitCheckedOrder(call, contents, orderState) {
+  // Missing details are reported first, since the customer has to supply them before any review.
+  const details = withCheckoutDetails(call.args, orderState);
+  let prepared = details.error ? details : withReviewedCart(details.args, orderState);
+  if (!prepared.error) {
+    const notConfirmed = checkCustomerConfirmed(contents);
+    if (notConfirmed) prepared = { error: notConfirmed };
+  }
+  if (prepared.error) return { status: "invalid", error: prepared.error };
+
+  orderState.checkoutInProgress = true;
+  try {
+    return await placeOrder({
+      args: prepared.args,
+      menu: MENU,
+      promotions: PROMOTIONS,
+      today: todayInRestaurant(new Date()),
+      saveOrder: saveOrderFor(orderState),
+      phone: RESTAURANT_PHONE_FALLBACK,
+      pricing: PRICING,
+    });
+  } finally {
+    orderState.checkoutInProgress = false;
+  }
+}
+
 async function handleOrderCall(call, contents, response, orderState) {
-  const result = await placeOrder({
-    args: call.args,
-    menu: MENU,
-    promotions: PROMOTIONS,
-    today: todayInRestaurant(new Date()),
-    saveOrder,
-    phone: RESTAURANT_PHONE_FALLBACK,
-  });
-  recordOrderAttempt(orderState, result);
+  const duplicate = duplicateSubmission(orderState);
+  const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState);
+  // A refused duplicate leaves the saved order's state exactly as it was.
+  if (result.status !== "duplicate") recordOrderAttempt(orderState, result);
 
   if (result.status === "saved") {
+    orderState.savedOrderCount = (orderState.savedOrderCount || 0) + 1;
     console.log(`Order ${result.orderNumber} saved.`);
     return result.reply;
   }
@@ -742,6 +1130,9 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const reply = await askGemini(conversationHistory, message.trim(), orderState);
+    // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
+    // check what the customer was really shown.
+    orderState.lastReply = reply || null;
     if (!reply) {
       return res.json({
         reply: `Sorry, I couldn't answer that. Please try rephrasing, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,

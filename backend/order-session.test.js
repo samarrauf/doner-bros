@@ -39,7 +39,9 @@ test("a new session starts with an empty, unconfirmed order", () => {
   assert.deepEqual(createOrderState(), {
     items: [],
     orderType: null,
-    customer: { name: null, phone: null, deliveryAddress: null },
+    customer: { name: null, phone: null, deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null },
+    pickupTime: null,
+    deliveryAddressConfirmed: false,
     discount: { promotionId: null, promotionName: null, amountPaisa: 0 },
     subtotalPaisa: 0,
     totalPaisa: 0,
@@ -56,7 +58,13 @@ test("a saved order fills in items, options, customer and server totals", async 
   assert.equal(state.confirmed, true);
   assert.equal(state.orderNumber, 7);
   assert.equal(state.orderType, "delivery");
-  assert.deepEqual(state.customer, { name: "Test Customer", phone: "0300 1234567", deliveryAddress: "House 5, Shalimar City" });
+  assert.deepEqual(state.customer, {
+    name: "Test Customer",
+    phone: "0300 1234567",
+    deliveryAddress: "House 5, Shalimar City",
+    deliveryUnit: null,
+    deliveryInstructions: null,
+  });
   assert.deepEqual(
     state.items.map((line) => [line.itemId, line.quantity, line.options]),
     [

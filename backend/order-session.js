@@ -14,7 +14,10 @@ function createOrderState() {
   return {
     items: [],
     orderType: null,
-    customer: { name: null, phone: null, deliveryAddress: null },
+    // deliveryUnit and deliveryInstructions: null = not asked yet, "" = the customer said there's none.
+    customer: { name: null, phone: null, deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null },
+    pickupTime: null, // "HH:MM" when the customer asked for one; null means as soon as possible
+    deliveryAddressConfirmed: false, // the customer confirmed the address after hearing it read back
     discount: { promotionId: null, promotionName: null, amountPaisa: 0 },
     subtotalPaisa: 0,
     totalPaisa: 0,
@@ -37,7 +40,15 @@ function recordOrderAttempt(state, result) {
   const order = result.order;
   state.items = order.lines.map((line) => ({ ...line, options: line.options.map((o) => ({ ...o })) }));
   state.orderType = order.orderType;
-  state.customer = { name: order.customerName, phone: order.customerPhone, deliveryAddress: order.deliveryAddress };
+  state.customer = {
+    name: order.customerName,
+    phone: order.customerPhone,
+    deliveryAddress: order.deliveryAddress,
+    deliveryUnit: order.deliveryUnit,
+    deliveryInstructions: order.deliveryInstructions,
+  };
+  state.pickupTime = order.pickupTime;
+  state.deliveryAddressConfirmed = order.orderType === "delivery";
   state.discount = {
     promotionId: order.promotion ? order.promotion.id : null,
     promotionName: order.promotion ? order.promotion.name : null,
@@ -143,6 +154,85 @@ function clearDiscount(state) {
   return state;
 }
 
+// details come from orders.validatePickupDetails; only the fields the customer gave are changed.
+function setPickupDetails(state, details) {
+  state.orderType = "pickup";
+  Object.assign(state.customer, { deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null });
+  state.deliveryAddressConfirmed = false;
+  if (details.customerName !== undefined) state.customer.name = details.customerName;
+  if (details.customerPhone !== undefined) state.customer.phone = details.customerPhone;
+  if (details.pickupTime !== undefined) state.pickupTime = details.pickupTime;
+  state.confirmed = false;
+  return state;
+}
+
+// details come from orders.validateDeliveryDetails; only the fields the customer gave are changed.
+function setDeliveryDetails(state, details) {
+  if (state.orderType !== "delivery") state.deliveryAddressConfirmed = false;
+  state.orderType = "delivery";
+  state.pickupTime = null;
+  // A changed address or unit has to be read back and confirmed again.
+  for (const [field, key] of [["deliveryAddress", "deliveryAddress"], ["deliveryUnit", "deliveryUnit"]]) {
+    if (details[field] !== undefined && details[field] !== state.customer[key]) state.deliveryAddressConfirmed = false;
+  }
+  for (const [field, key] of [
+    ["customerName", "name"],
+    ["customerPhone", "phone"],
+    ["deliveryAddress", "deliveryAddress"],
+    ["deliveryUnit", "deliveryUnit"],
+    ["deliveryInstructions", "deliveryInstructions"],
+  ]) {
+    if (details[field] !== undefined) state.customer[key] = details[field];
+  }
+  state.confirmed = false;
+  return state;
+}
+
+// What submit_order still needs from the customer, so the bot asks only for that.
+function missingCheckoutDetails(state) {
+  const missing = [];
+  if (!state.orderType) missing.push("pickup or delivery");
+  if (!state.customer.name) missing.push("customer name");
+  if (!state.customer.phone) missing.push("customer phone number");
+  if (state.orderType === "delivery") {
+    if (!state.customer.deliveryAddress) missing.push("full delivery address");
+    if (state.customer.deliveryUnit === null) missing.push("apartment/unit number, or confirmation there isn't one");
+    if (state.customer.deliveryInstructions === null) missing.push("delivery instructions, or confirmation there are none");
+    if (deliveryAddressReadBack(state) && !state.deliveryAddressConfirmed) {
+      missing.push("customer's confirmation of the delivery address, after reading it back");
+    }
+  }
+  return missing;
+}
+
+// The full captured address as it must be read back: the address, then the unit if there is one.
+// null until both the address and the unit question have been answered.
+function deliveryAddressReadBack(state) {
+  const { deliveryAddress, deliveryUnit } = state.customer;
+  if (!deliveryAddress || deliveryUnit === null) return null;
+  return deliveryUnit ? `${deliveryAddress}, ${deliveryUnit}` : deliveryAddress;
+}
+
+// Ignores case, spacing and markdown emphasis, so a bolded read-back still counts.
+function normaliseForReadBack(text) {
+  return String(text || "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// lastReply is the bot's previous message, kept by the server. The address only counts as
+// confirmed if that message repeated it in full, so the customer heard exactly what will be saved.
+function confirmDeliveryAddress(state, lastReply) {
+  if (state.orderType !== "delivery") return { error: "this isn't a delivery order." };
+  const readBack = deliveryAddressReadBack(state);
+  if (!readBack) {
+    return { error: `the address isn't complete yet; still needed: ${missingCheckoutDetails(state).join(", ")}.` };
+  }
+  if (!normaliseForReadBack(lastReply).includes(normaliseForReadBack(readBack))) {
+    return { error: "the full address wasn't read back to the customer in your last message.", readBack };
+  }
+  state.deliveryAddressConfirmed = true;
+  return { readBack };
+}
+
 // Itemized cart for viewCart: line numbers, quantities and chosen options only, no prices or totals.
 function cartSummary(state) {
   return {
@@ -209,4 +299,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, cartSummary, SessionStore, readSessionId, sessionCookie };
+module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, readSessionId, sessionCookie };

@@ -1,0 +1,7 @@
+{
+  "note": "Tax and delivery fee the backend uses to work out order totals. Neither has been confirmed by the restaurant yet, so menu prices are treated as final (taxPercent 0) and the delivery fee is not set (null): the bot then tells delivery customers the restaurant confirms the fee. Update both once the restaurant confirms them.",
+  "currency": "PKR",
+  "priceUnit": "paisa (100 paisa = Rs 1)",
+  "taxPercent": 0,
+  "deliveryFeePaisa": null
+}
