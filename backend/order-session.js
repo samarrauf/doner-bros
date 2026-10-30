@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const SESSION_COOKIE = "donerbros_session";
 const SESSION_IDLE_MS = 2 * 60 * 60 * 1000;
 const MAX_SESSIONS = 1000;
+const MAX_CART_LINES = 20; // same limit submit_order applies
 
 // status: "open" (nothing submitted yet), "needs_changes" (last submit was rejected),
 // "saved" (in the database), "not_saved" (valid, but the database save failed).
@@ -49,6 +50,89 @@ function recordOrderAttempt(state, result) {
   state.orderNumber = result.status === "saved" ? result.orderNumber : null;
   state.problem = null;
   return state;
+}
+
+// line comes from orders.priceCartItem, so its price is the server's. Adding after an order
+// was saved or failed starts a new cart rather than editing that order.
+function addToCart(state, line) {
+  if (state.status === "saved" || state.status === "not_saved") Object.assign(state, createOrderState());
+  if (state.items.length >= MAX_CART_LINES) return { error: `the cart is limited to ${MAX_CART_LINES} lines.` };
+
+  state.items.push({ ...line, options: line.options.map((o) => ({ ...o })) });
+  state.subtotalPaisa += line.lineTotalPaisa;
+  state.totalPaisa = state.subtotalPaisa;
+  state.confirmed = false;
+  return { state };
+}
+
+// line comes from orders.priceModifiedLine; the subtotal moves by the price difference.
+function replaceCartLine(state, index, line) {
+  const previous = state.items[index];
+  state.items[index] = { ...line, options: line.options.map((o) => ({ ...o })) };
+  state.subtotalPaisa += line.lineTotalPaisa - previous.lineTotalPaisa;
+  state.totalPaisa = state.subtotalPaisa;
+  state.confirmed = false;
+  return state;
+}
+
+// Finds the cart line the customer means, by line number and/or menu item id:
+// { index }, { ambiguous: [indexes] } when the item is on more than one line, or { error }.
+function findCartLine(state, { lineNumber, itemId }) {
+  if (state.items.length === 0) return { error: "the cart is empty." };
+  const hasLine = lineNumber !== undefined && lineNumber !== null;
+  const wantedId = typeof itemId === "string" ? itemId.trim() : "";
+  if (!hasLine && !wantedId) return { error: "no item was named." };
+
+  if (hasLine) {
+    const index = lineNumber - 1;
+    if (!Number.isInteger(lineNumber) || !state.items[index]) {
+      return { error: `there is no line ${lineNumber}; the cart has ${state.items.length} line(s).` };
+    }
+    if (wantedId && state.items[index].itemId !== wantedId) {
+      return { error: `line ${lineNumber} is ${state.items[index].name}, not the item named.` };
+    }
+    return { index };
+  }
+
+  const matches = state.items.map((line, index) => (line.itemId === wantedId ? index : -1)).filter((i) => i >= 0);
+  if (matches.length === 0) return { error: "that item isn't in the cart." };
+  if (matches.length > 1) return { ambiguous: matches };
+  return { index: matches[0] };
+}
+
+// quantity is how many to take off the line; leaving it out removes the whole line. Totals
+// are re-added from the remaining lines, whose prices the server set.
+function removeFromCart(state, index, quantity) {
+  const line = state.items[index];
+  if (quantity !== undefined && (!Number.isInteger(quantity) || quantity < 1 || quantity > line.quantity)) {
+    return { error: `the quantity to remove must be a whole number from 1 to ${line.quantity}.` };
+  }
+
+  const removing = quantity === undefined ? line.quantity : quantity;
+  const remaining = line.quantity - removing;
+  if (remaining === 0) state.items.splice(index, 1);
+  else state.items[index] = { ...line, quantity: remaining, lineTotalPaisa: line.unitPricePaisa * remaining };
+
+  state.subtotalPaisa = state.items.reduce((sum, item) => sum + item.lineTotalPaisa, 0);
+  state.totalPaisa = state.subtotalPaisa;
+  state.confirmed = false;
+  return { removed: { ...line, quantity: removing, lineTotalPaisa: line.unitPricePaisa * removing } };
+}
+
+// Itemized cart for viewCart: line numbers, quantities and chosen options only, no prices or totals.
+function cartSummary(state) {
+  return {
+    status: state.status,
+    ...(state.status === "saved" || state.status === "not_saved"
+      ? { note: "These items were already submitted as an order, so they can't be changed in chat." }
+      : {}),
+    items: state.items.map((line, index) => ({
+      lineNumber: index + 1,
+      name: line.name,
+      quantity: line.quantity,
+      options: line.options.map((o) => `${o.name}: ${o.choice}`),
+    })),
+  };
 }
 
 class SessionStore {
@@ -101,4 +185,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, recordOrderAttempt, SessionStore, readSessionId, sessionCookie };
+module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, cartSummary, SessionStore, readSessionId, sessionCookie };

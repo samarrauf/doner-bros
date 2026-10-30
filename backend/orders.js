@@ -120,6 +120,49 @@ function priceOrderLines(requestedItems, menu) {
   return { lines };
 }
 
+// Required options the customer hasn't chosen yet, with their real choices, so the bot can ask.
+function missingRequiredOptions(item, requestedOptions) {
+  const requested = Array.isArray(requestedOptions) ? requestedOptions : [];
+  return (item.options || [])
+    .filter((option) => option.required && !requested.some((r) => r && sameText(r.name, option.name)))
+    .map((option) => ({ name: option.name, choices: option.choices.map((c) => (typeof c === "string" ? c : c.name)) }));
+}
+
+// Checks and prices one cart item: { line }, { missingOptions } or { error }.
+function priceCartItem(request, menu) {
+  const item = menu.categories.flatMap((category) => category.items).find((i) => i.id === (request && request.itemId));
+  if (item && item.availability !== "unavailable") {
+    const missingOptions = missingRequiredOptions(item, request.options);
+    if (missingOptions.length) return { missingOptions };
+  }
+  const priced = priceOrderLines([request], menu);
+  return priced.error ? { error: priced.error } : { line: priced.lines[0] };
+}
+
+// Applies the customer's changes (new quantity and/or option choices) to one cart line, then
+// re-checks the whole line against the menu: { line }, { missingOptions } or { error }.
+function priceModifiedLine(line, changes, menu) {
+  const hasQuantity = changes.quantity !== undefined;
+  const requested = changes.options === undefined ? [] : changes.options;
+  if (!Array.isArray(requested)) return { error: "options must be a list of { name, choice }." };
+  if (!hasQuantity && requested.length === 0) return { error: "no change was given." };
+
+  const options = line.options.map((o) => ({ ...o }));
+  for (const change of requested) {
+    if (!change || typeof change.name !== "string" || typeof change.choice !== "string") {
+      return { error: "each option change needs an option name and a choice." };
+    }
+    if (requested.filter((c) => c && sameText(c.name, change.name)).length > 1) {
+      return { error: `"${change.name}" was changed more than once.` };
+    }
+    const existing = options.find((o) => sameText(o.name, change.name));
+    if (existing) existing.choice = change.choice;
+    else options.push({ name: change.name, choice: change.choice });
+  }
+
+  return priceCartItem({ itemId: line.itemId, quantity: hasQuantity ? changes.quantity : line.quantity, options }, menu);
+}
+
 /* ---------- Promotions ---------- */
 
 function calculateDiscount(promotion, lines, subtotalPaisa) {
@@ -254,4 +297,4 @@ async function placeOrder({ args, menu, promotions, today, saveOrder, phone }) {
   }
 }
 
-module.exports = { todayInRestaurant, isPromotionLive, validateOrder, toOrderRow, placeOrder };
+module.exports = { todayInRestaurant, isPromotionLive, validateOrder, priceCartItem, priceModifiedLine, toOrderRow, placeOrder };

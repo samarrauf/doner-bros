@@ -7,8 +7,19 @@ const dotenv = require("dotenv");
 const express = require("express");
 const { GoogleGenAI } = require("@google/genai");
 const { createClient } = require("@supabase/supabase-js");
-const { todayInRestaurant, isPromotionLive, placeOrder } = require("./orders");
-const { SessionStore, recordOrderAttempt, readSessionId, sessionCookie } = require("./order-session");
+const { todayInRestaurant, isPromotionLive, priceCartItem, priceModifiedLine, placeOrder } = require("./orders");
+const {
+  SessionStore,
+  recordOrderAttempt,
+  addToCart,
+  replaceCartLine,
+  findCartLine,
+  removeFromCart,
+  cartSummary,
+  readSessionId,
+  sessionCookie,
+} = require("./order-session");
+const { GET_MENU_TOOL, getMenu } = require("./menu-tool");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -127,10 +138,17 @@ const MENU = readJson("data/menu.json");
 const PROMOTIONS = readJson("data/promotions.json").promotions;
 const SYSTEM_PROMPT = buildSystemPrompt();
 
+function formatCart(state) {
+  if (state.items.length === 0) return "The cart is empty.";
+  // Numbered so modifyItem can name a line.
+  const lines = state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
+  return `Cart (added with addItemToCart):\n${lines.join("\n")}\nCart subtotal: ${formatRupees(state.subtotalPaisa)}`;
+}
+
 function formatOrderState(state) {
-  if (state.status === "open") return "No order has been submitted in this chat yet.";
+  if (state.status === "open") return `No order has been submitted in this chat yet.\n${formatCart(state)}`;
   if (state.status === "needs_changes") {
-    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.`;
+    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.\n${formatCart(state)}`;
   }
 
   const lines = state.items.map((line) => {
@@ -241,7 +259,194 @@ const SUBMIT_ORDER_TOOL = {
   },
 };
 
-function generateReply(contents, { allowOrder, orderState }) {
+// Only the item, quantity and the options the customer named come from the model; the server
+// checks them against menu.json and sets the price.
+const ADD_ITEM_TO_CART_TOOL = {
+  name: "addItemToCart",
+  description:
+    "Add one menu item to this customer's cart. Include only options the customer actually chose; never pick one for them. " +
+    "If the result lists missingOptions, nothing was added: ask the customer to choose.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      itemId: { type: "string", description: "The [id: ...] shown for the item in the menu." },
+      quantity: { type: "integer" },
+      options: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, choice: { type: "string" } },
+          required: ["name", "choice"],
+        },
+      },
+    },
+    required: ["itemId", "quantity"],
+  },
+};
+
+function describeCartLine(line) {
+  const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
+  return `${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`;
+}
+
+function addItemToCart(args, orderState) {
+  const priced = priceCartItem(args, MENU);
+  if (priced.missingOptions) {
+    return {
+      added: false,
+      missingOptions: priced.missingOptions,
+      instruction: "Nothing was added. Ask the customer which choice they want for each missing option; don't choose for them.",
+    };
+  }
+  if (priced.error) return { added: false, error: priced.error };
+
+  const result = addToCart(orderState, priced.line);
+  if (result.error) return { added: false, error: result.error };
+  return {
+    added: true,
+    item: describeCartLine(priced.line),
+    cart: orderState.items.map(describeCartLine),
+    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+  };
+}
+
+// The line keeps its item; only quantity and option choices change, and the server re-prices it.
+const MODIFY_ITEM_TOOL = {
+  name: "modifyItem",
+  description:
+    "Change the quantity or option choices of one item already in this customer's cart. Use the line number shown in " +
+    "<current_order>. Include only changes the customer actually asked for. If the result has an error or missingOptions, " +
+    "nothing was changed: ask the customer to clarify.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      lineNumber: { type: "integer", description: "The cart line to change, numbered as in <current_order>." },
+      quantity: { type: "integer", description: "The new quantity, if the customer changed it." },
+      options: {
+        type: "array",
+        description: "Only the options being changed, with the customer's new choice.",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, choice: { type: "string" } },
+          required: ["name", "choice"],
+        },
+      },
+    },
+    required: ["lineNumber"],
+  },
+};
+
+function notModified(error) {
+  return { modified: false, error, instruction: "Nothing was changed. Explain this simply and ask the customer to clarify; don't guess." };
+}
+
+function modifyItem(args, orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return notModified("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
+  }
+  const index = args.lineNumber - 1;
+  if (!Number.isInteger(args.lineNumber) || !orderState.items[index]) {
+    const count = orderState.items.length;
+    return notModified(count ? `there is no line ${args.lineNumber}; the cart has ${count} line(s).` : "the cart is empty.");
+  }
+
+  const priced = priceModifiedLine(orderState.items[index], args, MENU);
+  if (priced.missingOptions) {
+    return { modified: false, missingOptions: priced.missingOptions, instruction: "Nothing was changed. Ask the customer to choose." };
+  }
+  if (priced.error) return notModified(priced.error);
+
+  replaceCartLine(orderState, index, priced.line);
+  return {
+    modified: true,
+    item: describeCartLine(priced.line),
+    cart: orderState.items.map(describeCartLine),
+    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+  };
+}
+
+const REMOVE_ITEM_TOOL = {
+  name: "removeItem",
+  description:
+    "Remove an item from this customer's cart, or reduce how many of it there are. Name the item by its line number in " +
+    "<current_order>, or by its menu id. Leave out quantity to remove the whole line. If the result has an error or " +
+    "lists ambiguous lines, nothing was removed: ask the customer which item and how many.",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      lineNumber: { type: "integer", description: "The cart line, numbered as in <current_order>." },
+      itemId: { type: "string", description: "The item's [id: ...] from the menu, if the line number isn't known." },
+      quantity: { type: "integer", description: "How many to take off. Leave out to remove the whole line." },
+    },
+  },
+};
+
+function numberedCart(state) {
+  return state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
+}
+
+function notRemoved(error) {
+  return { removed: false, error, instruction: "Nothing was removed. Explain this simply and ask the customer to clarify; don't guess." };
+}
+
+function removeItem(args, orderState) {
+  if (orderState.status === "saved" || orderState.status === "not_saved") {
+    return notRemoved("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
+  }
+
+  const found = findCartLine(orderState, { lineNumber: args.lineNumber, itemId: args.itemId });
+  if (found.ambiguous) {
+    return {
+      removed: false,
+      ambiguous: found.ambiguous.map((index) => `${index + 1}. ${describeCartLine(orderState.items[index])}`),
+      instruction: "That item is on more than one line. Nothing was removed. Ask the customer which line they mean.",
+    };
+  }
+  if (found.error) return notRemoved(found.error);
+
+  const quantity = args.quantity === null ? undefined : args.quantity;
+  const result = removeFromCart(orderState, found.index, quantity);
+  if (result.error) return notRemoved(result.error);
+  return {
+    removed: true,
+    removedItem: describeCartLine(result.removed),
+    cart: numberedCart(orderState),
+    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+  };
+}
+
+// No parameters: always this chat's own cart.
+const VIEW_CART_TOOL = {
+  name: "viewCart",
+  description:
+    "Get an itemized list of this customer's cart: line numbers, items, quantities and chosen options. No prices or totals. " +
+    "Call this when the customer asks what's in their cart or order.",
+};
+
+// Tools that only read or update this chat's data; the model sees the result and carries on.
+function runDataTool(call, orderState) {
+  if (call.name === GET_MENU_TOOL.name) {
+    console.log("Gemini called getMenu.");
+    return getMenu();
+  }
+  if (call.name === VIEW_CART_TOOL.name) return cartSummary(orderState);
+  if (call.name === MODIFY_ITEM_TOOL.name) return modifyItem(call.args || {}, orderState);
+  if (call.name === REMOVE_ITEM_TOOL.name) return removeItem(call.args || {}, orderState);
+  return addItemToCart(call.args || {}, orderState);
+}
+
+const DATA_TOOL_NAMES = [
+  GET_MENU_TOOL.name,
+  ADD_ITEM_TO_CART_TOOL.name,
+  MODIFY_ITEM_TOOL.name,
+  REMOVE_ITEM_TOOL.name,
+  VIEW_CART_TOOL.name,
+];
+
+// Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
+const MAX_TOOL_ROUNDS = 3;
+
+function generateReply(contents, { useTools, orderState }) {
   return gemini.models.generateContent({
     model: GEMINI_MODEL,
     contents,
@@ -250,7 +455,9 @@ function generateReply(contents, { allowOrder, orderState }) {
       temperature: 0.4,
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
-      ...(allowOrder ? { tools: [{ functionDeclarations: [SUBMIT_ORDER_TOOL] }] } : {}),
+      ...(useTools
+        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, SUBMIT_ORDER_TOOL] }] }
+        : {}),
     },
   });
 }
@@ -292,18 +499,33 @@ async function handleOrderCall(call, contents, response, orderState) {
     role: "user",
     parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error } } }],
   });
-  const followUp = await generateWithRetry(contents, { allowOrder: false, orderState });
+  const followUp = await generateWithRetry(contents, { useTools: false, orderState });
   return (followUp.text || "").trim();
 }
 
+// Gemini may call getMenu or addItemToCart, get the results back as functionResponses, then
+// answer or submit an order.
 async function askGemini(history, message, orderState) {
   const contents = toGeminiContents(history, message);
-  const response = await generateWithRetry(contents, { allowOrder: true, orderState });
+  let response = await generateWithRetry(contents, { useTools: true, orderState });
 
-  const orderCall = (response.functionCalls || []).find((call) => call.name === SUBMIT_ORDER_TOOL.name);
-  if (orderCall) return handleOrderCall(orderCall, contents, response, orderState);
+  for (let rounds = 1; ; rounds++) {
+    const calls = response.functionCalls || [];
+    const orderCall = calls.find((call) => call.name === SUBMIT_ORDER_TOOL.name);
+    if (orderCall) return handleOrderCall(orderCall, contents, response, orderState);
 
-  return (response.text || "").trim();
+    const dataCalls = calls.filter((call) => DATA_TOOL_NAMES.includes(call.name));
+    if (dataCalls.length === 0) return (response.text || "").trim();
+
+    contents.push(response.candidates[0].content, {
+      role: "user",
+      parts: dataCalls.map((call) => ({
+        functionResponse: { id: call.id, name: call.name, response: runDataTool(call, orderState) },
+      })),
+    });
+    // Past the cap, tools are switched off so the model has to reply in text.
+    response = await generateWithRetry(contents, { useTools: rounds < MAX_TOOL_ROUNDS, orderState });
+  }
 }
 
 /* ---------- Request checks ---------- */
