@@ -1040,7 +1040,7 @@ address {
   margin: 0;
 }
 
-/* ---------- CafeBot chat widget ---------- */
+/* ---------- AI Order Taker chat widget ---------- */
 
 .visually-hidden {
   position: absolute;
@@ -1188,6 +1188,8 @@ address {
   font-size: 0.9rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  /* Keep line breaks in AI Order Taker replies (order summaries are sent as "- " lines). */
+  white-space: pre-line;
   animation: bubble-in 0.25s var(--ease);
 }
 

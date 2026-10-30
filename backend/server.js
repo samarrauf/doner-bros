@@ -1,5 +1,5 @@
 // Doner Bros — Express server: loads .env, serves the static frontend, and answers
-// CafeBot chat messages through Google Gemini.
+// AI Order Taker chat messages through Google Gemini.
 
 const fs = require("fs");
 const path = require("path");
@@ -24,13 +24,13 @@ const MAX_HISTORY_ENTRY_LENGTH = 2000;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 20000;
-const RESTAURANT_PHONE_FALLBACK = "0341 5846569";
+const RESTAURANT_PHONE_FALLBACK = "0301 8474036";
 
 // Per-visitor limit so the paid Gemini API can't be spammed.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 
-/* ---------- CafeBot system prompt ---------- */
+/* ---------- AI Order Taker system prompt ---------- */
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(ROOT_DIR, relativePath), "utf8"));
@@ -194,7 +194,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   if (!gemini) {
-    return res.status(503).json({ error: "CafeBot isn't configured yet. Please call us to order." });
+    return res.status(503).json({ error: "AI Order Taker isn't configured yet. Please call us to order." });
   }
 
   const { message, conversationHistory = [] } = req.body;
@@ -213,10 +213,10 @@ app.post("/api/chat", async (req, res) => {
 
     // 429 = Gemini quota/rate limit, 503 = Gemini overloaded: both clear up on their own.
     if (error.status === 429 || error.status === 503) {
-      return res.status(503).json({ error: "CafeBot is busy right now. Please try again in a minute." });
+      return res.status(503).json({ error: "AI Order Taker is busy right now. Please try again in a minute." });
     }
     res.status(502).json({
-      error: `CafeBot is having trouble right now. Please try again, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
+      error: `AI Order Taker is having trouble right now. Please try again, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
     });
   }
 });
@@ -234,7 +234,7 @@ app.use((error, req, res, next) => {
 });
 
 const server = app.listen(PORT, () => {
-  console.log(`Doner Bros server running at http://localhost:${PORT} (CafeBot model: ${GEMINI_MODEL})`);
+  console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${GEMINI_MODEL})`);
 });
 
 server.on("error", (error) => {

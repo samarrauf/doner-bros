@@ -248,11 +248,31 @@ function setupCategoryTabs() {
   sections.forEach((section) => observer.observe(section));
 }
 
-/* ---------- CafeBot chat widget ---------- */
+/* ---------- AI Order Taker chat widget ---------- */
 
-// Fixed mock reply: no API is called until the AI backend exists.
-const CAFEBOT_REPLY = "Hi! I'm CafeBot. My AI brain isn't connected yet.";
-const CAFEBOT_DELAY_MS = 700;
+const CHAT_ENDPOINT = "/api/chat";
+const CHAT_FALLBACK_ERROR = "Sorry, I couldn't reach AI Order Taker. Please try again, or call us on 0301 8474036.";
+
+// Sends the message and prior turns to the backend; resolves with AI Order Taker's reply text.
+async function requestOrderTakerReply(message, conversationHistory) {
+  let response;
+  try {
+    response = await fetch(CHAT_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, conversationHistory }),
+    });
+  } catch (error) {
+    // Network failure (offline, server down).
+    throw new Error(CHAT_FALLBACK_ERROR);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || typeof data.reply !== "string") {
+    throw new Error(data.error || CHAT_FALLBACK_ERROR);
+  }
+  return data.reply;
+}
 
 function setupChatWidget() {
   const toggle = document.getElementById("chat-toggle");
@@ -289,7 +309,7 @@ function setupChatWidget() {
   function showTyping() {
     const typing = document.createElement("div");
     typing.className = "chat-bubble chat-bubble-bot chat-typing";
-    typing.setAttribute("aria-label", "CafeBot is typing");
+    typing.setAttribute("aria-label", "AI Order Taker is typing");
     typing.innerHTML = "<span></span><span></span><span></span>";
     messages.appendChild(typing);
     scrollToLatest();
@@ -309,26 +329,42 @@ function setupChatWidget() {
     }
   });
 
-  input.addEventListener("input", () => {
-    sendButton.disabled = input.value.trim() === "";
-  });
+  // Turns already answered, sent with each message so AI Order Taker remembers the order so far.
+  const conversationHistory = [];
+  let isWaiting = false;
 
-  form.addEventListener("submit", (event) => {
+  function refreshSendButton() {
+    sendButton.disabled = isWaiting || input.value.trim() === "";
+  }
+
+  input.addEventListener("input", refreshSendButton);
+
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text) {
+    if (!text || isWaiting) {
       return;
     }
 
     addBubble(text, "user");
     input.value = "";
-    sendButton.disabled = true;
+    isWaiting = true;
+    refreshSendButton();
 
     const typing = showTyping();
-    setTimeout(() => {
+    try {
+      const reply = await requestOrderTakerReply(text, conversationHistory);
+      addBubble(reply, "bot");
+      conversationHistory.push({ role: "user", content: text }, { role: "assistant", content: reply });
+    } catch (error) {
+      // Failed turns stay out of the history so the next attempt starts clean.
+      addBubble(error.message, "bot");
+    } finally {
       typing.remove();
-      addBubble(CAFEBOT_REPLY, "bot");
-    }, CAFEBOT_DELAY_MS);
+      isWaiting = false;
+      refreshSendButton();
+      input.focus();
+    }
   });
 }
 
