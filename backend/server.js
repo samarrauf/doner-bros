@@ -25,6 +25,7 @@ const MAX_HISTORY_ENTRY_LENGTH = 2000;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 20000;
 const RESTAURANT_PHONE_FALLBACK = "0301 8474036";
+const RESTAURANT_TIMEZONE = "Asia/Karachi";
 
 // Per-visitor limit so the paid Gemini API can't be spammed.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -79,19 +80,72 @@ function formatContact(contact) {
   ].join("\n");
 }
 
+function todayInRestaurant(now) {
+  return {
+    date: new Intl.DateTimeFormat("en-CA", { timeZone: RESTAURANT_TIMEZONE }).format(now),
+    weekday: new Intl.DateTimeFormat("en-US", { timeZone: RESTAURANT_TIMEZONE, weekday: "long" }).format(now),
+  };
+}
+
+// Only real, switched-on offers inside their dates reach the model, so it can't apply
+// inactive, sample or expired ones. Order-based conditions are checked by the prompt's rules.
+function isPromotionLive(promotion, today) {
+  const conditions = promotion.conditions || {};
+  return (
+    promotion.active === true &&
+    promotion.sample !== true &&
+    (!conditions.startDate || today.date >= conditions.startDate) &&
+    (!conditions.endDate || today.date <= conditions.endDate) &&
+    (!conditions.daysOfWeek || conditions.daysOfWeek.includes(today.weekday))
+  );
+}
+
+function formatDiscount(discount) {
+  if (discount.type === "percent") return `${discount.value}% off`;
+  return `${formatRupees(discount.valuePaisa)} off${discount.perItem ? " each eligible item" : " the order"}`;
+}
+
+function formatPromotion(promotion, itemNames) {
+  const conditions = promotion.conditions || {};
+  const lines = [`- ${promotion.name}: ${formatDiscount(promotion.discount)}. ${promotion.description}`];
+  lines.push(`  Code required: ${promotion.code || "none"}`);
+  if (conditions.minOrderPaisa) lines.push(`  Minimum order: ${formatRupees(conditions.minOrderPaisa)}`);
+  if (conditions.orderTypes) lines.push(`  Order types: ${conditions.orderTypes.join(", ")} only`);
+  if (conditions.itemIds) {
+    lines.push(`  Eligible items: ${conditions.itemIds.map((id) => itemNames.get(id) || id).join(", ")} only`);
+  }
+  if (conditions.endDate) lines.push(`  Ends: ${conditions.endDate}`);
+  return lines.join("\n");
+}
+
+function formatPromotions(promotions, menu, now) {
+  const today = todayInRestaurant(now);
+  const live = promotions.filter((promotion) => isPromotionLive(promotion, today));
+  if (live.length === 0) return "No promotions are running right now.";
+
+  const itemNames = new Map(menu.categories.flatMap((category) => category.items).map((item) => [item.id, item.name]));
+  return [`Today is ${today.weekday}, ${today.date}.`, ...live.map((p) => formatPromotion(p, itemNames))].join("\n");
+}
+
 function buildSystemPrompt() {
   const template = fs.readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8");
-  const menu = readJson("data/menu.json");
   const restaurant = readJson("data/restaurant.json");
 
   return template
-    .replace("{{MENU}}", formatMenu(menu))
+    .replace("{{MENU}}", formatMenu(MENU))
     .replace("{{HOURS}}", formatHours(restaurant.hours))
     .replace("{{CONTACT}}", formatContact(restaurant.contact));
 }
 
-// Built once at startup; a missing or broken data file stops the server with a clear error.
+// Read once at startup; a missing or broken data file stops the server with a clear error.
+const MENU = readJson("data/menu.json");
+const PROMOTIONS = readJson("data/promotions.json").promotions;
 const SYSTEM_PROMPT = buildSystemPrompt();
+
+// Promotions are filled in per request so an offer stops the day it ends, without a restart.
+function currentSystemPrompt() {
+  return SYSTEM_PROMPT.replace("{{PROMOTIONS}}", formatPromotions(PROMOTIONS, MENU, new Date()));
+}
 
 /* ---------- Gemini client ---------- */
 
@@ -124,7 +178,7 @@ function generateReply(contents) {
     model: GEMINI_MODEL,
     contents,
     config: {
-      systemInstruction: SYSTEM_PROMPT,
+      systemInstruction: currentSystemPrompt(),
       temperature: 0.4,
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),

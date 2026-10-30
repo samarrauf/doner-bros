@@ -1,0 +1,59 @@
+{
+  "note": "No real promotions were found on the website or in the project (checked 2026-10-30). Every entry below is a SAMPLE for testing only: not a real Doner Bros offer. Keep sample entries active: false; add real offers only once the restaurant confirms them.",
+  "currency": "PKR",
+  "priceUnit": "paisa (100 paisa = Rs 1)",
+  "timezone": "Asia/Karachi",
+  "promotions": [
+    {
+      "id": "sample-percent-min-order",
+      "name": "SAMPLE ONLY - 10% off orders over Rs 2,000",
+      "sample": true,
+      "active": false,
+      "code": "TEST10",
+      "description": "Test promotion: 10% off the food total when the order is Rs 2,000 or more.",
+      "discount": { "type": "percent", "value": 10 },
+      "conditions": {
+        "minOrderPaisa": 200000,
+        "orderTypes": ["pickup", "delivery"],
+        "itemIds": null,
+        "daysOfWeek": null,
+        "startDate": "2026-01-01",
+        "endDate": "2026-12-31"
+      }
+    },
+    {
+      "id": "sample-pickup-fixed",
+      "name": "SAMPLE ONLY - Rs 100 off Loaded Bro Box for pickup",
+      "sample": true,
+      "active": false,
+      "code": null,
+      "description": "Test promotion: Rs 100 off each Loaded Bro Box on pickup orders, Mondays only.",
+      "discount": { "type": "fixedPaisa", "valuePaisa": 10000, "perItem": true },
+      "conditions": {
+        "minOrderPaisa": null,
+        "orderTypes": ["pickup"],
+        "itemIds": ["loaded-bro-box"],
+        "daysOfWeek": ["Monday"],
+        "startDate": "2026-01-01",
+        "endDate": "2026-12-31"
+      }
+    },
+    {
+      "id": "sample-expired",
+      "name": "SAMPLE ONLY - expired test offer",
+      "sample": true,
+      "active": false,
+      "code": "OLD5",
+      "description": "Test promotion that has already ended, for checking that expired offers are never applied.",
+      "discount": { "type": "percent", "value": 5 },
+      "conditions": {
+        "minOrderPaisa": null,
+        "orderTypes": ["pickup", "delivery"],
+        "itemIds": null,
+        "daysOfWeek": null,
+        "startDate": "2025-01-01",
+        "endDate": "2025-12-31"
+      }
+    }
+  ]
+}
