@@ -114,10 +114,12 @@ function toGeminiContents(history, message) {
   return contents;
 }
 
-async function askGemini(history, message) {
-  const response = await gemini.models.generateContent({
+const OVERLOAD_RETRY_DELAY_MS = 1500;
+
+function generateReply(contents) {
+  return gemini.models.generateContent({
     model: GEMINI_MODEL,
-    contents: toGeminiContents(history, message),
+    contents,
     config: {
       systemInstruction: SYSTEM_PROMPT,
       temperature: 0.4,
@@ -125,6 +127,19 @@ async function askGemini(history, message) {
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
     },
   });
+}
+
+async function askGemini(history, message) {
+  const contents = toGeminiContents(history, message);
+  let response;
+  try {
+    response = await generateReply(contents);
+  } catch (error) {
+    // 503 = Gemini briefly overloaded; one retry usually gets through. Other errors aren't retried.
+    if (error.status !== 503) throw error;
+    await new Promise((resolve) => setTimeout(resolve, OVERLOAD_RETRY_DELAY_MS));
+    response = await generateReply(contents);
+  }
 
   return (response.text || "").trim();
 }
@@ -211,8 +226,16 @@ app.post("/api/chat", async (req, res) => {
     // Log only the status and message: never the request, which could hold customer details.
     console.error("Gemini request failed:", error.status || error.name, String(error.message).slice(0, 200));
 
-    // 429 = Gemini quota/rate limit, 503 = Gemini overloaded: both clear up on their own.
-    if (error.status === 429 || error.status === 503) {
+    // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
+    if (error.status === 429) {
+      const quotaId = (String(error.message).match(/"quotaId":\s*"([^"]+)"/) || [])[1] || "unknown";
+      console.error(`Gemini quota exhausted (${quotaId}). Check usage and billing in Google AI Studio.`);
+      return res.status(503).json({
+        error: `AI Order Taker has reached its message limit for now. Please call us on ${RESTAURANT_PHONE_FALLBACK} to order.`,
+      });
+    }
+    // 503 = Gemini still overloaded after one retry: clears up on its own.
+    if (error.status === 503) {
       return res.status(503).json({ error: "AI Order Taker is busy right now. Please try again in a minute." });
     }
     res.status(502).json({
