@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const path = require("path");
 const express = require("express");
 const { nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes } = require("./staff");
+const { createMemoryRateLimiter } = require("./rate-limit");
 
 const PASSWORD = "correct horse battery staple";
 const basic = (password) => `Basic ${Buffer.from(`staff:${password}`).toString("base64")}`;
@@ -68,12 +69,23 @@ test("only the staff password is accepted", () => {
   assert.equal(isStaffPassword(basic(""), ""), false, "an empty password never opens the dashboard");
 });
 
-test("repeated wrong passwords are blocked for a while", () => {
-  const limiter = createLoginLimiter({ windowMs: 1000, maxFailures: 3 });
-  for (let i = 0; i < 3; i++) limiter.recordFailure("1.2.3.4", 0);
-  assert.equal(limiter.isBlocked("1.2.3.4", 500), true);
-  assert.equal(limiter.isBlocked("5.6.7.8", 500), false);
-  assert.equal(limiter.isBlocked("1.2.3.4", 1500), false);
+test("repeated wrong passwords are blocked for a while", async () => {
+  const limiter = createLoginLimiter(createMemoryRateLimiter(), { windowMs: 1000, maxFailures: 3 });
+  for (let i = 0; i < 3; i++) await limiter.recordFailure("1.2.3.4", 0);
+  assert.equal(await limiter.isBlocked("1.2.3.4", 500), true);
+  assert.equal(await limiter.isBlocked("5.6.7.8", 500), false);
+  assert.equal(await limiter.isBlocked("1.2.3.4", 1500), false);
+});
+
+test("if the shared limit can't be checked, the dashboard says so instead of letting anyone try", async () => {
+  const broken = { hit: async () => { throw new Error("database down"); } };
+  const { base, close } = await startApp({ client: fakeSupabase([]), password: PASSWORD, rateLimiter: broken });
+  try {
+    const res = await fetch(`${base}/api/staff/orders`, { headers: { authorization: basic(PASSWORD) } });
+    assert.equal(res.status, 503);
+  } finally {
+    close();
+  }
 });
 
 test("the dashboard and its API need the password, and are off without one", async () => {

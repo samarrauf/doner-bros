@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "rm -rf public && cp -r frontend public",
+  "functions": {
+    "server.js": {
+      "includeFiles": "{data,prompts,admin}/**"
+    }
+  }
+}

@@ -1,5 +1,6 @@
-// Doner Bros — in-memory order state for each chat session. Lost on restart by design; saved
-// orders live in the database, this only tracks where each conversation's order stands.
+// Doner Bros — order state for each chat session: where each conversation's order stands.
+// Kept in memory here, or in Supabase when it's configured (supabase-sessions.js). Saved orders
+// live in the orders table.
 
 const crypto = require("crypto");
 
@@ -286,6 +287,17 @@ class SessionStore {
   }
 }
 
+// The same load/create/save interface as supabase-sessions.js, kept in this process's memory
+// (local use without Supabase, and tests). save has nothing to do: the state is kept by reference.
+function createMemorySessionStore(options) {
+  const store = new SessionStore(options);
+  return {
+    load: async (sessionId, now) => store.get(sessionId, now),
+    create: async (now) => store.create(now),
+    save: async () => {},
+  };
+}
+
 function readSessionId(cookieHeader) {
   for (const part of String(cookieHeader || "").split(";")) {
     const [name, ...value] = part.trim().split("=");
@@ -299,4 +311,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, readSessionId, sessionCookie };
+module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };
