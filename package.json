@@ -5,6 +5,9 @@
   "description": "Doner Bros on Vercel: installs the backend's dependencies for /server.js. Keep them in step with backend/package.json.",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@google/genai": "^2.32.0",
     "@supabase/supabase-js": "^2.118.0",

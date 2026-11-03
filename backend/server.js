@@ -76,8 +76,11 @@ const RATE_LIMIT_MAX_REQUESTS = 20;
 
 /* ---------- AI Order Taker system prompt ---------- */
 
-function readJson(relativePath) {
-  return JSON.parse(fs.readFileSync(path.join(ROOT_DIR, relativePath), "utf8"));
+// Takes a full path built at the call site, not a name joined on here: Vercel works out which
+// files to bundle by reading the code, and only follows a path it can see without running it.
+// (vercel.json's includeFiles lists data/ too; this keeps the files bundled even without it.)
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function formatRupees(paisa) {
@@ -155,7 +158,7 @@ function formatPromotions(promotions, menu, now) {
 
 function buildSystemPrompt() {
   const template = fs.readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8");
-  const restaurant = readJson("data/restaurant.json");
+  const restaurant = readJson(path.join(ROOT_DIR, "data", "restaurant.json"));
 
   return template
     .replace("{{MENU}}", formatMenu(MENU))
@@ -164,11 +167,11 @@ function buildSystemPrompt() {
 }
 
 // Read once at startup; a missing or broken data file stops the server with a clear error.
-const MENU = readJson("data/menu.json");
-const PROMOTIONS = readJson("data/promotions.json").promotions;
-const OPENING_HOURS = readJson("data/restaurant.json").hours;
+const MENU = readJson(path.join(ROOT_DIR, "data", "menu.json"));
+const PROMOTIONS = readJson(path.join(ROOT_DIR, "data", "promotions.json")).promotions;
+const OPENING_HOURS = readJson(path.join(ROOT_DIR, "data", "restaurant.json")).hours;
 const PRICING = (() => {
-  const checked = checkPricing(readJson("data/pricing.json"));
+  const checked = checkPricing(readJson(path.join(ROOT_DIR, "data", "pricing.json")));
   if (checked.error) throw new Error(checked.error);
   return checked.pricing;
 })();
