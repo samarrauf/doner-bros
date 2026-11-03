@@ -331,23 +331,16 @@ function setupChatWidget() {
 
   // Turns already answered, sent with each message so AI Order Taker remembers the order so far.
   const conversationHistory = [];
+  // Messages from menu Order buttons clicked while a reply is still on its way.
+  const queuedMessages = [];
   let isWaiting = false;
 
   function refreshSendButton() {
     sendButton.disabled = isWaiting || input.value.trim() === "";
   }
 
-  input.addEventListener("input", refreshSendButton);
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const text = input.value.trim();
-    if (!text || isWaiting) {
-      return;
-    }
-
+  async function sendMessage(text) {
     addBubble(text, "user");
-    input.value = "";
     isWaiting = true;
     refreshSendButton();
 
@@ -365,6 +358,39 @@ function setupChatWidget() {
       refreshSendButton();
       input.focus();
     }
+
+    if (queuedMessages.length > 0) {
+      sendMessage(queuedMessages.shift());
+    }
+  }
+
+  input.addEventListener("input", refreshSendButton);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || isWaiting) {
+      return;
+    }
+    input.value = "";
+    sendMessage(text);
+  });
+
+  // Menu Order buttons add the item through AI Order Taker, which prices it on the server,
+  // asks for any choices, and shows the order summary at checkout. They're still tel: links
+  // underneath, so without JavaScript they call the restaurant instead.
+  document.querySelectorAll(".order-item").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const itemName = button.closest(".product").querySelector("h4").textContent.trim();
+      const text = `I'd like to order 1 x ${itemName}.`;
+      setOpen(true);
+      if (isWaiting) {
+        queuedMessages.push(text);
+      } else {
+        sendMessage(text);
+      }
+    });
   });
 }
 
