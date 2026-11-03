@@ -1063,27 +1063,85 @@ address {
   position: relative;
   display: grid;
   place-items: center;
-  width: 60px;
-  height: 60px;
+  width: 66px;
+  height: 66px;
   margin-left: auto;
-  border: 0;
+  padding: 0;
+  border: 3px solid var(--accent);
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--ink);
-  box-shadow: 0 10px 28px rgba(11, 11, 11, 0.3);
+  background: var(--ink);
+  color: var(--accent);
+  box-shadow: 0 10px 28px rgba(11, 11, 11, 0.3), 0 0 0 4px rgba(245, 166, 35, 0.25), 0 0 22px rgba(245, 166, 35, 0.55);
   cursor: pointer;
-  transition: background 0.2s, transform 0.2s var(--ease);
+  transition: background 0.2s, color 0.2s, transform 0.25s var(--ease), box-shadow 0.25s;
 }
 
-.chat-toggle:hover {
-  background: var(--accent-dark);
-  transform: scale(1.06);
+.chat-toggle:hover,
+.chat-toggle:focus-visible {
+  background: var(--accent);
+  color: var(--ink);
+  transform: translateY(-3px) scale(1.06);
+  box-shadow: 0 14px 32px rgba(245, 166, 35, 0.45);
+}
+
+/* Pulsing ring draws the eye to the agent while the chat is closed. */
+.chat-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  animation: chat-pulse 2.2s ease-out infinite;
+  pointer-events: none;
+}
+
+.chat-toggle[aria-expanded="true"]::before {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes chat-pulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-toggle::before {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.chat-toggle-label {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--ink);
+  font: 600 0.85rem/1 var(--font);
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(11, 11, 11, 0.18);
+  transform: translateY(-50%);
+  transition: opacity 0.2s, transform 0.25s var(--ease), background 0.2s;
+}
+
+.chat-toggle:hover .chat-toggle-label {
+  background: var(--accent-soft);
+  transform: translate(-4px, -50%);
+}
+
+/* The label sits over the page, so drop it while the chat window is open. */
+.chat-toggle[aria-expanded="true"] .chat-toggle-label {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .chat-toggle .icon {
   position: absolute;
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   transition: opacity 0.2s, transform 0.3s var(--ease);
 }
 
@@ -1402,7 +1460,7 @@ address {
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: 88px;
+    bottom: 94px;
     width: auto;
     height: min(560px, calc(100dvh - 104px));
     margin-bottom: 0;
