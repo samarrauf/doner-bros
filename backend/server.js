@@ -11,8 +11,6 @@ const { createClient } = require("@supabase/supabase-js");
 const {
   todayInRestaurant,
   isPromotionLive,
-  priceCartItem,
-  priceModifiedLine,
   checkCartPromotion,
   eligibleCartPromotions,
   validatePickupDetails,
@@ -20,7 +18,7 @@ const {
   placeOrder,
 } = require("./orders");
 const { checkPickupTime } = require("./pickup-time");
-const { checkPricing, calculateOrderTotals } = require("./totals");
+const { priceCart, calculateTotals, describeCart } = require("./totals");
 const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
@@ -30,9 +28,10 @@ const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = req
 const { addMenuImageRoutes } = require("./menu-images");
 const {
   createMemorySessionStore,
+  upgradeOrderState,
   recordOrderAttempt,
   addToCart,
-  replaceCartLine,
+  setLineQuantity,
   findCartLine,
   removeFromCart,
   applyDiscount,
@@ -85,9 +84,7 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function formatRupees(paisa) {
-  return `Rs ${(paisa / 100).toLocaleString("en-PK")}`;
-}
+const formatRupees = menuService.formatPrice;
 
 // Only slugs and names go up front; the model fetches the one category it needs with list_items.
 function formatCategories(menu) {
@@ -143,32 +140,32 @@ function formatPromotions(promotions, menu, now) {
 // Read once at startup; a missing or broken data file stops the server with a clear error.
 const PROMOTIONS = readJson(path.join(ROOT_DIR, "data", "promotions.json")).promotions;
 const OPENING_HOURS = readJson(path.join(ROOT_DIR, "data", "hours.json")).hours;
-const PRICING = (() => {
-  const checked = checkPricing(readJson(path.join(ROOT_DIR, "data", "pricing.json")));
-  if (checked.error) throw new Error(checked.error);
-  return checked.pricing;
-})();
 const SYSTEM_PROMPT = fs
   .readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8")
   .replace("{{HOURS}}", formatHours(OPENING_HOURS));
 
-// The cart's totals, worked out from server prices only; also keeps state.totalPaisa in step.
+// The cart's totals, always worked out fresh by totals.js from ids and quantities. Returns { error } if
+// an item can't be ordered, and throws MENU_UNAVAILABLE if the menu can't be read.
 function cartTotals(state) {
-  const totals = calculateOrderTotals(
-    { lines: state.items, discountPaisa: state.discount.amountPaisa, orderType: state.orderType },
-    PRICING
-  );
-  state.totalPaisa = totals.totalPaisa;
-  return totals;
+  return calculateTotals({
+    cart: state.items,
+    orderType: state.orderType,
+    getDiscount: (pricedCart) => {
+      if (!state.discount.promotionId) return 0;
+      const request = { promotionId: state.discount.promotionId, promotionCode: state.discount.code, orderType: state.orderType };
+      return checkCartPromotion(pricedCart, request, PROMOTIONS, todayInRestaurant(new Date())).discountPaisa || 0;
+    },
+  });
 }
 
 // The prompt carries no amounts, so every price the model states comes from a tool result in that
 // turn and the price guard can check it.
-function formatCart(state) {
+async function formatCart(state) {
   if (state.items.length === 0) return "The cart is empty.";
-  cartTotals(state);
   // Numbered so modifyItem can name a line.
-  const lines = state.items.map((line, index) => `${index + 1}. ${describeCartLineItems(line)}`);
+  const lines = (await describeCart(state.items)).map((line, index) => {
+    return `${index + 1}. ${describeCartLineItems(line)}${line.orderable ? "" : " (can't be ordered right now)"}`;
+  });
   const promotion = state.discount.promotionId
     ? `\nPromotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}]`
     : "";
@@ -197,16 +194,24 @@ function formatCheckoutDetails(state) {
   ].join("\n");
 }
 
-function formatOrderState(state) {
-  if (state.status === "open") return `No order has been submitted in this chat yet.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
+async function formatOpenOrderState(state, opening) {
+  let cart;
+  try {
+    cart = await formatCart(state);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    cart = "The cart can't be shown because the menu can't be checked right now.";
+  }
+  return `${opening}\n${cart}\n${formatCheckoutDetails(state)}`;
+}
+
+async function formatOrderState(state) {
+  if (state.status === "open") return formatOpenOrderState(state, "No order has been submitted in this chat yet.");
   if (state.status === "needs_changes") {
-    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
+    return formatOpenOrderState(state, `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.`);
   }
 
-  const lines = state.items.map((line) => {
-    const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-    return `- ${line.quantity} x ${line.name}${options}`;
-  });
+  const lines = state.placedOrder.lines.map((line) => `- ${describeCartLineItems(line)}`);
   const { deliveryAddress, deliveryUnit } = state.customer;
   const when =
     state.orderType === "pickup"
@@ -222,11 +227,12 @@ function formatOrderState(state) {
 // Promotions and this chat's order are filled in per request, so an offer stops the day it
 // ends and the bot always sees the order's latest state.
 // The categories and contact details are read through the menu service for each turn too.
-function currentSystemPrompt(orderState, turn, correction) {
+async function currentSystemPrompt(orderState, turn, correction) {
+  const order = await formatOrderState(orderState);
   const prompt = SYSTEM_PROMPT.replace("{{CATEGORIES}}", () => formatCategories(turn.menu))
     .replace("{{CONTACT}}", () => formatContact(turn.settings))
     .replace("{{PROMOTIONS}}", () => formatPromotions(PROMOTIONS, turn.menu, new Date()))
-    .replace("{{ORDER}}", () => formatOrderState(orderState));
+    .replace("{{ORDER}}", () => order);
   return correction ? `${prompt}\n\n${correction}` : prompt;
 }
 
@@ -330,25 +336,6 @@ const SUBMIT_ORDER_TOOL = {
       customerName: { type: "string" },
       customerPhone: { type: "string" },
       deliveryAddress: { type: "string", description: "Leave out: delivery details are taken from setDeliveryDetails." },
-      items: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            itemId: { type: "string", description: "The id of the item or deal from a menu tool result." },
-            quantity: { type: "integer" },
-            options: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { name: { type: "string" }, choice: { type: "string" } },
-                required: ["name", "choice"],
-              },
-            },
-          },
-          required: ["itemId", "quantity"],
-        },
-      },
       promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>, if one applies." },
       promotionCode: { type: "string", description: "The code the customer gave, if the promotion needs one." },
     },
@@ -357,62 +344,46 @@ const SUBMIT_ORDER_TOOL = {
   },
 };
 
-// Only the item, quantity and the options the customer named come from the model; the server
-// checks them against the menu service's data and sets the price.
+// Only the item id and quantity come from the model; totals.js looks up the price from the menu service.
 const ADD_ITEM_TO_CART_TOOL = {
   name: "addItemToCart",
-  description:
-    "Add one menu item or deal to this customer's cart. Include only options the customer actually chose; never pick one for them. " +
-    "If the result lists missingOptions, nothing was added: ask the customer to choose.",
+  description: "Add one menu item or deal to this customer's cart, by its id. The server looks up its name and price.",
   parametersJsonSchema: {
     type: "object",
     properties: {
       itemId: { type: "string", description: "The id of the item or deal from a menu tool result." },
       quantity: { type: "integer" },
-      options: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { name: { type: "string" }, choice: { type: "string" } },
-          required: ["name", "choice"],
-        },
-      },
     },
     required: ["itemId", "quantity"],
   },
 };
 
 function describeCartLineItems(line) {
-  const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-  return `${line.quantity} x ${line.name}${options}`;
+  return `${line.quantity} x ${line.name}`;
 }
 
 function describeCartLine(line) {
-  return `${describeCartLineItems(line)}: ${formatRupees(line.lineTotalPaisa)}`;
+  return `${describeCartLineItems(line)}: ${line.lineTotalDisplay}`;
 }
 
 const MENU_CHECK_FAILED = "the menu can't be checked right now.";
+// An id means nothing to a customer, and "finished" is a different answer from "not on the menu".
+const NOT_ORDERABLE_INSTRUCTION =
+  "Never read an id out to the customer. If an item is finished, say it's finished for now. If it isn't on the menu, say " +
+  "it isn't available. Then offer the closest real alternative from a menu tool.";
 
-function addItemToCart(args, orderState, menu) {
-  if (!menu) return { added: false, error: MENU_CHECK_FAILED };
-  const priced = priceCartItem(args, menu);
-  if (priced.missingOptions) {
-    return {
-      added: false,
-      missingOptions: priced.missingOptions,
-      instruction: "Nothing was added. Ask the customer which choice they want for each missing option; don't choose for them.",
-    };
-  }
-  if (priced.error) return { added: false, error: priced.error };
+// Nothing goes in the cart until totals.js has found the item, seen it's available and checked the quantity.
+async function addItemToCart(args, orderState, menu) {
+  const line = { item_id: args.itemId, quantity: args.quantity, option_ids: args.optionIds };
+  const priced = await priceCart([line]);
+  if (priced.error) return { added: false, error: priced.error, instruction: `Nothing was added. ${NOT_ORDERABLE_INSTRUCTION}` };
 
-  const result = addToCart(orderState, priced.line);
+  const result = addToCart(orderState, line);
   if (result.error) return { added: false, error: result.error };
-  const suggestions = suggestItems(orderState, menu);
+  const suggestions = menu ? suggestItems(orderState, menu) : [];
   return {
     added: true,
-    item: describeCartLine(priced.line),
-    cart: orderState.items.map(describeCartLine),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    item: describeCartLine(priced.lines[0]),
     ...(suggestions.length
       ? {
           suggestions: suggestions.map((s) => ({ itemId: s.itemId, name: s.name, price: formatRupees(s.pricePaisa), reason: s.reason })),
@@ -424,60 +395,42 @@ function addItemToCart(args, orderState, menu) {
   };
 }
 
-// The line keeps its item; only quantity and option choices change, and the server re-prices it.
+// The line keeps its item; only the quantity changes.
 const MODIFY_ITEM_TOOL = {
   name: "modifyItem",
   description:
-    "Change the quantity or option choices of one item already in this customer's cart. Use the line number shown in " +
-    "<current_order>. Include only changes the customer actually asked for. If the result has an error or missingOptions, " +
-    "nothing was changed: ask the customer to clarify.",
+    "Change the quantity of one item already in this customer's cart. Use the line number shown in <current_order>. " +
+    "If the result has an error, nothing was changed: ask the customer to clarify.",
   parametersJsonSchema: {
     type: "object",
     properties: {
       lineNumber: { type: "integer", description: "The cart line to change, numbered as in <current_order>." },
-      quantity: { type: "integer", description: "The new quantity, if the customer changed it." },
-      options: {
-        type: "array",
-        description: "Only the options being changed, with the customer's new choice.",
-        items: {
-          type: "object",
-          properties: { name: { type: "string" }, choice: { type: "string" } },
-          required: ["name", "choice"],
-        },
-      },
+      quantity: { type: "integer", description: "The new quantity." },
     },
-    required: ["lineNumber"],
+    required: ["lineNumber", "quantity"],
   },
 };
 
 function notModified(error) {
-  return { modified: false, error, instruction: "Nothing was changed. Explain this simply and ask the customer to clarify; don't guess." };
+  return { modified: false, error, instruction: `Nothing was changed. Explain this simply and ask the customer to clarify; don't guess. ${NOT_ORDERABLE_INSTRUCTION}` };
 }
 
-function modifyItem(args, orderState, menu) {
+async function modifyItem(args, orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return notModified("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
   }
-  if (!menu) return notModified(MENU_CHECK_FAILED);
   const index = args.lineNumber - 1;
   if (!Number.isInteger(args.lineNumber) || !orderState.items[index]) {
     const count = orderState.items.length;
     return notModified(count ? `there is no line ${args.lineNumber}; the cart has ${count} line(s).` : "the cart is empty.");
   }
+  if (args.quantity === undefined) return notModified("no change was given.");
 
-  const priced = priceModifiedLine(orderState.items[index], args, menu);
-  if (priced.missingOptions) {
-    return { modified: false, missingOptions: priced.missingOptions, instruction: "Nothing was changed. Ask the customer to choose." };
-  }
+  const priced = await priceCart([{ ...orderState.items[index], quantity: args.quantity }]);
   if (priced.error) return notModified(priced.error);
 
-  replaceCartLine(orderState, index, priced.line);
-  return {
-    modified: true,
-    item: describeCartLine(priced.line),
-    cart: orderState.items.map(describeCartLine),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
-  };
+  setLineQuantity(orderState, index, args.quantity);
+  return { modified: true, item: describeCartLine(priced.lines[0]) };
 }
 
 const REMOVE_ITEM_TOOL = {
@@ -496,37 +449,49 @@ const REMOVE_ITEM_TOOL = {
   },
 };
 
-function numberedCart(state) {
-  return state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
-}
-
 function notRemoved(error) {
   return { removed: false, error, instruction: "Nothing was removed. Explain this simply and ask the customer to clarify; don't guess." };
 }
 
-function removeItem(args, orderState) {
+// Names only, so an item that has since finished can still be seen and taken out of the cart.
+async function removeItem(args, orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return notRemoved("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
   }
 
   const found = findCartLine(orderState, { lineNumber: args.lineNumber, itemId: args.itemId });
+  if (found.error) return notRemoved(found.error);
+  const lines = await describeCart(orderState.items);
   if (found.ambiguous) {
     return {
       removed: false,
-      ambiguous: found.ambiguous.map((index) => `${index + 1}. ${describeCartLine(orderState.items[index])}`),
+      ambiguous: found.ambiguous.map((index) => `${index + 1}. ${describeCartLineItems(lines[index])}`),
       instruction: "That item is on more than one line. Nothing was removed. Ask the customer which line they mean.",
     };
   }
-  if (found.error) return notRemoved(found.error);
 
   const quantity = args.quantity === null ? undefined : args.quantity;
   const result = removeFromCart(orderState, found.index, quantity);
   if (result.error) return notRemoved(result.error);
+  return { removed: true, removedItem: describeCartLineItems({ quantity: result.removed.quantity, name: lines[found.index].name }) };
+}
+
+// What a cart-changing tool reports back: the cart at today's prices, or what stops it being priced.
+async function cartView(orderState) {
+  if (orderState.items.length === 0) return { cart: [], cartSubtotal: formatRupees(0), cartTotal: formatRupees(0) };
+  const totals = await cartTotals(orderState);
+  if (totals.error) {
+    const lines = await describeCart(orderState.items);
+    return {
+      cart: lines.map((line, index) => `${index + 1}. ${describeCartLineItems(line)}`),
+      cartProblem: totals.error,
+      instruction: NOT_ORDERABLE_INSTRUCTION,
+    };
+  }
   return {
-    removed: true,
-    removedItem: describeCartLine(result.removed),
-    cart: numberedCart(orderState),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    cart: totals.lines.map((line, index) => `${index + 1}. ${describeCartLine(line)}`),
+    cartSubtotal: totals.display.subtotal,
+    cartTotal: totals.display.total,
   };
 }
 
@@ -546,19 +511,30 @@ const GET_ORDER_TOTALS_TOOL = {
     "tax, delivery fee and total. Call this whenever the customer asks what their order costs, and read back the result exactly.",
 };
 
-function getOrderTotals(orderState) {
-  if (orderState.items.length === 0) return { empty: true };
-  const totals = cartTotals(orderState);
+function totalsForTool(totals, orderType) {
   return {
-    items: numberedCart(orderState),
-    subtotal: formatRupees(totals.subtotalPaisa),
-    ...(orderState.discount.promotionId ? { discount: `-${formatRupees(totals.discountPaisa)}` } : {}),
-    ...(PRICING.taxPercent > 0 ? { tax: formatRupees(totals.taxPaisa) } : {}),
-    ...(orderState.orderType === "delivery"
-      ? { deliveryFee: totals.deliveryFeePaisa === null ? "not set: not included in the total; the restaurant will confirm it" : formatRupees(totals.deliveryFeePaisa) }
-      : {}),
-    total: formatRupees(totals.totalPaisa),
+    items: totals.lines.map((line, index) => `${index + 1}. ${describeCartLine(line)}`),
+    subtotal: totals.display.subtotal,
+    ...(totals.discountPaisa > 0 ? { discount: `-${totals.display.discount}` } : {}),
+    ...(totals.taxPaisa > 0 ? { tax: totals.display.tax } : {}),
+    ...(totals.taxIncludedPaisa > 0 ? { taxIncludedInPrices: totals.display.taxIncluded } : {}),
+    ...(orderType === "delivery" ? { deliveryFee: totals.display.deliveryFee } : {}),
+    total: totals.display.total,
   };
+}
+
+// A submitted order answers from its snapshot, not from today's prices.
+async function getOrderTotals(orderState) {
+  if (orderState.placedOrder) return totalsForTool(orderState.placedOrder, orderState.orderType);
+  if (orderState.items.length === 0) return { empty: true };
+  const totals = await cartTotals(orderState);
+  if (totals.error) return { error: totals.error, instruction: NOT_ORDERABLE_INSTRUCTION };
+  return totalsForTool(totals, orderState.orderType);
+}
+
+async function viewCart(orderState) {
+  const lines = orderState.placedOrder ? orderState.placedOrder.lines : await describeCart(orderState.items);
+  return cartSummary(orderState, lines);
 }
 
 // Only codes and promotion ids go in; the server finds the offer, checks it and works out the discount.
@@ -591,7 +567,12 @@ function customerGaveCode(contents, code) {
     .some((part) => typeof part.text === "string" && asWord.test(part.text.toLowerCase()));
 }
 
-function applyPromotion(args, orderState, contents) {
+// The cart as priced right now, in the shape the promotion checks take. May hold { error }.
+function pricedCartFor(orderState) {
+  return orderState.items.length === 0 ? { lines: [], subtotalPaisa: 0 } : priceCart(orderState.items);
+}
+
+async function applyPromotion(args, orderState, contents) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return { applied: false, error: "that order was already submitted, so a promotion can't be added in chat." };
   }
@@ -601,9 +582,11 @@ function applyPromotion(args, orderState, contents) {
   const today = todayInRestaurant(new Date());
   const givenType = ["pickup", "delivery"].includes(args.orderType) ? args.orderType : null;
   const orderType = givenType || orderState.orderType;
+  const pricedCart = await pricedCartFor(orderState);
+  if (pricedCart.error) return { applied: false, error: pricedCart.error, instruction: NOT_ORDERABLE_INSTRUCTION };
 
   if (!args.promotionId && !args.promotionCode) {
-    const eligible = eligibleCartPromotions(orderState, PROMOTIONS, today, orderType);
+    const eligible = eligibleCartPromotions(pricedCart, PROMOTIONS, today, orderType);
     if (eligible.length === 0) {
       return { eligible: [], instruction: "No promotion applies to this cart right now. Don't offer one." };
     }
@@ -618,7 +601,7 @@ function applyPromotion(args, orderState, contents) {
     };
   }
 
-  const check = checkCartPromotion(orderState, { ...args, orderType }, PROMOTIONS, today);
+  const check = checkCartPromotion(pricedCart, { ...args, orderType }, PROMOTIONS, today);
   if (check.needsOrderType) {
     return { applied: false, needsOrderType: check.needsOrderType, instruction: "Ask whether this is for pickup or delivery, then try again." };
   }
@@ -627,22 +610,26 @@ function applyPromotion(args, orderState, contents) {
   }
 
   applyDiscount(orderState, check, { promotionCode: args.promotionCode, orderType: givenType });
+  const totals = await cartTotals(orderState);
   return {
     applied: true,
     promotion: check.promotion.name,
     discount: `-${formatRupees(check.discountPaisa)}`,
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
-    cartTotal: formatRupees(cartTotals(orderState).totalPaisa),
+    cartSubtotal: formatRupees(pricedCart.subtotalPaisa),
+    ...(totals.error ? {} : { cartTotal: totals.display.total }),
     instruction: "The final total is confirmed when the order is saved.",
   };
 }
 
-// After any cart change an applied promotion is checked again, so the discount always matches the cart.
-function recheckPromotion(orderState) {
+// After any cart change an applied promotion is checked again, so it always fits the cart. A cart that
+// can't be priced is reported on its own, and keeps its promotion until that's sorted out.
+async function recheckPromotion(orderState) {
   const discount = orderState.discount;
   if (!discount.promotionId) return null;
+  const pricedCart = await pricedCartFor(orderState);
+  if (pricedCart.error) return null;
   const check = checkCartPromotion(
-    orderState,
+    pricedCart,
     { promotionId: discount.promotionId, promotionCode: discount.code, orderType: orderState.orderType },
     PROMOTIONS,
     todayInRestaurant(new Date())
@@ -812,7 +799,7 @@ const REVIEW_ORDER_TOOL = {
     "the order as it stands.",
 };
 
-function reviewOrder(orderState) {
+async function reviewOrder(orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return { ready: false, error: "that order was already submitted." };
   }
@@ -820,9 +807,10 @@ function reviewOrder(orderState) {
   if (orderState.items.length === 0) return { ready: false, error: "the cart is empty.", instruction: "Help the customer add items first." };
 
   // Promotions are re-checked here, so only one that is still valid appears in the summary.
-  const promotionUpdate = recheckPromotion(orderState);
-  const totals = cartTotals(orderState);
-  const { summary, text } = buildOrderSummary(orderState, totals, missingCheckoutDetails(orderState), PRICING);
+  const promotionUpdate = await recheckPromotion(orderState);
+  const totals = await cartTotals(orderState);
+  if (totals.error) return { ready: false, error: totals.error, instruction: NOT_ORDERABLE_INSTRUCTION };
+  const { summary, text } = buildOrderSummary(orderState, totals, missingCheckoutDetails(orderState));
   if (!summary.readyForCheckout) {
     return {
       ready: false,
@@ -832,7 +820,7 @@ function reviewOrder(orderState) {
     };
   }
 
-  orderState.reviewedFingerprint = orderFingerprint(orderState);
+  orderState.reviewedFingerprint = orderFingerprint(orderState, totals);
   return {
     ready: true,
     summary,
@@ -845,11 +833,19 @@ function reviewOrder(orderState) {
   };
 }
 
-// True if the bot's reply showed the reviewed order's summary: its items and total.
-function summaryShownIn(orderState, reply) {
-  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== orderFingerprint(orderState)) return false;
+// True if the bot's reply showed the reviewed order's summary, at today's prices: its items and total.
+async function summaryShownIn(orderState, reply) {
+  if (!orderState.reviewedFingerprint || orderState.items.length === 0) return false;
+  let totals;
+  try {
+    totals = await cartTotals(orderState);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return false;
+  }
+  if (totals.error || orderState.reviewedFingerprint !== orderFingerprint(orderState, totals)) return false;
   const shown = normaliseForReadBack(reply);
-  const { summary } = buildOrderSummary(orderState, cartTotals(orderState), [], PRICING);
+  const { summary } = buildOrderSummary(orderState, totals, []);
   const required = [
     ...summary.items.map((item) => `${item.quantity} x ${item.name}`),
     `total: ${summary.totals.total}`,
@@ -858,18 +854,19 @@ function summaryShownIn(orderState, reply) {
 }
 
 // After each reply: which version of the order, if any, the customer has now seen summarised.
-function recordShownSummary(orderState, reply) {
-  orderState.shownFingerprint = summaryShownIn(orderState, reply) ? orderState.reviewedFingerprint : null;
+async function recordShownSummary(orderState, reply) {
+  orderState.shownFingerprint = (await summaryShownIn(orderState, reply)) ? orderState.reviewedFingerprint : null;
 }
 
 // The order must have been reviewed as it stands now, and that summary shown in the bot's last
 // message (kept by the server), so the customer confirms exactly what will be saved. A change
 // made in the same message as the yes (a new option, time or instruction) means the customer
 // hasn't seen it yet.
-function checkReviewedOrder(orderState) {
+async function checkReviewedOrder(orderState) {
   if (orderState.items.length === 0) return "the cart is empty. Add the items with addItemToCart first.";
-  cartTotals(orderState);
-  const current = orderFingerprint(orderState);
+  const totals = await cartTotals(orderState);
+  if (totals.error) return totals.error;
+  const current = orderFingerprint(orderState, totals);
   if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== current) {
     return "the order hasn't been reviewed as it stands now. Call reviewOrder, show the customer the summary, and ask them to confirm.";
   }
@@ -879,16 +876,9 @@ function checkReviewedOrder(orderState) {
   return null;
 }
 
-const CART_CHANGING_TOOLS = ["addItemToCart", "modifyItem", "removeItem"];
-
-// Tools that only read or update this chat's data; the model sees the result and carries on.
-async function runDataTool(call, orderState, contents, turn) {
-  if (MENU_TOOL_NAMES.includes(call.name)) {
-    console.log(`Gemini called ${call.name}.`);
-    return runMenuTool(call.name, call.args);
-  }
+async function runCartTool(call, orderState, contents, turn) {
   if (call.name === GET_ORDER_TOTALS_TOOL.name) return getOrderTotals(orderState);
-  if (call.name === VIEW_CART_TOOL.name) return cartSummary(orderState);
+  if (call.name === VIEW_CART_TOOL.name) return viewCart(orderState);
   if (call.name === APPLY_PROMOTION_TOOL.name) return applyPromotion(call.args || {}, orderState, contents);
   if (call.name === SET_PICKUP_DETAILS_TOOL.name) return setPickup(call.args || {}, orderState);
   if (call.name === SET_DELIVERY_DETAILS_TOOL.name) return setDelivery(call.args || {}, orderState);
@@ -896,14 +886,40 @@ async function runDataTool(call, orderState, contents, turn) {
   if (call.name === REVIEW_ORDER_TOOL.name) return reviewOrder(orderState);
 
   let result;
-  if (call.name === MODIFY_ITEM_TOOL.name) result = modifyItem(call.args || {}, orderState, turn.menu);
-  else if (call.name === REMOVE_ITEM_TOOL.name) result = removeItem(call.args || {}, orderState);
-  else result = addItemToCart(call.args || {}, orderState, turn.menu);
+  if (call.name === MODIFY_ITEM_TOOL.name) result = await modifyItem(call.args || {}, orderState);
+  else if (call.name === REMOVE_ITEM_TOOL.name) result = await removeItem(call.args || {}, orderState);
+  else result = await addItemToCart(call.args || {}, orderState, turn.menu);
+  if (!result.added && !result.modified && !result.removed) return result;
 
-  const promotion = CART_CHANGING_TOOLS.includes(call.name) ? recheckPromotion(orderState) : null;
   // The total is always the server's, worked out after the cart and any promotion settle.
-  const withTotal = result.cartSubtotal ? { ...result, cartTotal: formatRupees(cartTotals(orderState).totalPaisa) } : result;
-  return promotion ? { ...withTotal, promotion } : withTotal;
+  const promotion = await recheckPromotion(orderState);
+  return { ...result, ...(await cartView(orderState)), ...(promotion ? { promotion } : {}) };
+}
+
+// Tools that only read or update this chat's data; the model sees the result and carries on.
+async function runDataTool(call, orderState, contents, turn) {
+  if (MENU_TOOL_NAMES.includes(call.name)) {
+    console.log(`Gemini called ${call.name}.`);
+    return runMenuTool(call.name, call.args);
+  }
+  try {
+    return await runCartTool(call, orderState, contents, turn);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return { error: MENU_CHECK_FAILED, instruction: "Say you can't check the menu right now. Don't name any price." };
+  }
+}
+
+// An Order button on the menu sends the item's id, so it goes straight into the cart without the
+// model having to work out which item was meant. The model is told the result, so it can reply.
+async function addFromOrderButton(orderItem, orderState, turn) {
+  const args = { itemId: orderItem.item_id, quantity: orderItem.quantity, optionIds: orderItem.option_ids };
+  const result = await runDataTool({ name: ADD_ITEM_TO_CART_TOOL.name, args }, orderState, [], turn);
+  turn.toolResults.push(result);
+  return (
+    "The customer's message came from an Order button on the menu. The server has already handled it, so don't call " +
+    `addItemToCart for it. Reply to the customer using this result: ${JSON.stringify(result)}`
+  );
 }
 
 // A regenerated reply can only look things up, so a cart change or an order is never made twice.
@@ -925,12 +941,13 @@ const DATA_TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name).filter((name) => name
 // Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
 const MAX_TOOL_ROUNDS = 3;
 
-function generateReply(contents, { tools, orderState, turn, correction }) {
+async function generateReply(contents, { tools, orderState, turn, correction }) {
+  const systemInstruction = await currentSystemPrompt(orderState, turn, correction);
   return gemini.models.generateContent({
     model: GEMINI_MODEL,
     contents,
     config: {
-      systemInstruction: currentSystemPrompt(orderState, turn, correction),
+      systemInstruction,
       temperature: 0.4,
       maxOutputTokens: 1024,
       abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
@@ -983,17 +1000,13 @@ function withCheckoutDetails(args, orderState) {
 }
 
 // Items and promotion come from the reviewed cart, not from the model's arguments.
-function withReviewedCart(args, orderState) {
-  const problem = checkReviewedOrder(orderState);
+async function withReviewedCart(args, orderState) {
+  const problem = await checkReviewedOrder(orderState);
   if (problem) return { error: problem };
   return {
     args: {
       ...(args || {}),
-      items: orderState.items.map((line) => ({
-        itemId: line.itemId,
-        quantity: line.quantity,
-        options: line.options.map((o) => ({ name: o.name, choice: o.choice })),
-      })),
+      items: orderState.items,
       promotionId: orderState.discount.promotionId || undefined,
       promotionCode: orderState.discount.code || undefined,
     },
@@ -1035,7 +1048,13 @@ async function submitCheckedOrder(call, contents, orderState, turn) {
   if (!turn.menu) return { status: "invalid", error: MENU_CHECK_FAILED };
   // Missing details are reported first, since the customer has to supply them before any review.
   const details = withCheckoutDetails(call.args, orderState);
-  let prepared = details.error ? details : withReviewedCart(details.args, orderState);
+  let prepared;
+  try {
+    prepared = details.error ? details : await withReviewedCart(details.args, orderState);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return { status: "invalid", error: MENU_CHECK_FAILED };
+  }
   if (!prepared.error) {
     const notConfirmed = checkCustomerConfirmed(contents);
     if (notConfirmed) prepared = { error: notConfirmed };
@@ -1046,12 +1065,10 @@ async function submitCheckedOrder(call, contents, orderState, turn) {
   try {
     return await placeOrder({
       args: prepared.args,
-      menu: turn.menu,
       promotions: PROMOTIONS,
       today: todayInRestaurant(new Date()),
       saveOrder: saveOrderFor(orderState),
       phone: turn.settings.whatsapp || "the number on our website",
-      pricing: PRICING,
     });
   } finally {
     orderState.checkoutInProgress = false;
@@ -1077,7 +1094,7 @@ async function handleOrderCall(call, contents, response, orderState, turn) {
 
   contents.push(response.candidates[0].content, {
     role: "user",
-    parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error } } }],
+    parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error, instruction: NOT_ORDERABLE_INSTRUCTION } } }],
   });
   const followUp = await generateWithRetry(contents, { tools: null, orderState, turn });
   return { text: (followUp.text || "").trim(), fromServer: false };
@@ -1122,12 +1139,12 @@ function unbackedPrices(reply, turn, stage) {
 }
 
 // No reply reaches the customer with a rupee amount that this turn's tool results don't contain.
-async function askGemini(history, message, orderState, turn) {
+async function askGemini(history, message, orderState, turn, buttonNote) {
   const contents = toGeminiContents(history, message);
-  const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS });
+  const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS, correction: buttonNote });
   if (first.fromServer || unbackedPrices(first, turn, "regenerating").length === 0) return first.text;
 
-  const second = await runModel(contents, orderState, turn, { tools: LOOKUP_TOOLS, correction: PRICE_CORRECTION });
+  const second = await runModel(contents, orderState, turn, { tools: LOOKUP_TOOLS, correction: [buttonNote, PRICE_CORRECTION].filter(Boolean).join("\n\n") });
   if (unbackedPrices(second, turn, "sending fallback").length === 0) return second.text;
 
   return `Sorry, I can't confirm that price right now. Please ${await reachUs()}.`;
@@ -1151,8 +1168,21 @@ function validateHistoryEntry(entry) {
   return null;
 }
 
+const MAX_ID_LENGTH = 100;
+
+// Only the shape is checked here; totals.js decides whether the item and quantity can be ordered.
+function validateOrderItem(orderItem) {
+  if (!orderItem || typeof orderItem !== "object" || Array.isArray(orderItem)) return "orderItem must be an object.";
+  const isId = (id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH;
+  if (!isId(orderItem.item_id)) return "orderItem needs an item_id.";
+  if (orderItem.option_ids !== undefined && (!Array.isArray(orderItem.option_ids) || orderItem.option_ids.length > MAX_HISTORY_ENTRIES || !orderItem.option_ids.every(isId))) {
+    return "orderItem.option_ids must be a list of ids.";
+  }
+  return null;
+}
+
 function validateChatRequest(body) {
-  const { message, conversationHistory } = body || {};
+  const { message, conversationHistory, orderItem } = body || {};
 
   if (typeof message !== "string" || message.trim() === "") {
     return "message is required and must be a non-empty string.";
@@ -1167,7 +1197,7 @@ function validateChatRequest(body) {
     const entryError = validateHistoryEntry(entry);
     if (entryError) return entryError;
   }
-  return null;
+  return orderItem === undefined ? null : validateOrderItem(orderItem);
 }
 
 // With Supabase set up, chats and rate limits are kept there, so they hold across every copy of
@@ -1187,7 +1217,7 @@ async function isRateLimited(ip) {
 async function loadOrderSession(req, res) {
   const id = readSessionId(req.headers.cookie);
   const existing = await sessionStore.load(id);
-  if (existing) return { id, state: existing };
+  if (existing) return { id, state: upgradeOrderState(existing) };
 
   const created = await sessionStore.create();
   res.setHeader("Set-Cookie", sessionCookie(created.id, req.secure));
@@ -1256,7 +1286,7 @@ app.post("/api/chat", async (req, res) => {
     return res.status(503).json({ error: "AI Order Taker isn't configured yet. Please call us to order." });
   }
 
-  const { message, conversationHistory = [] } = req.body;
+  const { message, conversationHistory = [], orderItem } = req.body;
   let session;
   try {
     session = await loadOrderSession(req, res);
@@ -1269,11 +1299,12 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const turn = await loadChatTurn();
-    const reply = await askGemini(conversationHistory, message.trim(), orderState, turn);
+    const buttonNote = orderItem ? await addFromOrderButton(orderItem, orderState, turn) : null;
+    const reply = await askGemini(conversationHistory, message.trim(), orderState, turn, buttonNote);
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
-    recordShownSummary(orderState, orderState.lastReply);
+    await recordShownSummary(orderState, orderState.lastReply);
     // If the chat can't be saved, the customer is asked to resend rather than lose a change
     // silently, except when an order was just placed: its number must still reach them.
     const sessionSaved = await saveOrderSession(session);

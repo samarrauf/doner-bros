@@ -1,12 +1,12 @@
 // Tests for the in-memory session order state. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const {
   createOrderState,
+  upgradeOrderState,
   recordOrderAttempt,
   addToCart,
-  replaceCartLine,
+  setLineQuantity,
   findCartLine,
   removeFromCart,
   cartSummary,
@@ -14,9 +14,10 @@ const {
   readSessionId,
   sessionCookie,
 } = require("./order-session");
-const { placeOrder, priceCartItem, priceModifiedLine } = require("./orders");
+const { placeOrder } = require("./orders");
+const { calculateTotals } = require("./totals");
+const { useFakeMenu } = require("./fake-menu");
 
-const menu = require(path.join(__dirname, "..", "data", "menu.json"));
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 
 const ORDER_ARGS = {
@@ -24,27 +25,39 @@ const ORDER_ARGS = {
   orderType: "delivery",
   customerName: "Test Customer",
   customerPhone: "0300 1234567",
-  deliveryAddress: "House 5, Shalimar City",
+  deliveryAddress: "House 5, Test Town",
   items: [
-    { itemId: "doner-box", quantity: 2, options: [{ name: "Meat", choice: "Chicken doner" }] },
-    { itemId: "seasoned-chips", quantity: 1, options: [{ name: "Extras", choice: "Add cheese" }] },
+    { item_id: "i-main", quantity: 2, option_ids: [] },
+    { item_id: "i-side", quantity: 1, option_ids: [] },
   ],
 };
 
 function attempt(args, saveOrder) {
-  return placeOrder({ args, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
+  return placeOrder({ args, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
 }
+
+function cartLine(item_id, quantity = 1) {
+  return { item_id, quantity, option_ids: [] };
+}
+
+function cartWithMainAndSide() {
+  const state = createOrderState();
+  addToCart(state, cartLine("i-main"));
+  addToCart(state, cartLine("i-side"));
+  return state;
+}
+
+test.beforeEach(() => useFakeMenu());
 
 test("a new session starts with an empty, unconfirmed order", () => {
   assert.deepEqual(createOrderState(), {
     items: [],
+    placedOrder: null,
     orderType: null,
     customer: { name: null, phone: null, deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null },
     pickupTime: null,
     deliveryAddressConfirmed: false,
-    discount: { promotionId: null, promotionName: null, amountPaisa: 0 },
-    subtotalPaisa: 0,
-    totalPaisa: 0,
+    discount: { promotionId: null, promotionName: null },
     confirmed: false,
     status: "open",
     orderNumber: null,
@@ -52,7 +65,14 @@ test("a new session starts with an empty, unconfirmed order", () => {
   });
 });
 
-test("a saved order fills in items, options, customer and server totals", async () => {
+test("the cart stores only ids and quantities, whatever else a line carries", () => {
+  const state = createOrderState();
+  addToCart(state, { item_id: "i-main", quantity: 2, option_ids: [], name: "Sneaky", pricePaisa: 1, unitPricePaisa: 1, lineTotalPaisa: 1 });
+  assert.deepEqual(state.items, [{ item_id: "i-main", quantity: 2, option_ids: [] }]);
+  assert.doesNotMatch(JSON.stringify(state), /[Pp]aisa/, "no price anywhere in an open cart's state");
+});
+
+test("a saved order keeps the ids in the cart and a priced snapshot beside them", async () => {
   const state = recordOrderAttempt(createOrderState(), await attempt(ORDER_ARGS, async () => 7));
   assert.equal(state.status, "saved");
   assert.equal(state.confirmed, true);
@@ -61,20 +81,24 @@ test("a saved order fills in items, options, customer and server totals", async 
   assert.deepEqual(state.customer, {
     name: "Test Customer",
     phone: "0300 1234567",
-    deliveryAddress: "House 5, Shalimar City",
+    deliveryAddress: "House 5, Test Town",
     deliveryUnit: null,
     deliveryInstructions: null,
   });
-  assert.deepEqual(
-    state.items.map((line) => [line.itemId, line.quantity, line.options]),
-    [
-      ["doner-box", 2, [{ name: "Meat", choice: "Chicken doner" }]],
-      ["seasoned-chips", 1, [{ name: "Extras", choice: "Add cheese" }]],
-    ]
-  );
-  assert.equal(state.subtotalPaisa, 2 * 85000 + 45000);
-  assert.equal(state.totalPaisa, state.subtotalPaisa);
-  assert.equal(state.discount.amountPaisa, 0);
+  assert.deepEqual(state.items, [cartLine("i-main", 2), cartLine("i-side")]);
+  assert.equal(state.placedOrder.subtotalPaisa, 2 * 75000 + 35000);
+  assert.equal(state.placedOrder.totalPaisa, state.placedOrder.subtotalPaisa);
+  assert.equal(state.placedOrder.lines[0].name, "Test Main");
+  assert.equal(state.placedOrder.display.total, "Rs 1,850");
+});
+
+test("a saved order's snapshot doesn't move when the menu does", async () => {
+  const state = recordOrderAttempt(createOrderState(), await attempt(ORDER_ARGS, async () => 7));
+  useFakeMenu({ prices: { "i-main": 99900 } });
+  assert.equal(state.placedOrder.totalPaisa, 185000);
+  assert.equal(state.placedOrder.lines[0].unitPricePaisa, 75000);
+  const fresh = await calculateTotals({ cart: state.items });
+  assert.equal(fresh.totalPaisa, 2 * 99900 + 35000, "only a fresh calculation sees the new price");
 });
 
 test("a failed save keeps the checked order but marks it not saved", async () => {
@@ -83,6 +107,7 @@ test("a failed save keeps the checked order but marks it not saved", async () =>
   assert.equal(state.status, "not_saved");
   assert.equal(state.orderNumber, null);
   assert.equal(state.items.length, 2);
+  assert.equal(state.placedOrder.lines.length, 2);
 });
 
 test("a rejected order is unconfirmed and records the problem", async () => {
@@ -90,150 +115,67 @@ test("a rejected order is unconfirmed and records the problem", async () => {
   recordOrderAttempt(state, await attempt({ ...ORDER_ARGS, deliveryAddress: "" }, async () => 8));
   assert.equal(state.status, "needs_changes");
   assert.equal(state.confirmed, false);
+  assert.equal(state.placedOrder, null);
   assert.match(state.problem, /address/);
 });
 
-test("adds a valid item to the cart at the menu price", () => {
-  const priced = priceCartItem({ itemId: "doner-box", quantity: 2, options: [{ name: "meat", choice: "chicken doner" }] }, menu);
-  const state = createOrderState();
-  addToCart(state, priced.line);
-  addToCart(state, priceCartItem({ itemId: "seasoned-chips", quantity: 1, options: [{ name: "Extras", choice: "Add cheese" }] }, menu).line);
-
-  assert.deepEqual(state.items[0].options, [{ name: "Meat", choice: "Chicken doner" }]);
-  assert.equal(state.items[0].lineTotalPaisa, 2 * 85000);
-  assert.equal(state.items[1].unitPricePaisa, 45000);
-  assert.equal(state.subtotalPaisa, 2 * 85000 + 45000);
-  assert.equal(state.totalPaisa, state.subtotalPaisa);
-  assert.equal(state.status, "open");
-});
-
-test("missing required options are reported with their choices, and nothing is priced", () => {
-  assert.deepEqual(priceCartItem({ itemId: "mixed-doner-plate", quantity: 1 }, menu), {
-    missingOptions: [{ name: "Base", choices: ["Rice", "Chips"] }],
-  });
-  // Optional extras aren't required, so chips without them can be added.
-  assert.ok(priceCartItem({ itemId: "seasoned-chips", quantity: 1 }, menu).line);
-});
-
-test("rejects unknown items, made-up choices, bad quantities and unavailable items", () => {
-  assert.match(priceCartItem({ itemId: "pizza", quantity: 1 }, menu).error, /isn't on the menu/);
-  assert.match(
-    priceCartItem({ itemId: "mixed-doner-plate", quantity: 1, options: [{ name: "Base", choice: "Naan" }] }, menu).error,
-    /isn't a choice/
-  );
-  assert.match(priceCartItem({ itemId: "ayran", quantity: 0 }, menu).error, /quantity/);
-  assert.match(priceCartItem({ itemId: "ayran", quantity: 1.5 }, menu).error, /quantity/);
-
-  const soldOut = structuredClone(menu);
-  soldOut.categories.flatMap((c) => c.items).find((i) => i.id === "mixed-doner-plate").availability = "unavailable";
-  assert.match(priceCartItem({ itemId: "mixed-doner-plate", quantity: 1 }, soldOut).error, /unavailable/);
-});
-
 test("the cart is limited, and adding after a saved order starts a new cart", async () => {
-  const ayran = priceCartItem({ itemId: "ayran", quantity: 1 }, menu).line;
   const full = createOrderState();
-  for (let i = 0; i < 20; i++) addToCart(full, ayran);
-  assert.match(addToCart(full, ayran).error, /limited/);
+  for (let i = 0; i < 20; i++) addToCart(full, cartLine("i-drink"));
+  assert.match(addToCart(full, cartLine("i-drink")).error, /limited/);
   assert.equal(full.items.length, 20);
 
   const state = recordOrderAttempt(createOrderState(), await attempt(ORDER_ARGS, async () => 7));
-  addToCart(state, ayran);
+  addToCart(state, cartLine("i-drink"));
   assert.equal(state.status, "open");
   assert.equal(state.orderNumber, null);
-  assert.deepEqual(state.items.map((line) => line.itemId), ["ayran"]);
-  assert.equal(state.subtotalPaisa, 15000);
+  assert.equal(state.placedOrder, null);
+  assert.deepEqual(state.items, [cartLine("i-drink")]);
 });
 
-function cartWithPlateAndChips() {
-  const state = createOrderState();
-  addToCart(state, priceCartItem({ itemId: "mixed-doner-plate", quantity: 1, options: [{ name: "Base", choice: "Rice" }] }, menu).line);
-  addToCart(state, priceCartItem({ itemId: "seasoned-chips", quantity: 1 }, menu).line);
-  return state;
-}
-
-test("modifying a line changes its quantity or options and re-prices it from the menu", () => {
-  const state = cartWithPlateAndChips();
-  const plate = priceModifiedLine(state.items[0], { quantity: 2, options: [{ name: "base", choice: "chips" }] }, menu);
-  replaceCartLine(state, 0, plate.line);
-  assert.deepEqual(state.items[0].options, [{ name: "Base", choice: "Chips" }]);
-  assert.equal(state.items[0].quantity, 2);
-  assert.equal(state.items[0].lineTotalPaisa, 2 * 145000);
-
-  // Adding an optional extra keeps the quantity and adds its menu price.
-  const chips = priceModifiedLine(state.items[1], { options: [{ name: "Extras", choice: "Add cheese" }] }, menu);
-  replaceCartLine(state, 1, chips.line);
-  assert.equal(state.items[1].quantity, 1);
-  assert.equal(state.items[1].lineTotalPaisa, 45000);
-  assert.equal(state.subtotalPaisa, 2 * 145000 + 45000);
-  assert.equal(state.totalPaisa, state.subtotalPaisa);
+test("changing a line's quantity keeps its item and unconfirms the order", () => {
+  const state = cartWithMainAndSide();
+  state.confirmed = true;
+  setLineQuantity(state, 0, 3);
+  assert.deepEqual(state.items[0], cartLine("i-main", 3));
   assert.equal(state.confirmed, false);
 });
 
-test("invalid or empty changes are rejected and the line is left as it was", () => {
-  const state = cartWithPlateAndChips();
-  const line = state.items[0];
-  const before = structuredClone(state);
-
-  assert.match(priceModifiedLine(line, {}, menu).error, /no change/);
-  assert.match(priceModifiedLine(line, { options: [{ name: "Base", choice: "Naan" }] }, menu).error, /isn't a choice/);
-  assert.match(priceModifiedLine(line, { options: [{ name: "Sauce", choice: "Garlic" }] }, menu).error, /no option called/);
-  assert.match(priceModifiedLine(line, { quantity: 0 }, menu).error, /quantity/);
-  assert.match(priceModifiedLine(line, { quantity: 21 }, menu).error, /quantity/);
-  assert.match(
-    priceModifiedLine(line, { options: [{ name: "Base", choice: "Rice" }, { name: "base", choice: "Chips" }] }, menu).error,
-    /more than once/
-  );
-  assert.match(priceModifiedLine(line, { options: [{ name: "Base" }] }, menu).error, /name and a choice/);
-
-  const soldOut = structuredClone(menu);
-  soldOut.categories.flatMap((c) => c.items).find((i) => i.id === "mixed-doner-plate").availability = "unavailable";
-  assert.match(priceModifiedLine(line, { quantity: 2 }, soldOut).error, /unavailable/);
-
-  assert.deepEqual(state, before);
-});
-
 test("finds the cart line by number or item id, and flags missing or ambiguous references", () => {
-  const state = cartWithPlateAndChips();
-  addToCart(state, priceCartItem({ itemId: "seasoned-chips", quantity: 1, options: [{ name: "Extras", choice: "Add cheese" }] }, menu).line);
+  const state = cartWithMainAndSide();
+  addToCart(state, cartLine("i-side"));
 
   assert.deepEqual(findCartLine(state, { lineNumber: 2 }), { index: 1 });
-  assert.deepEqual(findCartLine(state, { itemId: "mixed-doner-plate" }), { index: 0 });
-  assert.deepEqual(findCartLine(state, { lineNumber: 3, itemId: "seasoned-chips" }), { index: 2 });
-  assert.deepEqual(findCartLine(state, { itemId: "seasoned-chips" }), { ambiguous: [1, 2] });
+  assert.deepEqual(findCartLine(state, { itemId: "i-main" }), { index: 0 });
+  assert.deepEqual(findCartLine(state, { lineNumber: 3, itemId: "i-side" }), { index: 2 });
+  assert.deepEqual(findCartLine(state, { itemId: "i-side" }), { ambiguous: [1, 2] });
   assert.match(findCartLine(state, {}).error, /no item was named/);
   assert.match(findCartLine(state, { lineNumber: 4 }).error, /no line 4/);
   assert.match(findCartLine(state, { lineNumber: 1.5 }).error, /no line/);
-  assert.match(findCartLine(state, { itemId: "ayran" }).error, /isn't in the cart/);
-  assert.match(findCartLine(state, { lineNumber: 1, itemId: "seasoned-chips" }).error, /not the item named/);
+  assert.match(findCartLine(state, { itemId: "i-drink" }).error, /isn't in the cart/);
+  assert.match(findCartLine(state, { lineNumber: 1, itemId: "i-side" }).error, /not the item named/);
   assert.match(findCartLine(createOrderState(), { lineNumber: 1 }).error, /cart is empty/);
 });
 
-test("removing reduces a line's quantity or drops the line, and recalculates the totals", () => {
-  const state = cartWithPlateAndChips();
-  replaceCartLine(state, 0, priceModifiedLine(state.items[0], { quantity: 3 }, menu).line);
-  assert.equal(state.subtotalPaisa, 3 * 145000 + 35000);
+test("removing reduces a line's quantity or drops the line", () => {
+  const state = cartWithMainAndSide();
+  setLineQuantity(state, 0, 3);
 
   assert.equal(removeFromCart(state, 0, 2).removed.quantity, 2);
   assert.equal(state.items[0].quantity, 1);
-  assert.equal(state.items[0].lineTotalPaisa, 145000);
-  assert.equal(state.subtotalPaisa, 145000 + 35000);
 
   const whole = removeFromCart(state, 1);
-  assert.equal(whole.removed.itemId, "seasoned-chips");
-  assert.deepEqual(state.items.map((line) => line.itemId), ["mixed-doner-plate"]);
-  assert.equal(state.subtotalPaisa, 145000);
-  assert.equal(state.totalPaisa, 145000);
+  assert.equal(whole.removed.item_id, "i-side");
+  assert.deepEqual(state.items, [cartLine("i-main")]);
 
   // Removing all of a line's quantity is the same as removing the line.
   removeFromCart(state, 0, 1);
   assert.equal(state.items.length, 0);
-  assert.equal(state.subtotalPaisa, 0);
-  assert.equal(state.totalPaisa, 0);
   assert.equal(state.confirmed, false);
 });
 
 test("an invalid quantity to remove leaves the cart as it was", () => {
-  const state = cartWithPlateAndChips();
+  const state = cartWithMainAndSide();
   const before = structuredClone(state);
   for (const quantity of [0, -1, 2, 1.5, "1"]) {
     assert.match(removeFromCart(state, 0, quantity).error, /whole number from 1 to 1/);
@@ -241,28 +183,59 @@ test("an invalid quantity to remove leaves the cart as it was", () => {
   assert.deepEqual(state, before);
 });
 
-test("the cart summary lists items, quantities and options without prices or totals", async () => {
-  const state = cartWithPlateAndChips();
-  replaceCartLine(state, 0, priceModifiedLine(state.items[0], { quantity: 2 }, menu).line);
-  assert.deepEqual(cartSummary(state), {
+test("the cart summary lists items and quantities without prices or totals", async () => {
+  const lines = [{ name: "Test Main", quantity: 2, unitPricePaisa: 1 }, { name: "Test Side", quantity: 1 }];
+  assert.deepEqual(cartSummary(createOrderState(), lines), {
     status: "open",
     items: [
-      { lineNumber: 1, name: "Mixed Doner Plate", quantity: 2, options: ["Base: Rice"] },
-      { lineNumber: 2, name: "Seasoned Chips", quantity: 1, options: [] },
+      { lineNumber: 1, name: "Test Main", quantity: 2 },
+      { lineNumber: 2, name: "Test Side", quantity: 1 },
     ],
   });
-  assert.doesNotMatch(JSON.stringify(cartSummary(state)), /[Pp]aisa|Rs |total/);
-  assert.deepEqual(cartSummary(createOrderState()), { status: "open", items: [] });
+  assert.doesNotMatch(JSON.stringify(cartSummary(createOrderState(), lines)), /[Pp]aisa|Rs |total/);
+  assert.deepEqual(cartSummary(createOrderState(), []), { status: "open", items: [] });
 
   const saved = recordOrderAttempt(createOrderState(), await attempt(ORDER_ARGS, async () => 7));
-  assert.match(cartSummary(saved).note, /already submitted/);
+  assert.match(cartSummary(saved, saved.placedOrder.lines).note, /already submitted/);
+});
+
+test("a chat from before id-only carts keeps its items but loses its stored prices", () => {
+  const state = {
+    ...createOrderState(),
+    items: [{ itemId: "i-main", name: "Old Name", quantity: 2, options: [], unitPricePaisa: 1, lineTotalPaisa: 2 }],
+    discount: { promotionId: "p", promotionName: "Offer", amountPaisa: 5, code: null },
+    subtotalPaisa: 2,
+    totalPaisa: 2,
+    chatSecret: "keep",
+  };
+  assert.equal(upgradeOrderState(state), state, "changed in place, since the memory store holds it by reference");
+  assert.deepEqual(state.items, [cartLine("i-main", 2)]);
+  assert.deepEqual(state.discount, { promotionId: "p", promotionName: "Offer", code: null });
+  assert.doesNotMatch(JSON.stringify(state), /[Pp]aisa/);
+  assert.equal(state.chatSecret, "keep");
+});
+
+test("an already-submitted chat from before id-only carts starts a new cart, keeping its save guard", () => {
+  const state = { ...createOrderState(), status: "saved", orderNumber: 7, items: [{ itemId: "i-main", quantity: 1, lineTotalPaisa: 2 }], discount: { promotionId: null, promotionName: null, amountPaisa: 0 }, chatSecret: "keep", savedOrderCount: 1 };
+  upgradeOrderState(state);
+  assert.equal(state.status, "open");
+  assert.deepEqual(state.items, []);
+  assert.equal(state.chatSecret, "keep");
+  assert.equal(state.savedOrderCount, 1);
+});
+
+test("a current chat is left exactly as it is", () => {
+  const state = cartWithMainAndSide();
+  const before = structuredClone(state);
+  upgradeOrderState(state);
+  assert.deepEqual(state, before);
 });
 
 test("each session has its own cart", () => {
   const store = new SessionStore();
   const a = store.create();
   const b = store.create();
-  addToCart(store.get(a.id), priceCartItem({ itemId: "ayran", quantity: 1 }, menu).line);
+  addToCart(store.get(a.id), cartLine("i-drink"));
   assert.equal(store.get(a.id).items.length, 1);
   assert.equal(store.get(b.id).items.length, 0);
 });

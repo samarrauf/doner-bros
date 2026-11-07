@@ -10,7 +10,7 @@ const menuIds = new Set(MENU.categories.flatMap((c) => c.items.map((item) => ite
 
 function cartWith(...itemIds) {
   const state = createOrderState();
-  state.items = itemIds.map((itemId) => ({ itemId, quantity: 1, options: [] }));
+  state.items = itemIds.map((item_id) => ({ item_id, quantity: 1, option_ids: [] }));
   return state;
 }
 
@@ -31,7 +31,7 @@ test("each kind of suggestion is offered only once per chat", () => {
   const state = cartWith("mixed-doner-plate");
   assert.strictEqual(suggestItems(state, MENU).length, 2);
   assert.deepStrictEqual(suggestItems(state, MENU), []);
-  state.items.push({ itemId: "doner-box", quantity: 1, options: [] });
+  state.items.push({ item_id: "doner-box", quantity: 1, option_ids: [] });
   assert.deepStrictEqual(suggestItems(state, MENU), [], "a declined drink isn't swapped for a different drink");
 });
 
@@ -63,7 +63,7 @@ test("a new cart after a saved order keeps what was already offered", () => {
   const state = cartWith("mixed-doner-plate");
   suggestItems(state, MENU);
   state.status = "saved";
-  addToCart(state, { itemId: "doner-box", quantity: 1, options: [], lineTotalPaisa: 85000 });
+  addToCart(state, { item_id: "doner-box", quantity: 1, option_ids: [] });
   assert.strictEqual(state.items.length, 1);
   assert.deepStrictEqual(suggestItems(state, MENU), []);
 });

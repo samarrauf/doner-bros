@@ -245,6 +245,7 @@ async function getHealth() {
 }
 
 module.exports = {
+  formatPrice,
   setClient,
   refreshMenu,
   getMenu,

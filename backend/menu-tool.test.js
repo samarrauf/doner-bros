@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const menuService = require("./services/menu-service");
 const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu } = require("./menu-tool");
-const { priceCartItem } = require("./orders");
+const { priceCart } = require("./totals");
 
 const TABLES = {
   menu_categories: [
@@ -116,14 +116,13 @@ test("a failed read tells the model to give up on the menu, with no items", asyn
 });
 
 test("the cart prices items and deals from the service, and refuses anything else", async () => {
-  const menu = await getOrderableMenu();
-  assert.equal(priceCartItem({ itemId: "i-1", quantity: 2 }, menu).line.lineTotalPaisa, 24600);
-  assert.equal(priceCartItem({ itemId: "d-1", quantity: 1 }, menu).line.unitPricePaisa, 11100);
-  assert.ok(priceCartItem({ itemId: "i-2", quantity: 1 }, menu).error, "a finished item can't be ordered");
-  assert.ok(priceCartItem({ itemId: "d-2", quantity: 1 }, menu).error, "an unavailable deal can't be ordered");
-  assert.ok(priceCartItem({ itemId: "nope", quantity: 1 }, menu).error);
-  const pricedAnyway = priceCartItem({ itemId: "i-1", quantity: 1, pricePaisa: 1 }, menu);
-  assert.equal(pricedAnyway.line.unitPricePaisa, 12300, "a price passed in is ignored");
+  assert.equal((await priceCart([{ item_id: "i-1", quantity: 2 }])).lines[0].lineTotalPaisa, 24600);
+  assert.equal((await priceCart([{ item_id: "d-1", quantity: 1 }])).lines[0].unitPricePaisa, 11100);
+  assert.ok((await priceCart([{ item_id: "i-2", quantity: 1 }])).error, "a finished item can't be ordered");
+  assert.ok((await priceCart([{ item_id: "d-2", quantity: 1 }])).error, "an unavailable deal can't be ordered");
+  assert.ok((await priceCart([{ item_id: "nope", quantity: 1 }])).error);
+  const pricedAnyway = await priceCart([{ item_id: "i-1", quantity: 1, pricePaisa: 1 }]);
+  assert.equal(pricedAnyway.lines[0].unitPricePaisa, 12300, "a price passed in is ignored");
 });
 
 test("the chatbot files don't read the old menu or restaurant files", () => {

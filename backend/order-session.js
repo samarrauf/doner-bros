@@ -11,17 +11,19 @@ const MAX_CART_LINES = 20; // same limit submit_order applies
 
 // status: "open" (nothing submitted yet), "needs_changes" (last submit was rejected),
 // "saved" (in the database), "not_saved" (valid, but the database save failed).
+// items is the cart: [{ item_id, quantity, option_ids }], with no names or prices. totals.js looks
+// those up whenever they're needed. placedOrder is the snapshot of a submitted order, so what the
+// customer is told about it can't move when the menu does.
 function createOrderState() {
   return {
     items: [],
+    placedOrder: null,
     orderType: null,
     // deliveryUnit and deliveryInstructions: null = not asked yet, "" = the customer said there's none.
     customer: { name: null, phone: null, deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null },
     pickupTime: null, // "HH:MM" when the customer asked for one; null means as soon as possible
     deliveryAddressConfirmed: false, // the customer confirmed the address after hearing it read back
-    discount: { promotionId: null, promotionName: null, amountPaisa: 0 },
-    subtotalPaisa: 0,
-    totalPaisa: 0,
+    discount: { promotionId: null, promotionName: null },
     confirmed: false,
     status: "open",
     orderNumber: null,
@@ -29,9 +31,25 @@ function createOrderState() {
   };
 }
 
+// Chats saved before carts went id-only may still be open when this runs. Their prices are dropped;
+// a chat that had already submitted starts a new cart, keeping only what stops a double save.
+function upgradeOrderState(state) {
+  if (state.items.every((line) => line.item_id)) return state;
+  const { chatSecret, savedOrderCount, suggestionsOffered } = state;
+  const submitted = state.status === "saved" || state.status === "not_saved";
+  const { subtotalPaisa: _subtotal, totalPaisa: _total, ...current } = state;
+  const { amountPaisa: _amount, ...discount } = state.discount;
+  const upgraded = submitted
+    ? { ...createOrderState(), chatSecret, savedOrderCount, suggestionsOffered }
+    : { ...current, discount, placedOrder: null, items: state.items.map((line) => ({ item_id: line.itemId, quantity: line.quantity, option_ids: [] })) };
+  for (const key of Object.keys(state)) delete state[key];
+  return Object.assign(state, upgraded);
+}
+
 // Copies only server-checked values from placeOrder's result; nothing comes straight from the model.
 function recordOrderAttempt(state, result) {
   if (result.status === "invalid") {
+    state.placedOrder = null;
     state.confirmed = false;
     state.status = "needs_changes";
     state.problem = result.error;
@@ -39,7 +57,17 @@ function recordOrderAttempt(state, result) {
   }
 
   const order = result.order;
-  state.items = order.lines.map((line) => ({ ...line, options: line.options.map((o) => ({ ...o })) }));
+  state.items = order.lines.map((line) => ({ item_id: line.itemId, quantity: line.quantity, option_ids: [] }));
+  state.placedOrder = {
+    lines: order.lines.map((line) => ({ ...line, options: line.options.map((o) => ({ ...o })) })),
+    subtotalPaisa: order.subtotalPaisa,
+    discountPaisa: order.discountPaisa,
+    taxPaisa: order.taxPaisa,
+    taxIncludedPaisa: order.taxIncludedPaisa,
+    deliveryFeePaisa: order.deliveryFeePaisa,
+    totalPaisa: order.totalPaisa,
+    display: { ...order.display },
+  };
   state.orderType = order.orderType;
   state.customer = {
     name: order.customerName,
@@ -53,10 +81,7 @@ function recordOrderAttempt(state, result) {
   state.discount = {
     promotionId: order.promotion ? order.promotion.id : null,
     promotionName: order.promotion ? order.promotion.name : null,
-    amountPaisa: order.discountPaisa,
   };
-  state.subtotalPaisa = order.subtotalPaisa;
-  state.totalPaisa = order.totalPaisa;
   state.confirmed = true;
   state.status = result.status === "saved" ? "saved" : "not_saved";
   state.orderNumber = result.status === "saved" ? result.orderNumber : null;
@@ -64,28 +89,22 @@ function recordOrderAttempt(state, result) {
   return state;
 }
 
-// line comes from orders.priceCartItem, so its price is the server's. Adding after an order
-// was saved or failed starts a new cart rather than editing that order.
-function addToCart(state, line) {
+// Only the ids and quantity go into the cart, whatever else the line carries. Adding after an
+// order was saved or failed starts a new cart rather than editing that order.
+function addToCart(state, { item_id, quantity, option_ids }) {
   // suggestionsOffered (set by recommendations.js) is kept so a declined suggestion stays declined.
   if (state.status === "saved" || state.status === "not_saved") {
     Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [] });
   }
   if (state.items.length >= MAX_CART_LINES) return { error: `the cart is limited to ${MAX_CART_LINES} lines.` };
 
-  state.items.push({ ...line, options: line.options.map((o) => ({ ...o })) });
-  state.subtotalPaisa += line.lineTotalPaisa;
-  state.totalPaisa = state.subtotalPaisa;
+  state.items.push({ item_id, quantity, option_ids: [...(option_ids || [])] });
   state.confirmed = false;
   return { state };
 }
 
-// line comes from orders.priceModifiedLine; the subtotal moves by the price difference.
-function replaceCartLine(state, index, line) {
-  const previous = state.items[index];
-  state.items[index] = { ...line, options: line.options.map((o) => ({ ...o })) };
-  state.subtotalPaisa += line.lineTotalPaisa - previous.lineTotalPaisa;
-  state.totalPaisa = state.subtotalPaisa;
+function setLineQuantity(state, index, quantity) {
+  state.items[index] = { ...state.items[index], quantity };
   state.confirmed = false;
   return state;
 }
@@ -103,20 +122,19 @@ function findCartLine(state, { lineNumber, itemId }) {
     if (!Number.isInteger(lineNumber) || !state.items[index]) {
       return { error: `there is no line ${lineNumber}; the cart has ${state.items.length} line(s).` };
     }
-    if (wantedId && state.items[index].itemId !== wantedId) {
-      return { error: `line ${lineNumber} is ${state.items[index].name}, not the item named.` };
+    if (wantedId && state.items[index].item_id !== wantedId) {
+      return { error: `line ${lineNumber} is not the item named.` };
     }
     return { index };
   }
 
-  const matches = state.items.map((line, index) => (line.itemId === wantedId ? index : -1)).filter((i) => i >= 0);
+  const matches = state.items.map((line, index) => (line.item_id === wantedId ? index : -1)).filter((i) => i >= 0);
   if (matches.length === 0) return { error: "that item isn't in the cart." };
   if (matches.length > 1) return { ambiguous: matches };
   return { index: matches[0] };
 }
 
-// quantity is how many to take off the line; leaving it out removes the whole line. Totals
-// are re-added from the remaining lines, whose prices the server set.
+// quantity is how many to take off the line; leaving it out removes the whole line.
 function removeFromCart(state, index, quantity) {
   const line = state.items[index];
   if (quantity !== undefined && (!Number.isInteger(quantity) || quantity < 1 || quantity > line.quantity)) {
@@ -126,32 +144,27 @@ function removeFromCart(state, index, quantity) {
   const removing = quantity === undefined ? line.quantity : quantity;
   const remaining = line.quantity - removing;
   if (remaining === 0) state.items.splice(index, 1);
-  else state.items[index] = { ...line, quantity: remaining, lineTotalPaisa: line.unitPricePaisa * remaining };
+  else state.items[index] = { ...line, quantity: remaining };
 
-  state.subtotalPaisa = state.items.reduce((sum, item) => sum + item.lineTotalPaisa, 0);
-  state.totalPaisa = state.subtotalPaisa;
   state.confirmed = false;
-  return { removed: { ...line, quantity: removing, lineTotalPaisa: line.unitPricePaisa * removing } };
+  return { removed: { ...line, quantity: removing } };
 }
 
-// check comes from orders.checkCartPromotion. The customer's code is kept so the discount can
-// be re-checked whenever the cart changes.
+// check comes from orders.checkCartPromotion. Only which offer applies is kept, with the customer's
+// code; the amount is worked out again by totals.js every time.
 function applyDiscount(state, check, { promotionCode, orderType }) {
   state.discount = {
     promotionId: check.promotion.id,
     promotionName: check.promotion.name,
-    amountPaisa: check.discountPaisa,
     code: check.promotion.code ? promotionCode : null,
   };
   if (orderType) state.orderType = orderType;
-  state.totalPaisa = state.subtotalPaisa - check.discountPaisa;
   state.confirmed = false;
   return state;
 }
 
 function clearDiscount(state) {
-  state.discount = { promotionId: null, promotionName: null, amountPaisa: 0 };
-  state.totalPaisa = state.subtotalPaisa;
+  state.discount = { promotionId: null, promotionName: null };
   return state;
 }
 
@@ -234,18 +247,18 @@ function confirmDeliveryAddress(state, lastReply) {
   return { readBack };
 }
 
-// Itemized cart for viewCart: line numbers, quantities and chosen options only, no prices or totals.
-function cartSummary(state) {
+// Itemized cart for viewCart: line numbers, names and quantities only, no prices or totals.
+// lines: [{ name, quantity }], from totals.describeCart or a placed order's snapshot.
+function cartSummary(state, lines) {
   return {
     status: state.status,
     ...(state.status === "saved" || state.status === "not_saved"
       ? { note: "These items were already submitted as an order, so they can't be changed in chat." }
       : {}),
-    items: state.items.map((line, index) => ({
+    items: lines.map((line, index) => ({
       lineNumber: index + 1,
       name: line.name,
       quantity: line.quantity,
-      options: line.options.map((o) => `${o.name}: ${o.choice}`),
     })),
   };
 }
@@ -311,4 +324,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, recordOrderAttempt, addToCart, replaceCartLine, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };
+module.exports = { createOrderState, upgradeOrderState, recordOrderAttempt, addToCart, setLineQuantity, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };

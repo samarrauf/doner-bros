@@ -35,9 +35,9 @@ function suggestItems(state, menu) {
   const allItems = categories.flatMap((c) => (Array.isArray(c.items) ? c.items : [])).filter(isSuggestable);
   const byId = new Map(allItems.map((item) => [item.id, item]));
 
-  const cartItems = state.items.map((line) => byId.get(line.itemId)).filter(Boolean);
+  const cartItems = state.items.map((line) => byId.get(line.item_id)).filter(Boolean);
   const cartKinds = new Set(cartItems.map((item) => kindOf(item.category)));
-  const cartIds = new Set(state.items.map((line) => line.itemId));
+  const cartIds = new Set(state.items.map((line) => line.item_id));
   const cartMains = cartItems.filter((item) => kindOf(item.category) === "main");
   const vegetarianCart = cartMains.length > 0 && cartMains.every((item) => (item.tags || []).includes("Vegetarian"));
 

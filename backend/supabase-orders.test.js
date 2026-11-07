@@ -1,15 +1,19 @@
 // Tests for saving confirmed orders to Supabase, with a fake client. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const { createSupabaseOrderStore, submissionKey, newOrderId } = require("./supabase-orders");
 const { placeOrder, validateOrder, toOrderRow } = require("./orders");
+const { useFakeMenu } = require("./fake-menu");
 
-const menu = require(path.join(__dirname, "..", "data", "menu.json"));
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
-const ARGS = { customerConfirmed: true, orderType: "pickup", customerName: "Ali", customerPhone: "0300 1234567", items: [{ itemId: "ayran", quantity: 1 }] };
-const ROW = toOrderRow(validateOrder(ARGS, menu, [], FRIDAY).order);
+const ARGS = { customerConfirmed: true, orderType: "pickup", customerName: "Ali", customerPhone: "0300 1234567", items: [{ item_id: "i-drink", quantity: 1 }] };
 const KEY = "a".repeat(64);
+let ROW;
+
+test.before(async () => {
+  useFakeMenu();
+  ROW = toOrderRow((await validateOrder(ARGS, [], FRIDAY)).order);
+});
 
 // Behaves like the orders table: order_id and submission_key are unique (error 23505).
 function fakeSupabase({ failWith = null, clashIds = 0 } = {}) {
@@ -103,7 +107,7 @@ test("the order can't set its own ID, key, status or timestamp", async () => {
 
 test("database errors mean not saved, and the customer is told to call", async () => {
   const store = createSupabaseOrderStore(fakeSupabase({ failWith: { code: "PGRST301", message: "JWT expired" } }));
-  const result = await placeOrder({ args: ARGS, menu, promotions: [], today: FRIDAY, phone: "0310-3994111",
+  const result = await placeOrder({ args: ARGS, promotions: [], today: FRIDAY, phone: "0310-3994111",
     saveOrder: async (row) => (await store.save(row, KEY)).orderId });
   assert.equal(result.status, "failed");
   assert.equal(result.reason, "PGRST301");
@@ -115,7 +119,7 @@ test("an unconfirmed or invalid order never reaches the database", async () => {
   const store = createSupabaseOrderStore(client);
   const saveOrder = async (row) => (await store.save(row, KEY)).orderId;
   for (const attempt of [{ ...ARGS, customerConfirmed: undefined }, { ...ARGS, customerConfirmed: "yes" }, { ...ARGS, items: [] }]) {
-    const result = await placeOrder({ args: attempt, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
+    const result = await placeOrder({ args: attempt, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
     assert.equal(result.status, "invalid");
   }
   assert.equal(client.rows.length, 0);

@@ -259,7 +259,6 @@ function buildItemCard(item) {
   const foot = createElement("div", "product-foot");
   foot.appendChild(createElement("span", "price", item.priceDisplay));
 
-  // Stage 7 wires up what this button sends.
   const orderButton = createElement("button", "btn btn-small", "Order");
   orderButton.type = "button";
   orderButton.dataset.itemId = item.id;
@@ -387,13 +386,14 @@ function chatFallbackError() {
 }
 
 // Sends the message and prior turns to the backend; resolves with AI Order Taker's reply text.
-async function requestOrderTakerReply(message, conversationHistory) {
+// orderItem is set when a menu Order button sent the message: the server orders by its id, not the words.
+async function requestOrderTakerReply(message, conversationHistory, orderItem) {
   let response;
   try {
     response = await fetch(CHAT_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, conversationHistory }),
+      body: JSON.stringify({ message, conversationHistory, orderItem }),
     });
   } catch (error) {
     // Network failure (offline, server down).
@@ -472,14 +472,14 @@ function setupChatWidget() {
     sendButton.disabled = isWaiting || input.value.trim() === "";
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, orderItem) {
     addBubble(text, "user");
     isWaiting = true;
     refreshSendButton();
 
     const typing = showTyping();
     try {
-      const reply = await requestOrderTakerReply(text, conversationHistory);
+      const reply = await requestOrderTakerReply(text, conversationHistory, orderItem);
       addBubble(reply, "bot");
       conversationHistory.push({ role: "user", content: text }, { role: "assistant", content: reply });
     } catch (error) {
@@ -493,7 +493,8 @@ function setupChatWidget() {
     }
 
     if (queuedMessages.length > 0) {
-      sendMessage(queuedMessages.shift());
+      const next = queuedMessages.shift();
+      sendMessage(next.text, next.orderItem);
     }
   }
 
@@ -509,21 +510,23 @@ function setupChatWidget() {
     sendMessage(text);
   });
 
-  // Menu Order buttons add the item through AI Order Taker, which prices it on the server,
-  // asks for any choices, and shows the order summary at checkout. They're still tel: links
-  // underneath, so without JavaScript they call the restaurant instead.
-  document.querySelectorAll(".order-item").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      const itemName = button.closest(".product").querySelector("h4").textContent.trim();
-      const text = `I'd like to order 1 x ${itemName}.`;
-      setOpen(true);
-      if (isWaiting) {
-        queuedMessages.push(text);
-      } else {
-        sendMessage(text);
-      }
-    });
+  // Menu Order buttons send the item's id; the name is only for the message the customer reads.
+  // The server looks up the price. The menu is drawn after this runs, so the click is caught on
+  // its container.
+  document.getElementById("menu-root").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-item-id]");
+    if (!button) {
+      return;
+    }
+    const itemName = button.closest(".product").querySelector("h4").textContent.trim();
+    const text = `I'd like to order 1 x ${itemName}.`;
+    const orderItem = { item_id: button.dataset.itemId, quantity: 1, option_ids: [] };
+    setOpen(true);
+    if (isWaiting) {
+      queuedMessages.push({ text, orderItem });
+    } else {
+      sendMessage(text, orderItem);
+    }
   });
 }
 

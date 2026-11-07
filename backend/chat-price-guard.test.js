@@ -12,6 +12,9 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "";
 // Each test scripts the model's replies; requests records what the model was sent.
 let script = [];
 let requests = [];
+// Each test is its own visitor, so the real per-visitor rate limit doesn't carry between tests.
+let testCount = 0;
+let clientIp = "10.0.0.0";
 const genaiPath = require.resolve("@google/genai");
 require.cache[genaiPath] = {
   id: genaiPath,
@@ -43,6 +46,9 @@ const TABLES = {
   menu_settings: [
     { key: "whatsapp", value: TEST_WHATSAPP },
     { key: "address", value: "Test Address" },
+    { key: "tax_mode", value: "none" },
+    { key: "tax_rate_bps", value: "0" },
+    { key: "delivery_fee_paisa", value: "0" },
   ],
 };
 
@@ -69,7 +75,7 @@ function call(name, args = {}) {
   return { text: "", functionCalls: [functionCall], candidates: [{ content: { role: "model", parts: [{ functionCall }] } }] };
 }
 
-async function ask(message, cookie) {
+async function ask(message, cookie, extraBody = {}) {
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (text) => warnings.push(String(text));
@@ -78,11 +84,11 @@ async function ask(message, cookie) {
   try {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
-      body: JSON.stringify({ message }),
+      headers: { "content-type": "application/json", "x-forwarded-for": clientIp, ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify({ message, ...extraBody }),
     });
     const setCookie = res.headers.get("set-cookie");
-    return { body: await res.json(), warnings, cookie: setCookie ? setCookie.split(";")[0] : cookie };
+    return { status: res.status, body: await res.json(), warnings, cookie: setCookie ? setCookie.split(";")[0] : cookie };
   } finally {
     console.warn = originalWarn;
     await new Promise((resolve) => server.close(resolve));
@@ -94,6 +100,8 @@ function declaredTools(request) {
 }
 
 test.beforeEach(() => {
+  testCount += 1;
+  clientIp = `10.0.0.${testCount}`;
   script = [];
   requests = [];
   menuService.setClient(fakeClient());
@@ -178,6 +186,140 @@ test("a Supabase item goes from the cart through totals and review to order chec
   } finally {
     console.error = originalError;
   }
+});
+
+function withPrice(pricePaisa) {
+  const original = TABLES.menu_items[0];
+  TABLES.menu_items[0] = { ...original, price_paisa: pricePaisa };
+  menuService.setClient(fakeClient());
+  return () => {
+    TABLES.menu_items[0] = original;
+    menuService.setClient(fakeClient());
+  };
+}
+
+function viewOf(request) {
+  return request.contents.at(-1).parts[0].functionResponse.response;
+}
+
+const reviewShown = (request) => say(`${viewOf(request).text}\nReply yes to place it.`);
+
+test("an Order button sends the id: the server adds it without the model, and the model isn't told to add it again", async () => {
+  script = [(request) => {
+    assert.match(request.config.systemInstruction, /already handled it, so don't call addItemToCart/);
+    assert.match(request.config.systemInstruction, /1 x Test Item: Rs 123/);
+    return say("Added Test Item, Rs 123.");
+  }];
+  const { body, cookie, warnings } = await ask("I'd like to order 1 x Whatever The Text Says.", undefined, { orderItem: { item_id: "i-1", quantity: 1, option_ids: [] } });
+  assert.equal(body.reply, "Added Test Item, Rs 123.");
+  assert.deepEqual(warnings.filter((w) => w.includes("Price guard")), [], "the price comes from a server result");
+
+  script = [call("viewCart"), say("One item.")];
+  await ask("what's in my cart", cookie);
+  assert.deepEqual(viewOf(requests.at(-1)).items, [{ lineNumber: 1, name: "Test Item", quantity: 1 }]);
+});
+
+test("a price sent with an Order button goes nowhere", async () => {
+  script = [say("Added.")];
+  const { cookie } = await ask("order it", undefined, { orderItem: { item_id: "i-1", quantity: 2, pricePaisa: 1, totalPaisa: 1 } });
+  script = [call("get_order_totals"), say("Your total is Rs 246.")];
+  assert.equal((await ask("total?", cookie)).body.reply, "Your total is Rs 246.");
+});
+
+test("an Order button for a finished or unknown item adds nothing, and the model is told which", async () => {
+  const original = TABLES.menu_items;
+  TABLES.menu_items = [...original, { ...original[0], id: "i-off", slug: "off", name: "Off Item", is_available: false }];
+  menuService.setClient(fakeClient());
+  try {
+    script = [(request) => {
+      assert.match(request.config.systemInstruction, /finished for now: Off Item/);
+      return say("Sorry, Off Item is finished for now.");
+    }];
+    const finished = await ask("order it", undefined, { orderItem: { item_id: "i-off", quantity: 1 } });
+    assert.equal(finished.body.reply, "Sorry, Off Item is finished for now.");
+
+    script = [(request) => {
+      assert.match(request.config.systemInstruction, /not on the menu: nope/);
+      return say("That isn't available.");
+    }];
+    await ask("order it", finished.cookie, { orderItem: { item_id: "nope", quantity: 1 } });
+
+    script = [call("viewCart"), say("Empty.")];
+    await ask("cart?", finished.cookie);
+    assert.deepEqual(viewOf(requests.at(-1)).items, []);
+  } finally {
+    TABLES.menu_items = original;
+    menuService.setClient(fakeClient());
+  }
+});
+
+test("a badly shaped orderItem is refused before anything happens", async () => {
+  for (const orderItem of ["i-1", [], {}, { item_id: 5 }, { item_id: "i-1", option_ids: "x" }, { item_id: "x".repeat(101) }]) {
+    assert.equal((await ask("order it", undefined, { orderItem })).status, 400, JSON.stringify(orderItem));
+  }
+});
+
+test("a price change after the review stops the save until the customer sees the new total", async () => {
+  script = [call("addItemToCart", { itemId: "i-1", quantity: 1 }), say("Added.")];
+  const { cookie } = await ask("add one");
+  script = [call("setPickupDetails", { customerName: "Test Customer", customerPhone: "03000000000" }), call("reviewOrder"), reviewShown];
+  assert.match((await ask("pickup, Test Customer, 03000000000", cookie)).body.reply, /Total: Rs 123/);
+
+  const restore = withPrice(20000);
+  try {
+    script = [call("submit_order", { customerConfirmed: true }), (request) => {
+      assert.match(viewOf(request).error, /hasn't been reviewed as it stands now/);
+      return say("The price changed. Let me show you the new total.");
+    }];
+    assert.match((await ask("yes", cookie)).body.reply, /price changed/);
+
+    script = [call("reviewOrder"), reviewShown];
+    assert.match((await ask("show me", cookie)).body.reply, /Total: Rs 200/);
+  } finally {
+    restore();
+  }
+});
+
+test("an item that finishes after the review can't be saved, but can still be seen and removed", async () => {
+  script = [call("addItemToCart", { itemId: "i-1", quantity: 1 }), say("Added.")];
+  const { cookie } = await ask("add one");
+
+  const original = TABLES.menu_items[0];
+  TABLES.menu_items[0] = { ...original, is_available: false };
+  menuService.setClient(fakeClient());
+  try {
+    script = [call("get_order_totals"), say("It's finished.")];
+    await ask("total?", cookie);
+    assert.match(viewOf(requests.at(-1)).error, /finished for now: Test Item/);
+
+    script = [call("viewCart"), say("Here.")];
+    await ask("cart?", cookie);
+    assert.deepEqual(viewOf(requests.at(-1)).items, [{ lineNumber: 1, name: "Test Item", quantity: 1 }]);
+    assert.match(requests.at(-1).config.systemInstruction, /1 x Test Item \(can't be ordered right now\)/);
+
+    script = [call("removeItem", { lineNumber: 1 }), say("Removed.")];
+    await ask("remove it", cookie);
+    const removed = viewOf(requests.at(-1));
+    assert.equal(removed.removed, true);
+    assert.equal(removed.removedItem, "1 x Test Item");
+    assert.deepEqual(removed.cart, []);
+  } finally {
+    TABLES.menu_items[0] = original;
+    menuService.setClient(fakeClient());
+  }
+});
+
+test("modifyItem re-checks the quantity with totals and leaves a bad change out of the cart", async () => {
+  script = [call("addItemToCart", { itemId: "i-1", quantity: 1 }), say("Added.")];
+  const { cookie } = await ask("add one");
+
+  script = [call("modifyItem", { lineNumber: 1, quantity: 500 }), say("Too many.")];
+  await ask("make it 500", cookie);
+  assert.match(viewOf(requests.at(-1)).error, /quantity must be a whole number from 1 to 20/);
+
+  script = [call("modifyItem", { lineNumber: 1, quantity: 3 }), say("Done.")];
+  await ask("make it 3", cookie);
+  assert.equal(viewOf(requests.at(-1)).cartTotal, "Rs 369");
 });
 
 test("when the menu can't be read, the tool says so and the number from settings stays available", async () => {
