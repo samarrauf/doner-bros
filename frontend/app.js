@@ -115,18 +115,103 @@ function setupCategoryTabs() {
       tab.classList.toggle("is-active", isActive);
       if (isActive) {
         tab.setAttribute("aria-current", "true");
-        tab.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+        // Scroll only the strip: scrollIntoView would also cancel the page's own smooth scroll to the section.
+        const strip = tab.parentElement;
+        const offset = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+        strip.scrollTo({ left: strip.scrollLeft + offset - (strip.clientWidth - tab.offsetWidth) / 2, behavior: "smooth" });
       } else {
         tab.removeAttribute("aria-current");
       }
     });
   }
 
+  // While a clicked tab's smooth scroll runs, tracking must not change the active tab.
+  let clickLock = false;
+  let settleTimer = null;
+  // Sections in the band, oldest entry first. Kept up to date during a lock, so a user
+  // scroll that ends the lock can pick up the section they are actually on.
+  const sectionsInBand = new Set();
+
+  function releaseClickLock() {
+    clickLock = false;
+    clearInterval(settleTimer);
+  }
+
+  function watchForSettle() {
+    const supportsScrollEnd = "onscrollend" in window;
+    let lastY = window.scrollY;
+    clearInterval(settleTimer);
+    settleTimer = setInterval(() => {
+      if (window.scrollY === lastY) {
+        // Settled, or the section was already in place so no scroll (and no scrollend) ever happens.
+        releaseClickLock();
+      } else if (supportsScrollEnd) {
+        clearInterval(settleTimer);
+      } else {
+        lastY = window.scrollY;
+      }
+    }, 150);
+  }
+
+  function onUserScroll() {
+    if (!clickLock) {
+      return;
+    }
+    releaseClickLock();
+    const current = Array.from(sectionsInBand).pop();
+    if (current) {
+      setActive(current);
+    }
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const id = tab.getAttribute("href").slice(1);
+      setActive(id);
+      clickLock = true;
+      // The browser drops an anchor jump made during a smooth scroll, so a second click would
+      // highlight this tab but land on the first one. This scroll replaces the running one.
+      document.getElementById(id).scrollIntoView({ behavior: "smooth" });
+      watchForSettle();
+    });
+  });
+
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+  const stripElement = document.getElementById("category-tabs");
+  window.addEventListener("scrollend", () => {
+    if (clickLock) {
+      releaseClickLock();
+    }
+  });
+  window.addEventListener("wheel", onUserScroll, { passive: true });
+  // A swipe along the tab strip moves the strip, not the page.
+  window.addEventListener("touchmove", (event) => {
+    if (!stripElement.contains(event.target)) {
+      onUserScroll();
+    }
+  }, { passive: true });
+  window.addEventListener("keydown", (event) => {
+    if (SCROLL_KEYS.has(event.key)) {
+      onUserScroll();
+    }
+  });
+  // A press on the page scrollbar lands on the root element.
+  window.addEventListener("mousedown", (event) => {
+    if (event.target === document.documentElement) {
+      onUserScroll();
+    }
+  });
+
   // A section counts as "current" once it reaches the band just below the sticky bars.
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
-        setActive(entry.target.id);
+        sectionsInBand.add(entry.target.id);
+        if (!clickLock) {
+          setActive(entry.target.id);
+        }
+      } else {
+        sectionsInBand.delete(entry.target.id);
       }
     });
   }, { rootMargin: "-140px 0px -60% 0px" });
@@ -327,14 +412,22 @@ function renderMenu({ categories, deals }) {
   const root = document.getElementById("menu-root");
   const tabs = document.getElementById("category-tabs");
 
+  const hasDeals = Array.isArray(deals) && deals.length > 0;
+
+  if (hasDeals) {
+    const dealsTab = createElement("a", "tab-deals is-active", "Deals");
+    dealsTab.href = "#deals";
+    tabs.appendChild(dealsTab);
+  }
+
   categories.forEach((category, index) => {
-    const tab = createElement("a", index === 0 ? "is-active" : "", category.name);
+    const tab = createElement("a", index === 0 && !hasDeals ? "is-active" : "", category.name);
     tab.href = `#cat-${category.slug}`;
     tabs.appendChild(tab);
   });
 
   root.replaceChildren();
-  if (Array.isArray(deals) && deals.length > 0) {
+  if (hasDeals) {
     root.appendChild(buildDealsSection(deals));
   }
   categories.forEach((category, index) => root.appendChild(buildCategorySection(category, index)));

@@ -590,6 +590,17 @@ select {
   color: var(--white);
 }
 
+/* The offer tab: same pill, heavier text and a ring so it stands out when inactive. */
+.category-tabs a.tab-deals {
+  font-weight: 800;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.category-tabs a.tab-deals.is-active {
+  color: var(--white);
+}
+
 .menu-body {
   padding-top: 48px;
   padding-bottom: 72px;
