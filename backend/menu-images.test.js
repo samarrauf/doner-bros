@@ -2,6 +2,7 @@
 // Test images are plain colour squares generated here, not photographs.
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("path");
 const express = require("express");
 const sharp = require("sharp");
 const { addMenuImageRoutes, MAX_UPLOAD_BYTES, MAX_LONGEST_SIDE, toMenuWebp } = require("./menu-images");
@@ -67,7 +68,16 @@ async function startApp(client) {
   const app = express();
   const requireStaff = (req, res, next) => (req.headers.authorization === AUTH ? next() : res.status(401).json({ error: "no" }));
   const requireDatabase = (req, res, next) => next();
-  addMenuImageRoutes(app, { client, requireStaff, requireDatabase });
+  addMenuImageRoutes(app, {
+    client,
+    requireStaff,
+    requireDatabase,
+    adminDir: path.join(__dirname, "..", "admin"),
+    getPhotoChecklist: async () => {
+      if (client.checklistError) throw client.checklistError;
+      return { categories: [], heroImageUrl: null, logoImageUrl: null };
+    },
+  });
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   return { base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
 }
@@ -172,13 +182,51 @@ test("the hero image is saved in menu_settings and clears back to an empty strin
   assert.equal(client.tables.menu_settings[0].value, "");
 });
 
+test("the logo is saved in menu_settings under brand_logo_url and clears back to an empty string", async () => {
+  const client = fakeSupabase();
+  const { base, close } = await startApp(client);
+  const url = `${base}/api/admin/settings/logo-image`;
+  const setting = (key) => client.tables.menu_settings.find((row) => row.key === key);
+  const res = await post(url, form(await square({ width: 100, height: 100 })));
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.ok(client.files.has("brand/logo.webp"));
+  assert.match(body.brand_logo_url, /brand\/logo\.webp\?v=\d+$/);
+  assert.equal(setting("brand_logo_url").value, body.brand_logo_url);
+  assert.equal(setting("hero_image_url").value, "", "hero untouched");
+  const removed = await del(url);
+  close();
+  assert.equal(removed.status, 200);
+  assert.deepEqual(await removed.json(), { brand_logo_url: "" });
+  assert.equal(client.files.size, 0);
+  assert.equal(setting("brand_logo_url").value, "");
+});
+
+test("the photo screen and its data are served to staff, with the upload limit", async () => {
+  const client = fakeSupabase();
+  const { base, close } = await startApp(client);
+  const headers = { authorization: AUTH };
+  const page = await fetch(`${base}/admin/photos`, { headers });
+  const data = await fetch(`${base}/api/admin/photos`, { headers });
+  client.checklistError = Object.assign(new Error("down"), { code: "MENU_UNAVAILABLE" });
+  const down = await fetch(`${base}/api/admin/photos`, { headers });
+  close();
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type"), /html/);
+  assert.equal((await data.json()).maxUploadBytes, MAX_UPLOAD_BYTES);
+  assert.equal(down.status, 503);
+});
+
 test("every route needs the staff password, and nothing changes without it", async () => {
   const client = fakeSupabase();
   const { base, close } = await startApp(client);
   const photo = await square({ width: 10, height: 10 });
-  for (const path of [`/api/admin/menu/${ITEM_ID}/image`, `/api/admin/menu/categories/${CATEGORY_ID}/image`, "/api/admin/settings/hero-image"]) {
+  for (const path of [`/api/admin/menu/${ITEM_ID}/image`, `/api/admin/menu/categories/${CATEGORY_ID}/image`, "/api/admin/settings/hero-image", "/api/admin/settings/logo-image"]) {
     assert.equal((await post(`${base}${path}`, form(photo), {})).status, 401, `POST ${path}`);
     assert.equal((await del(`${base}${path}`, {})).status, 401, `DELETE ${path}`);
+  }
+  for (const path of ["/admin/photos", "/api/admin/photos"]) {
+    assert.equal((await fetch(`${base}${path}`)).status, 401, `GET ${path}`);
   }
   close();
   assert.equal(client.files.size, 0);
@@ -198,12 +246,15 @@ test("requests started by another site are refused", async () => {
   assert.equal(same.status, 200);
 });
 
-test("files over 5 MB are refused", async () => {
+test("files over 4 MB are refused, naming the limit", async () => {
   const client = fakeSupabase();
   const { base, close } = await startApp(client);
   const res = await post(`${base}/api/admin/menu/${ITEM_ID}/image`, form(Buffer.alloc(MAX_UPLOAD_BYTES + 1), "image/jpeg", "big.jpg"));
+  const body = await res.json();
   close();
+  assert.equal(MAX_UPLOAD_BYTES, 4 * 1024 * 1024);
   assert.equal(res.status, 413);
+  assert.match(body.error, /4 MB/);
   assert.equal(client.files.size, 0);
 });
 

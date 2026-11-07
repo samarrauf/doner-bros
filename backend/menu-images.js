@@ -2,19 +2,18 @@
 // Every upload is decoded and re-encoded here, so what reaches the bucket is always a webp we made,
 // never the file as sent. Re-encoding also drops EXIF data, including any GPS location from a phone.
 
+const path = require("path");
 const multer = require("multer");
 const sharp = require("sharp");
 
 const BUCKET = "menu-images";
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // Vercel refuses request bodies over 4.5 MB before our code runs.
 const MAX_LONGEST_SIDE = 1200;
 const MAX_INPUT_PIXELS = 100_000_000; // A small file can decode to a huge image; refuse those.
 const WEBP_QUALITY = 82;
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_FORMATS = new Set(["jpeg", "png", "webp"]); // What the bytes really are, whatever the name says.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HERO_SETTING = "hero_image_url";
-const HERO_PATH = "hero/hero.webp";
 const WRONG_TYPE = "Only JPG, PNG and WebP photos are allowed.";
 
 // Resolves to webp bytes, or null if the upload isn't really an allowed image.
@@ -47,7 +46,7 @@ const upload = multer({
 // Runs after the password check, so nobody can make the server buffer a file without logging in.
 function acceptOneImage(req, res, next) {
   upload(req, res, (error) => {
-    if (error && error.code === "LIMIT_FILE_SIZE") return res.status(413).json({ error: "That photo is over the 5 MB limit." });
+    if (error && error.code === "LIMIT_FILE_SIZE") return res.status(413).json({ error: "That photo is over the 4 MB limit." });
     if (error && error.code === "WRONG_TYPE") return res.status(415).json({ error: WRONG_TYPE });
     if (error) return res.status(400).json({ error: "Send exactly one photo, in a form field named \"image\"." });
     if (!req.file) return res.status(400).json({ error: "Send one photo, in a form field named \"image\"." });
@@ -71,7 +70,8 @@ function rejectCrossSite(req, res, next) {
 }
 
 // client: Supabase client using the service role key. requireStaff, requireDatabase: from addStaffRoutes.
-function addMenuImageRoutes(app, { client, requireStaff, requireDatabase }) {
+// adminDir: folder holding photos.html. getPhotoChecklist: from the menu service.
+function addMenuImageRoutes(app, { client, requireStaff, requireDatabase, adminDir, getPhotoChecklist }) {
   const bucket = () => client.storage.from(BUCKET);
 
   // Resolves to the public URL, or null if the upload failed. The path never changes for a given
@@ -151,29 +151,46 @@ function addMenuImageRoutes(app, { client, requireStaff, requireDatabase }) {
   addRowRoutes("/api/admin/menu/:itemId/image", "itemId", "menu_items", "items", "menu item");
   addRowRoutes("/api/admin/menu/categories/:categoryId/image", "categoryId", "menu_categories", "categories", "category");
 
-  async function saveHero(value, res) {
-    const { error } = await client
-      .from("menu_settings")
-      .upsert({ key: HERO_SETTING, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
-    if (!error) return true;
-    console.error("Menu image: hero setting update failed:", error.code || error.name);
-    res.status(502).json({ error: "Couldn't save that to the menu settings. Try again." });
-    return false;
+  // POST and DELETE for one image held in menu_settings. '' means no image, as value is NOT NULL.
+  function addSettingRoutes(route, key, filePath) {
+    async function saveSetting(value, res) {
+      const { error } = await client
+        .from("menu_settings")
+        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+      if (!error) return true;
+      console.error(`Menu image: ${key} update failed:`, error.code || error.name);
+      res.status(502).json({ error: "Couldn't save that to the menu settings. Try again." });
+      return false;
+    }
+
+    app.post(route, rejectCrossSite, requireStaff, requireDatabase, acceptOneImage, async (req, res) => {
+      const webp = await convert(req, res);
+      if (!webp) return;
+      const imageUrl = await store(filePath, webp);
+      if (!imageUrl) return res.status(502).json({ error: "Couldn't store the photo. Try again." });
+      if (!(await saveSetting(imageUrl, res))) return;
+      res.json({ [key]: imageUrl });
+    });
+
+    app.delete(route, rejectCrossSite, requireStaff, requireDatabase, async (req, res) => {
+      if (!(await saveSetting("", res))) return;
+      if (!(await unstore(filePath))) return res.status(502).json({ error: "Couldn't remove the photo. Try again." });
+      res.json({ [key]: "" });
+    });
   }
 
-  app.post("/api/admin/settings/hero-image", rejectCrossSite, requireStaff, requireDatabase, acceptOneImage, async (req, res) => {
-    const webp = await convert(req, res);
-    if (!webp) return;
-    const imageUrl = await store(HERO_PATH, webp);
-    if (!imageUrl) return res.status(502).json({ error: "Couldn't store the photo. Try again." });
-    if (!(await saveHero(imageUrl, res))) return;
-    res.json({ hero_image_url: imageUrl });
-  });
+  addSettingRoutes("/api/admin/settings/hero-image", "hero_image_url", "hero/hero.webp");
+  addSettingRoutes("/api/admin/settings/logo-image", "brand_logo_url", "brand/logo.webp");
 
-  app.delete("/api/admin/settings/hero-image", rejectCrossSite, requireStaff, requireDatabase, async (req, res) => {
-    if (!(await saveHero("", res))) return;
-    if (!(await unstore(HERO_PATH))) return res.status(502).json({ error: "Couldn't remove the photo. Try again." });
-    res.json({ hero_image_url: "" });
+  app.get("/admin/photos", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "photos.html")));
+
+  app.get("/api/admin/photos", requireStaff, requireDatabase, async (req, res) => {
+    try {
+      res.json({ ...(await getPhotoChecklist()), maxUploadBytes: MAX_UPLOAD_BYTES });
+    } catch (error) {
+      if (error.code !== "MENU_UNAVAILABLE") console.error("Photo list failed:", error.message);
+      res.status(503).json({ error: "Couldn't load the menu. Try again in a minute." });
+    }
   });
 }
 

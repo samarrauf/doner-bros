@@ -219,6 +219,25 @@ async function getPublicMenu() {
   };
 }
 
+// For the staff photo screen. Includes finished items, which still need photos, and skips the cache,
+// so a reload always shows what was just uploaded.
+async function getPhotoChecklist() {
+  const snapshot = await fetchWithRetry();
+  const { hero_image_url: heroImageUrl, brand_logo_url: logoImageUrl } = await getPublicSettings(snapshot);
+  const items = [...snapshot.itemsById.values()];
+  return {
+    categories: snapshot.categories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      items: items
+        .filter((item) => item.categoryId === category.id)
+        .map(({ id, name, imageUrl, isAvailable }) => ({ id, name, imageUrl, isAvailable })),
+    })),
+    heroImageUrl: heroImageUrl || null,
+    logoImageUrl: logoImageUrl || null,
+  };
+}
+
 async function getHealth() {
   const { categories, fetchedAtMs } = await loadSnapshot();
   const itemCount = categories.reduce((count, category) => count + category.items.length, 0);
@@ -236,5 +255,6 @@ module.exports = {
   getPublicSettings,
   findItems,
   getPublicMenu,
+  getPhotoChecklist,
   getHealth,
 };

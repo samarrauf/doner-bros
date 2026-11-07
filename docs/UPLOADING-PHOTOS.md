@@ -6,20 +6,23 @@ Please only use photos you took yourself, of your own food. Don't use pictures f
 
 ## How to add a photo
 
-There is no upload screen on the website yet, so for now your website manager adds photos for you.
+You can do this yourself from your phone, on the photo screen.
 
-1. Take the photo using the tips below.
-2. Send it to your website manager on WhatsApp **as a document**, not as a normal photo. Sending it as a normal photo lowers the quality.
-3. Tell them which item it is for, using the name on the menu, for example "this is for the Zinger Burger".
+1. On your phone, go to your website's address followed by **/admin/photos**, and log in with the staff password. Bookmark the page so it's easy to find next time.
+2. Find the item in the list. The line at the top tells you how many items have photos so far, and items still to do say **No photo**.
+3. Tap **Upload**, then **Take photo** to use the camera, or **Choose from gallery** for a photo you already took.
+4. Wait for the bar to finish. The new photo appears on that item's line, and there's no need to refresh the page.
 
-To change a photo, send the new one and say it replaces the old one. To take a photo down, just ask. The item stays on the menu without a photo.
+To change a photo, tap **Replace**. To take a photo down, tap **Remove**. The item stays on the menu without a photo.
 
-You can also send one photo for a whole menu category, and one large photo for the top of the website's main page.
+Customers will see the change on the website within about a minute.
+
+The **Brand images** panel at the top of the screen is for the large photo at the top of the website's main page, and for your logo. The website doesn't show the uploaded logo yet, so changing it there won't change the website for now.
 
 ## Photo requirements
 
-- JPG, PNG or WebP. These are the normal formats for phone photos. If your iPhone saves photos as HEIC, your manager will need them converted first, or you can change it in **Settings > Camera > Formats > Most Compatible**.
-- Under 4 MB each. Most phone photos are, and if yours is too big your manager can shrink it.
+- JPG, PNG or WebP. These are the normal formats for phone photos. If the screen says your photo's format isn't allowed, your phone may be saving in HEIC. On an iPhone, change it in **Settings > Camera > Formats > Most Compatible**. On other phones, look for a similar option in the camera's settings.
+- Under 4 MB each. If the screen says your photo is too big, lower the picture size or resolution in your camera's settings and take it again.
 
 You don't need to resize anything. The website does that automatically.
 
@@ -41,4 +44,4 @@ You don't need to resize anything. The website does that automatically.
 - Use a clean plate, box or table, with nothing distracting behind it.
 - Wipe your phone's camera lens. This one small step makes a big difference.
 - Tap the food on your screen so the phone focuses on it, then hold still.
-- Check that the photo is sharp before you send it.
+- Check that the photo is sharp before you upload it.

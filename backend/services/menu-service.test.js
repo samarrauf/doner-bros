@@ -250,6 +250,39 @@ test("/api/menu excludes unavailable deals", async () => {
 
 // The 503 behaviour stays as it was
 
+test("the photo checklist includes finished items, leaves out inactive categories, and isn't cached", async () => {
+  const itemRows = [
+    itemRow("on-sale", { image_url: "https://storage.test/a.webp" }),
+    itemRow("finished", { is_available: false }),
+    itemRow("hidden", { category_id: "cat-closed" }),
+  ];
+  useTables({
+    menu_items: itemRows,
+    menu_settings: [
+      { key: "hero_image_url", value: "https://storage.test/hero.webp" },
+      { key: "brand_logo_url", value: "" },
+      { key: "private_setting", value: "secret" },
+    ],
+  });
+  assert.deepEqual(await menuService.getPhotoChecklist(), {
+    categories: [{
+      id: CATEGORY.id,
+      name: CATEGORY.name,
+      items: [
+        { id: "on-sale", name: "Test on-sale", imageUrl: "https://storage.test/a.webp", isAvailable: true },
+        { id: "finished", name: "Test finished", imageUrl: null, isAvailable: false },
+      ],
+    }],
+    heroImageUrl: "https://storage.test/hero.webp",
+    logoImageUrl: null,
+  });
+
+  await menuService.getMenu(); // Fills the cache before the photo changes.
+  itemRows[0].image_url = "https://storage.test/new.webp";
+  const after = await menuService.getPhotoChecklist();
+  assert.equal(after.categories[0].items[0].imageUrl, "https://storage.test/new.webp");
+});
+
 test("a failed read is a 503 carrying no menu data", async () => {
   useTables(finishedAndOpen);
   assert.equal((await getApiMenu()).status, 200);

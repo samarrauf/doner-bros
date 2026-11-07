@@ -1166,7 +1166,7 @@ app.use(express.json({ limit: "100kb" }));
 // Staff dashboard at /staff, behind STAFF_PASSWORD. Uses the same server-only Supabase client.
 if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
 const { requireStaff, requireDatabase } = addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
-addMenuImageRoutes(app, { client: supabase, requireStaff, requireDatabase });
+addMenuImageRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin"), getPhotoChecklist: menuService.getPhotoChecklist });
 
 // Public and read-only. Not cached by browsers: the service's own cache already sets how fresh it is.
 function menuRoute(read) {
