@@ -103,7 +103,7 @@ test("the order can't set its own ID, key, status or timestamp", async () => {
 
 test("database errors mean not saved, and the customer is told to call", async () => {
   const store = createSupabaseOrderStore(fakeSupabase({ failWith: { code: "PGRST301", message: "JWT expired" } }));
-  const result = await placeOrder({ args: ARGS, menu, promotions: [], today: FRIDAY, phone: "0301 8474036",
+  const result = await placeOrder({ args: ARGS, menu, promotions: [], today: FRIDAY, phone: "0310-3994111",
     saveOrder: async (row) => (await store.save(row, KEY)).orderId });
   assert.equal(result.status, "failed");
   assert.equal(result.reason, "PGRST301");
@@ -115,7 +115,7 @@ test("an unconfirmed or invalid order never reaches the database", async () => {
   const store = createSupabaseOrderStore(client);
   const saveOrder = async (row) => (await store.save(row, KEY)).orderId;
   for (const attempt of [{ ...ARGS, customerConfirmed: undefined }, { ...ARGS, customerConfirmed: "yes" }, { ...ARGS, items: [] }]) {
-    const result = await placeOrder({ args: attempt, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0301 8474036" });
+    const result = await placeOrder({ args: attempt, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
     assert.equal(result.status, "invalid");
   }
   assert.equal(client.rows.length, 0);

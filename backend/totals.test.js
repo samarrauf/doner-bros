@@ -85,7 +85,7 @@ test("prices the model sends are ignored, and the saved row carries tax and fee"
     totalPaisa: 1,
   };
   let row;
-  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: TAXED, phone: "0301 8474036",
+  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: TAXED, phone: "0310-3994111",
     saveOrder: async (r) => { row = r; return 9; } });
   assert.equal(result.status, "saved");
   assert.equal(row.subtotal_paisa, 30000);
@@ -106,6 +106,6 @@ test("an unset delivery fee is saved as null and the customer is told", async ()
   };
   const order = validateOrder(args, menu, [], FRIDAY, NO_TAX_NO_FEE).order;
   assert.equal(toOrderRow(order).delivery_fee_paisa, null);
-  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: NO_TAX_NO_FEE, phone: "0301 8474036", saveOrder: async () => 10 });
+  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: NO_TAX_NO_FEE, phone: "0310-3994111", saveOrder: async () => 10 });
   assert.match(result.reply, /Delivery fee: not included; the restaurant will confirm it/);
 });

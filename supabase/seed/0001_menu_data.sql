@@ -156,13 +156,14 @@ left join public.menu_items i on i.slug = v.item_slug;
 
 insert into public.menu_settings (key, value)
 values
-  ('tax_mode',           'included'),
+  -- Provisional until the restaurant confirms tax.
+  ('tax_mode',           'none'),
   ('tax_rate_bps',       '0'),
   ('delivery_fee_paisa', '0'),
   ('currency',           'PKR'),
   ('order_types',        'pickup,delivery'),
   ('whatsapp',           '03103994111'),
-  ('address',            'Food Court, Shalimar Smart City, Sargodha')
+  ('address',            'Food Court, Shalimar Smart City, in front of Shinwari Khas, Sargodha')
 on conflict (key) do update
   set value = excluded.value,
       updated_at = now();

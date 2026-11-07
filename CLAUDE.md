@@ -1,7 +1,7 @@
 # Doner Bros — project rules
 
 ## Business
-Doner Bros, Food Court, Shalimar Smart City, Sargodha. WhatsApp 0310-3994111.
+Doner Bros, Food Court, Shalimar Smart City, in front of Shinwari Khas, Sargodha. WhatsApp 0310-3994111.
 Order types: pickup and delivery. Delivery fee is configurable, currently 0.
 
 ## Money

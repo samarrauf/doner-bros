@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Doner Bros — Doner Kebab Restaurant, Sargodha</title>
-  <meta name="description" content="Doner Bros serves fresh, hand-carved doner kebabs, wraps and plates in Shalimar City, Sargodha. See our menu, opening hours and location.">
+  <meta name="description" content="Doner Bros serves fresh, hand-carved doner kebabs, wraps and plates in Shalimar Smart City, Sargodha. See our menu, opening hours and location.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -68,7 +68,7 @@
         <div class="select-wrap">
           <select id="area" name="area">
             <option value="" selected disabled>Select area / sub region</option>
-            <option>Shalimar City</option>
+            <option>Shalimar Smart City</option>
             <option>Satellite Town</option>
             <option>University Road</option>
             <option>Cantt</option>
@@ -83,8 +83,8 @@
       <div class="pickup-branch" id="pickup-branch" hidden>
         <svg class="icon"><use href="#i-pin"/></svg>
         <div>
-          <strong>Doner Bros — Shalimar City</strong>
-          <span>Next to Papa John's, Sargodha</span>
+          <strong>Doner Bros</strong>
+          <span data-address-text></span>
         </div>
       </div>
 
@@ -114,7 +114,7 @@
         </ul>
       </nav>
 
-      <a href="tel:+923018474036" class="btn btn-small header-call">
+      <a class="btn btn-small header-call" data-phone-link>
         <svg class="icon"><use href="#i-phone"/></svg>
         <span>Call to order</span>
       </a>
@@ -126,10 +126,14 @@
     <!-- Hero: photo from the hero_image_url setting, applied by app.js. Brand colour until then. -->
     <section class="hero" id="top" aria-label="Doner Bros">
       <div class="container hero-inner">
-        <p class="eyebrow"><svg class="icon"><use href="#i-pin"/></svg><span id="hero-location">Food Court, Shalimar Smart City, Sargodha</span></p>
+        <p class="eyebrow" data-needs-address hidden><svg class="icon"><use href="#i-pin"/></svg><span data-address-text></span></p>
         <h1>Doner Bros</h1>
         <p class="hero-tagline">Proper doners, made by bros.</p>
-        <a href="#menu" class="btn">See the menu</a>
+        <div class="hero-actions">
+          <a href="#menu" class="btn">See the menu</a>
+          <a class="btn btn-ghost" data-phone-link>Call to order</a>
+          <a class="btn btn-ghost" data-needs-address data-directions-link target="_blank" rel="noopener noreferrer" hidden>Get directions</a>
+        </div>
       </div>
     </section>
 
@@ -205,16 +209,15 @@
         <div class="visit-card">
           <p class="eyebrow"><svg class="icon"><use href="#i-pin"/></svg>Find us</p>
           <h2>Location</h2>
-          <address>
+          <address data-needs-address hidden>
             Doner Bros<br>
-            Shalimar City, next to Papa John's<br>
-            Sargodha, Pakistan
+            <span data-address-text></span>
           </address>
           <p class="contact">
-            <a href="tel:+923018474036"><svg class="icon"><use href="#i-phone"/></svg>0301 8474036</a>
+            <a data-phone-link><svg class="icon"><use href="#i-phone"/></svg><span data-phone-text></span></a>
             <a href="mailto:samarrauf63@gmail.com"><svg class="icon"><use href="#i-mail"/></svg>samarrauf63@gmail.com</a>
           </p>
-          <a class="btn" href="https://maps.google.com/?q=Shalimar+City+Sargodha" target="_blank" rel="noopener noreferrer">Get directions</a>
+          <a class="btn" data-needs-address data-directions-link target="_blank" rel="noopener noreferrer" hidden>Get directions</a>
         </div>
       </div>
     </section>
@@ -236,7 +239,7 @@
           <li><a href="#menu">Menu</a></li>
           <li><a href="#about">About</a></li>
           <li><a href="#visit">Hours &amp; Location</a></li>
-          <li><a href="tel:+923018474036">0301 8474036</a></li>
+          <li><a data-phone-link data-phone-text></a></li>
         </ul>
       </nav>
     </div>

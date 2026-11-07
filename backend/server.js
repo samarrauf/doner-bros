@@ -69,7 +69,7 @@ const MAX_HISTORY_ENTRY_LENGTH = 2000;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 20000;
-const RESTAURANT_PHONE_FALLBACK = "0301 8474036";
+const RESTAURANT_PHONE_FALLBACK = "0310-3994111";
 const SUPABASE_TIMEOUT_MS = 10000;
 
 // Per-visitor limit so the paid Gemini API can't be spammed.

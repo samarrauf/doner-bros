@@ -159,7 +159,7 @@ test("saves a valid order and reports only that it was saved", async () => {
       savedRow = row;
       return 42;
     },
-    phone: "0301 8474036",
+    phone: "0310-3994111",
   });
   assert.equal(result.status, "saved");
   assert.equal(savedRow.total_paisa, 150000);
@@ -170,12 +170,12 @@ test("saves a valid order and reports only that it was saved", async () => {
 });
 
 test("tells the customer to call when saving fails or Supabase isn't set up", async () => {
-  const base = { args: order(), menu, promotions: [], today: FRIDAY, phone: "0301 8474036" };
+  const base = { args: order(), menu, promotions: [], today: FRIDAY, phone: "0310-3994111" };
   const failed = await placeOrder({ ...base, saveOrder: async () => { throw Object.assign(new Error("down"), { code: "PGRST000" }); } });
   const missing = await placeOrder({ ...base, saveOrder: null });
   for (const result of [failed, missing]) {
     assert.equal(result.status, "failed");
-    assert.match(result.reply, /has not been placed.*0301 8474036/);
+    assert.match(result.reply, /has not been placed.*0310-3994111/);
   }
 });
 
@@ -187,7 +187,7 @@ test("does not save an invalid order", async () => {
     promotions: [],
     today: FRIDAY,
     saveOrder: async () => { called = true; return 1; },
-    phone: "0301 8474036",
+    phone: "0310-3994111",
   });
   assert.equal(result.status, "invalid");
   assert.equal(called, false);

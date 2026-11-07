@@ -83,6 +83,10 @@ select {
   font: inherit;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .sprite {
   position: absolute;
   width: 0;
@@ -524,6 +528,12 @@ select {
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.05;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .hero-tagline {
@@ -1308,6 +1318,10 @@ address {
     width: 44px;
     min-height: 44px;
     padding: 0;
+  }
+
+  .hero-actions .btn {
+    flex: 1 1 auto;
   }
 
   .product-img {

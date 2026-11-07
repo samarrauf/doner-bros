@@ -24,7 +24,7 @@ function saveLocation(location) {
 
 function describeLocation(location) {
   if (location.orderType === "pickup") {
-    return "Pick-up · Shalimar City";
+    return "Pick-up";
   }
   return `Delivery · ${location.area}`;
 }
@@ -72,7 +72,7 @@ function setupLocationPopup() {
     const location = {
       orderType: selectedOrderType(),
       city: form.city.value,
-      area: selectedOrderType() === "pickup" ? "Shalimar City" : areaSelect.value,
+      area: selectedOrderType() === "pickup" ? "" : areaSelect.value,
     };
     saveLocation(location);
     chipLabel.textContent = describeLocation(location);
@@ -137,8 +137,9 @@ function setupCategoryTabs() {
 /* ---------- Menu and hero, rendered from /api/menu ---------- */
 
 const MENU_ENDPOINT = "/api/menu";
-const WHATSAPP_DISPLAY = "0310-3994111";
-const WHATSAPP_LINK = "https://wa.me/923103994111";
+// The only hardcoded contact detail: what a customer gets if /api/menu can't be reached.
+// Everything else on the page comes from the whatsapp and address settings.
+const FALLBACK_WHATSAPP = "03103994111";
 // Number of category colours defined in styles.css (.category[data-tone]).
 const CATEGORY_TONES = 6;
 
@@ -166,11 +167,36 @@ function safeImageUrl(value) {
   }
 }
 
-function applyHeroSettings(settings) {
-  if (settings.address) {
-    document.getElementById("hero-location").textContent = settings.address;
-  }
+function parsePhone(value) {
+  const digits = String(value).replace(/\D/g, "").replace(/^92/, "0");
+  return { display: `${digits.slice(0, 4)}-${digits.slice(4)}`, international: `92${digits.slice(1)}` };
+}
 
+let contactPhone = parsePhone(FALLBACK_WHATSAPP);
+
+function applyPhone(value) {
+  contactPhone = parsePhone(value);
+  document.querySelectorAll("[data-phone-link]").forEach((link) => {
+    link.href = `tel:+${contactPhone.international}`;
+  });
+  document.querySelectorAll("[data-phone-text]").forEach((element) => {
+    element.textContent = contactPhone.display;
+  });
+}
+
+function applyAddress(address) {
+  document.querySelectorAll("[data-address-text]").forEach((element) => {
+    element.textContent = address;
+  });
+  document.querySelectorAll("[data-directions-link]").forEach((link) => {
+    link.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  });
+  document.querySelectorAll("[data-needs-address]").forEach((element) => {
+    element.hidden = false;
+  });
+}
+
+function applyHeroPhoto(settings) {
   const photoUrl = safeImageUrl(settings.hero_image_url);
   if (!photoUrl) {
     return;
@@ -298,8 +324,8 @@ function showMenuLoading() {
 function showMenuError() {
   const message = createElement("p", "menu-status", "Sorry, the menu could not be loaded. Message us on WhatsApp: ");
   message.setAttribute("role", "alert");
-  const link = createElement("a", "", WHATSAPP_DISPLAY);
-  link.href = WHATSAPP_LINK;
+  const link = createElement("a", "", contactPhone.display);
+  link.href = `https://wa.me/${contactPhone.international}`;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   message.appendChild(link);
@@ -314,11 +340,18 @@ async function loadMenu() {
       throw new Error(`Menu request failed with status ${response.status}`);
     }
     const menu = await response.json();
+    const settings = menu.settings || {};
+    if (settings.whatsapp) {
+      applyPhone(settings.whatsapp);
+    }
+    if (settings.address) {
+      applyAddress(settings.address);
+    }
     if (!Array.isArray(menu.categories) || menu.categories.length === 0) {
       throw new Error("Menu response had no categories");
     }
     renderMenu(menu);
-    applyHeroSettings(menu.settings || {});
+    applyHeroPhoto(settings);
   } catch (error) {
     console.error(error);
     showMenuError();
@@ -328,7 +361,9 @@ async function loadMenu() {
 /* ---------- AI Order Taker chat widget ---------- */
 
 const CHAT_ENDPOINT = "/api/chat";
-const CHAT_FALLBACK_ERROR = "Sorry, I couldn't reach AI Order Taker. Please try again, or call us on 0301 8474036.";
+function chatFallbackError() {
+  return `Sorry, I couldn't reach AI Order Taker. Please try again, or call us on ${contactPhone.display}.`;
+}
 
 // Sends the message and prior turns to the backend; resolves with AI Order Taker's reply text.
 async function requestOrderTakerReply(message, conversationHistory) {
@@ -341,12 +376,12 @@ async function requestOrderTakerReply(message, conversationHistory) {
     });
   } catch (error) {
     // Network failure (offline, server down).
-    throw new Error(CHAT_FALLBACK_ERROR);
+    throw new Error(chatFallbackError());
   }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok || typeof data.reply !== "string") {
-    throw new Error(data.error || CHAT_FALLBACK_ERROR);
+    throw new Error(data.error || chatFallbackError());
   }
   return data.reply;
 }
@@ -471,6 +506,7 @@ function setupChatWidget() {
   });
 }
 
+applyPhone(FALLBACK_WHATSAPP);
 setupLocationPopup();
 setupChatWidget();
 loadMenu();

@@ -32,7 +32,7 @@ const ORDER_ARGS = {
 };
 
 function attempt(args, saveOrder) {
-  return placeOrder({ args, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0301 8474036" });
+  return placeOrder({ args, menu, promotions: [], today: FRIDAY, saveOrder, phone: "0310-3994111" });
 }
 
 test("a new session starts with an empty, unconfirmed order", () => {
