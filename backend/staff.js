@@ -109,6 +109,8 @@ function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createM
     console.log(`Order ${orderId}: ${from} -> ${to}.`);
     res.json({ order: data });
   });
+
+  return { requireStaff, requireDatabase };
 }
 
 module.exports = { STATUS_FLOW, nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes };
