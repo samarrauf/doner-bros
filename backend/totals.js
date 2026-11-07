@@ -62,6 +62,12 @@ async function lookUp(ids) {
   return { found, missingIds: stillMissing };
 }
 
+// A deal's labels, for showing what it holds. They are never used to price it. Empty for a plain
+// item, so a plain item's line keeps its shape.
+function dealContents(item) {
+  return item && Array.isArray(item.items) ? { contains: item.items.map((dealItem) => dealItem.label) } : {};
+}
+
 function cartShapeError(cart) {
   if (!Array.isArray(cart) || cart.length === 0) return "the order has no items.";
   if (cart.length > MAX_CART_LINES) return `orders are limited to ${MAX_CART_LINES} lines.`;
@@ -104,6 +110,7 @@ async function priceCart(cart) {
       lineTotalPaisa,
       unitPriceDisplay: formatPrice(item.pricePaisa),
       lineTotalDisplay: formatPrice(lineTotalPaisa),
+      ...dealContents(item),
     });
   }
   return { lines, subtotalPaisa: lines.reduce((sum, line) => sum + line.lineTotalPaisa, 0) };
@@ -165,6 +172,7 @@ async function describeCart(cart) {
       quantity: line.quantity,
       name: item ? item.name : "an item no longer on the menu",
       orderable: Boolean(item && item.isAvailable),
+      ...dealContents(item),
     };
   });
 }

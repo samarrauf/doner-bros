@@ -21,6 +21,7 @@ create table if not exists public.orders (
   -- Requested pickup time "HH:MM" (restaurant time); null means as soon as possible.
   pickup_time      text check (pickup_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
   -- Each line: { itemId, name, quantity, options: [{ name, choice }], unitPricePaisa, lineTotalPaisa }
+  -- A deal's line also has contains: [label, ...], its contents when the order was placed.
   items            jsonb not null check (jsonb_typeof(items) = 'array' and jsonb_array_length(items) > 0),
   subtotal_paisa   integer not null check (subtotal_paisa >= 0),
   discount_paisa   integer not null default 0 check (discount_paisa >= 0),

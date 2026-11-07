@@ -31,6 +31,8 @@ const {
   upgradeOrderState,
   recordOrderAttempt,
   addToCart,
+  isClickApplied,
+  recordClick,
   setLineQuantity,
   findCartLine,
   removeFromCart,
@@ -65,7 +67,8 @@ const FRONTEND_DIR = path.join(ROOT_DIR, "frontend");
 // Matches the chat input's maxlength in index.html.
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_HISTORY_ENTRIES = 20;
-const MAX_HISTORY_ENTRY_LENGTH = 2000;
+// Room for a full order confirmation: 20 deal lines, each with its contents listed.
+const MAX_HISTORY_ENTRY_LENGTH = 4000;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_TIMEOUT_MS = 20000;
@@ -130,15 +133,17 @@ function formatPromotions(promotions, menu, now) {
   const today = todayInRestaurant(now);
   // Only live offers reach the model, so it can't apply inactive, sample or expired ones.
   const live = promotions.filter((promotion) => isPromotionLive(promotion, today));
-  if (live.length === 0) return "No promotions are running right now.";
+  if (live.length === 0) return "No discount codes or promotions are running right now. Deals are separate: see list_deals.";
 
   const items = menu ? menu.categories.flatMap((category) => category.items) : [];
   const itemNames = new Map(items.map((item) => [item.id, item.name]));
   return [`Today is ${today.weekday}, ${today.date}.`, ...live.map((p) => formatPromotion(p, itemNames))].join("\n");
 }
 
+// No discount codes or offers exist. Deals are not promotions: they come from menu_deals, through
+// the menu service.
+const PROMOTIONS = [];
 // Read once at startup; a missing or broken data file stops the server with a clear error.
-const PROMOTIONS = readJson(path.join(ROOT_DIR, "data", "promotions.json")).promotions;
 const OPENING_HOURS = readJson(path.join(ROOT_DIR, "data", "hours.json")).hours;
 const SYSTEM_PROMPT = fs
   .readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8")
@@ -384,6 +389,7 @@ async function addItemToCart(args, orderState, menu) {
   return {
     added: true,
     item: describeCartLine(priced.lines[0]),
+    ...(priced.lines[0].contains ? { dealContains: priced.lines[0].contains } : {}),
     ...(suggestions.length
       ? {
           suggestions: suggestions.map((s) => ({ itemId: s.itemId, name: s.name, price: formatRupees(s.pricePaisa), reason: s.reason })),
@@ -916,10 +922,35 @@ async function addFromOrderButton(orderItem, orderState, turn) {
   const args = { itemId: orderItem.item_id, quantity: orderItem.quantity, optionIds: orderItem.option_ids };
   const result = await runDataTool({ name: ADD_ITEM_TO_CART_TOOL.name, args }, orderState, [], turn);
   turn.toolResults.push(result);
+  if (result.added) recordClick(orderState, orderItem.click_id);
+  turn.clickStatus = result.added ? "applied" : "not_added";
   return (
     "The customer's message came from an Order button on the menu. The server has already handled it, so don't call " +
     `addItemToCart for it. Reply to the customer using this result: ${JSON.stringify(result)}`
   );
+}
+
+// The cart as the customer sees it after an Order click, built by the server with no model involved.
+// null if the menu can't be read right now.
+async function cartForCustomer(orderState) {
+  try {
+    const lines = await describeCart(orderState.items);
+    const totals = orderState.items.length > 0 ? await cartTotals(orderState) : null;
+    const priced = totals && !totals.error ? totals : null;
+    return {
+      lines: lines.map((line, index) => ({
+        name: line.name,
+        quantity: line.quantity,
+        orderable: line.orderable,
+        contains: line.contains || [],
+        lineTotal: priced ? priced.lines[index].lineTotalDisplay : null,
+      })),
+      total: priced ? priced.display.total : null,
+    };
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return null;
+  }
 }
 
 // A regenerated reply can only look things up, so a cart change or an order is never made twice.
@@ -1175,6 +1206,7 @@ function validateOrderItem(orderItem) {
   if (!orderItem || typeof orderItem !== "object" || Array.isArray(orderItem)) return "orderItem must be an object.";
   const isId = (id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH;
   if (!isId(orderItem.item_id)) return "orderItem needs an item_id.";
+  if (orderItem.click_id !== undefined && !isId(orderItem.click_id)) return "orderItem.click_id must be an id.";
   if (orderItem.option_ids !== undefined && (!Array.isArray(orderItem.option_ids) || orderItem.option_ids.length > MAX_HISTORY_ENTRIES || !orderItem.option_ids.every(isId))) {
     return "orderItem.option_ids must be a list of ids.";
   }
@@ -1296,9 +1328,22 @@ app.post("/api/chat", async (req, res) => {
   }
   const orderState = session.state;
   const ordersSavedBefore = orderState.savedOrderCount || 0;
+  let turn = null;
+  // What an Order click's response adds. Sent only once the state is saved, so a browser that sees
+  // clickStatus knows the server has finished with that click id.
+  const clickFields = async () =>
+    turn && turn.clickStatus ? { clickStatus: turn.clickStatus, cart: await cartForCustomer(orderState) } : {};
 
   try {
-    const turn = await loadChatTurn();
+    turn = await loadChatTurn();
+    // A repeat of a click already in this cart changes nothing and needs no model, so it can't fail.
+    if (orderItem && isClickApplied(orderState, orderItem.click_id)) {
+      turn.clickStatus = "duplicate";
+      return res.json({
+        reply: "That one is already in your cart, so I haven't added it again. If you'd like another, just tell me how many.",
+        ...(await clickFields()),
+      });
+    }
     const buttonNote = orderItem ? await addFromOrderButton(orderItem, orderState, turn) : null;
     const reply = await askGemini(conversationHistory, message.trim(), orderState, turn, buttonNote);
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
@@ -1311,22 +1356,36 @@ app.post("/api/chat", async (req, res) => {
     if (!sessionSaved && (orderState.savedOrderCount || 0) === ordersSavedBefore) {
       return res.status(503).json({ error: await chatUnavailable() });
     }
+    const click = sessionSaved ? await clickFields() : {};
     if (!reply) {
       return res.json({
         reply: `Sorry, I couldn't answer that. Please try rephrasing, or ${await reachUs()}.`,
+        ...click,
       });
     }
-    res.json({ reply });
+    res.json({ reply, ...click });
   } catch (error) {
     // Log only the status and message: never the request, which could hold customer details.
     console.error("Gemini request failed:", error.status || error.name, String(error.message).slice(0, 200));
     // Tools may have changed the cart before the failure; keep those changes.
-    await saveOrderSession(session);
+    const sessionSaved = await saveOrderSession(session);
 
-    // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
     if (error.status === 429) {
       const quotaId = (String(error.message).match(/"quotaId":\s*"([^"]+)"/) || [])[1] || "unknown";
       console.error(`Gemini quota exhausted (${quotaId}). Check usage and billing in Google AI Studio.`);
+    }
+
+    // The item went in and the only thing missing is the model's words, so say so plainly. A customer
+    // left with no reply is what leads to a second click on Order.
+    if (sessionSaved && turn && turn.clickStatus === "applied") {
+      return res.json({
+        reply: `That's in your cart, but I couldn't finish my reply just now. Send me a message to carry on, or ${await reachUs()}.`,
+        ...(await clickFields()),
+      });
+    }
+
+    // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
+    if (error.status === 429) {
       return res.status(503).json({
         error: `AI Order Taker has reached its message limit for now. To order, please ${await reachUs()}.`,
       });

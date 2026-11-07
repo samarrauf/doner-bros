@@ -737,7 +737,7 @@ select {
 }
 
 .deal-price {
-  margin: auto 0 0;
+  margin: 0;
   font-size: 1.6rem;
   font-weight: 800;
   color: var(--accent);
@@ -1163,8 +1163,8 @@ address {
   font-size: 0.9rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
-  /* Keep line breaks in AI Order Taker replies (order summaries are sent as "- " lines). */
-  white-space: pre-line;
+  /* Keep line breaks and indents in AI Order Taker replies (a deal's contents sit indented under it). */
+  white-space: pre-wrap;
   animation: bubble-in 0.25s var(--ease);
 }
 
@@ -1181,6 +1181,10 @@ address {
   background: var(--white);
   border: 1px solid var(--line);
   color: var(--charcoal);
+}
+
+.chat-bubble-cart {
+  border-left: 3px solid var(--accent);
 }
 
 .chat-bubble-user {

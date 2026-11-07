@@ -8,6 +8,7 @@ const SESSION_COOKIE = "donerbros_session";
 const SESSION_IDLE_MS = 2 * 60 * 60 * 1000;
 const MAX_SESSIONS = 1000;
 const MAX_CART_LINES = 20; // same limit submit_order applies
+const MAX_CLICK_IDS = 100; // oldest forgotten first, so a long chat's state can't grow without end
 
 // status: "open" (nothing submitted yet), "needs_changes" (last submit was rejected),
 // "saved" (in the database), "not_saved" (valid, but the database save failed).
@@ -35,12 +36,12 @@ function createOrderState() {
 // a chat that had already submitted starts a new cart, keeping only what stops a double save.
 function upgradeOrderState(state) {
   if (state.items.every((line) => line.item_id)) return state;
-  const { chatSecret, savedOrderCount, suggestionsOffered } = state;
+  const { chatSecret, savedOrderCount, suggestionsOffered, appliedClickIds } = state;
   const submitted = state.status === "saved" || state.status === "not_saved";
   const { subtotalPaisa: _subtotal, totalPaisa: _total, ...current } = state;
   const { amountPaisa: _amount, ...discount } = state.discount;
   const upgraded = submitted
-    ? { ...createOrderState(), chatSecret, savedOrderCount, suggestionsOffered }
+    ? { ...createOrderState(), chatSecret, savedOrderCount, suggestionsOffered, appliedClickIds }
     : { ...current, discount, placedOrder: null, items: state.items.map((line) => ({ item_id: line.itemId, quantity: line.quantity, option_ids: [] })) };
   for (const key of Object.keys(state)) delete state[key];
   return Object.assign(state, upgraded);
@@ -92,15 +93,27 @@ function recordOrderAttempt(state, result) {
 // Only the ids and quantity go into the cart, whatever else the line carries. Adding after an
 // order was saved or failed starts a new cart rather than editing that order.
 function addToCart(state, { item_id, quantity, option_ids }) {
-  // suggestionsOffered (set by recommendations.js) is kept so a declined suggestion stays declined.
+  // suggestionsOffered (set by recommendations.js) is kept so a declined suggestion stays declined,
+  // and appliedClickIds so a late repeat of a click can't land in the new cart.
   if (state.status === "saved" || state.status === "not_saved") {
-    Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [] });
+    Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [], appliedClickIds: state.appliedClickIds || [] });
   }
   if (state.items.length >= MAX_CART_LINES) return { error: `the cart is limited to ${MAX_CART_LINES} lines.` };
 
   state.items.push({ item_id, quantity, option_ids: [...(option_ids || [])] });
   state.confirmed = false;
   return { state };
+}
+
+// An Order click's id, made in the browser. It is kept in the same state as the cart, so the two are
+// saved together: either both the item and its id persist, or neither does and a repeat adds it once.
+function isClickApplied(state, clickId) {
+  return Boolean(clickId) && (state.appliedClickIds || []).includes(clickId);
+}
+
+function recordClick(state, clickId) {
+  if (!clickId) return;
+  state.appliedClickIds = [...(state.appliedClickIds || []), clickId].slice(-MAX_CLICK_IDS);
 }
 
 function setLineQuantity(state, index, quantity) {
@@ -259,6 +272,7 @@ function cartSummary(state, lines) {
       lineNumber: index + 1,
       name: line.name,
       quantity: line.quantity,
+      ...(line.contains ? { contains: line.contains } : {}),
     })),
   };
 }
@@ -324,4 +338,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, upgradeOrderState, recordOrderAttempt, addToCart, setLineQuantity, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };
+module.exports = { createOrderState, upgradeOrderState, recordOrderAttempt, addToCart, isClickApplied, recordClick, setLineQuantity, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };

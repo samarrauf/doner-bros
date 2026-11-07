@@ -255,13 +255,15 @@ function toOrderRow(order) {
     delivery_unit: order.deliveryUnit,
     delivery_instructions: order.deliveryInstructions,
     pickup_time: order.pickupTime,
-    items: order.lines.map(({ itemId, name, quantity, options, unitPricePaisa, lineTotalPaisa }) => ({
+    // A deal also keeps its labels, so the kitchen knows what to cook even if the deal changes later.
+    items: order.lines.map(({ itemId, name, quantity, options, unitPricePaisa, lineTotalPaisa, contains }) => ({
       itemId,
       name,
       quantity,
       options,
       unitPricePaisa,
       lineTotalPaisa,
+      ...(contains ? { contains: [...contains] } : {}),
     })),
     subtotal_paisa: order.subtotalPaisa,
     discount_paisa: order.discountPaisa,
@@ -273,9 +275,12 @@ function toOrderRow(order) {
 }
 
 function formatSavedOrder(orderNumber, order, phone) {
-  const lines = order.lines.map((line) => {
+  const lines = order.lines.flatMap((line) => {
     const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-    return `- ${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`;
+    return [
+      `- ${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`,
+      ...(line.contains || []).map((label) => `    ${label}`),
+    ];
   });
   const totals = [`Subtotal: ${formatRupees(order.subtotalPaisa)}`];
   if (order.discountPaisa > 0) totals.push(`Discount (${order.promotion.name}): -${formatRupees(order.discountPaisa)}`);

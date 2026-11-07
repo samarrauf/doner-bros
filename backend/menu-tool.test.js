@@ -98,10 +98,7 @@ test("list_deals gives only available deals, with their contents", async () => {
       name: "Test Deal",
       pricePaisa: 11100,
       priceDisplay: "Rs 111",
-      items: [
-        { itemId: "i-1", name: "1 Red Widget", quantity: 1 },
-        { itemId: null, name: "1 Extra", quantity: 1 },
-      ],
+      contains: ["1 Red Widget", "1 Extra"],
     },
   ]);
 });
@@ -130,6 +127,7 @@ test("the chatbot files don't read the old menu or restaurant files", () => {
     const source = fs.readFileSync(path.join(__dirname, file), "utf8");
     assert.ok(!source.includes("menu.json"), `${file} reads menu.json`);
     assert.ok(!source.includes("restaurant.json"), `${file} reads restaurant.json`);
+    assert.ok(!source.includes("promotions.json"), `${file} reads promotions.json`);
   }
 });
 

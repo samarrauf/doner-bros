@@ -1,57 +1,54 @@
-// Doner Bros — picks at most two add-on suggestions for the current cart, only from menu.json.
-// Each kind of suggestion (a drink, a side, a main) is offered once per chat: the server can't
-// tell whether a customer said no, so once offered it is never offered again.
+// Doner Bros — suggests a drink and fries when the cart has neither, only from the live menu that
+// menu-tool.getOrderableMenu reads through the menu service. Each kind is offered once per chat: the
+// server can't tell whether a customer said no, so once offered it is never offered again.
 
 const MAX_SUGGESTIONS = 2;
-const MAIN_CATEGORIES = ["Doners & Wraps", "Plates", "Boxes"];
 
-function kindOf(category) {
-  if (MAIN_CATEGORIES.includes(category)) return "main";
-  if (category === "Drinks") return "drink";
-  if (category === "Sides") return "side";
-  return null;
-}
+// Categories are matched by slug, the stable key in menu_categories. Names and labels are checked as
+// well because a deal's "1 Fries" may link to no item, and "Doner Box with Fries" already has fries.
+const ADD_ONS = [
+  { kind: "drink", slug: "drinks", mentioned: /\b(drinks?|water)\b/i, reason: "goes well with the order and there's no drink yet" },
+  { kind: "fries", slug: "fries", mentioned: /\bfries\b/i, reason: "goes well with the order and there are no fries yet" },
+];
 
 function isSuggestable(item) {
   return (
     item && typeof item.id === "string" && typeof item.name === "string" &&
-    Number.isInteger(item.pricePaisa) && item.pricePaisa > 0 && item.availability !== "unavailable"
+    Number.isInteger(item.pricePaisa) && item.pricePaisa > 0 && item.isAvailable !== false
   );
 }
 
-// Bestsellers first; for an all-vegetarian cart, vegetarian items first. Otherwise menu order.
-function pickFrom(candidates, preferVegetarian) {
-  const score = (item) => {
-    const tags = Array.isArray(item.tags) ? item.tags : [];
-    return (preferVegetarian && tags.includes("Vegetarian") ? 2 : 0) + (tags.includes("Bestseller") ? 1 : 0);
-  };
-  return candidates.reduce((best, item) => (best === null || score(item) > score(best) ? item : best), null);
+function categoryItems(categories, slug) {
+  const category = categories.find((c) => c.slug === slug);
+  return category && Array.isArray(category.items) ? category.items : null;
+}
+
+function cartHas(addOn, cartItems, categories) {
+  const inCategory = new Set((categoryItems(categories, addOn.slug) || []).map((item) => item.id));
+  return cartItems.some((item) => {
+    const texts = [item.name, ...(item.contains || [])];
+    const ids = [item.id, ...(item.containsItemIds || [])];
+    return ids.some((id) => inCategory.has(id)) || texts.some((text) => addOn.mentioned.test(text));
+  });
 }
 
 // Returns [{ itemId, name, pricePaisa, reason }] and records the kinds offered in state.
 function suggestItems(state, menu) {
   if (!Array.isArray(state.items) || state.items.length === 0) return [];
   const categories = menu && Array.isArray(menu.categories) ? menu.categories : [];
-  const allItems = categories.flatMap((c) => (Array.isArray(c.items) ? c.items : [])).filter(isSuggestable);
-  const byId = new Map(allItems.map((item) => [item.id, item]));
-
+  const byId = new Map(categories.flatMap((c) => (Array.isArray(c.items) ? c.items : [])).map((item) => [item.id, item]));
   const cartItems = state.items.map((line) => byId.get(line.item_id)).filter(Boolean);
-  const cartKinds = new Set(cartItems.map((item) => kindOf(item.category)));
+  if (ADD_ONS.some((addOn) => cartHas(addOn, cartItems, categories))) return [];
+
   const cartIds = new Set(state.items.map((line) => line.item_id));
-  const cartMains = cartItems.filter((item) => kindOf(item.category) === "main");
-  const vegetarianCart = cartMains.length > 0 && cartMains.every((item) => (item.tags || []).includes("Vegetarian"));
-
-  const wanted = cartKinds.has("main")
-    ? [["drink", "goes well with the order and there's no drink yet"], ["side", "a side to go with the order"]]
-    : [["main", "the cart has no main dish yet"]];
-
   const offered = state.suggestionsOffered || (state.suggestionsOffered = []);
   const suggestions = [];
-  for (const [kind, reason] of wanted) {
-    if (suggestions.length >= MAX_SUGGESTIONS) break;
-    if (cartKinds.has(kind) || offered.includes(kind)) continue;
-    const candidates = allItems.filter((item) => kindOf(item.category) === kind && !cartIds.has(item.id));
-    const item = pickFrom(candidates, vegetarianCart);
+  for (const { kind, slug, reason } of ADD_ONS) {
+    if (suggestions.length >= MAX_SUGGESTIONS || offered.includes(kind)) continue;
+    const items = categoryItems(categories, slug);
+    // Said out loud, so a renamed category can't quietly switch suggestions off again.
+    if (!items) console.warn(`Suggestions: the menu has no "${slug}" category.`);
+    const item = (items || []).find((candidate) => isSuggestable(candidate) && !cartIds.has(candidate.id));
     if (!item) continue;
     offered.push(kind);
     suggestions.push({ itemId: item.id, name: item.name, pricePaisa: item.pricePaisa, reason });

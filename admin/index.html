@@ -53,6 +53,7 @@
     .status-COMPLETED { background: var(--surface); color: var(--muted); }
     h2 { margin: 12px 0 4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
     ul { margin: 0; padding-left: 18px; }
+    .deal-contents { color: var(--muted); font-size: 0.9rem; list-style: none; }
     p { margin: 0; }
     .total { margin-top: 12px; font-weight: 700; }
     .note { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
@@ -118,7 +119,15 @@
       const list = el("ul");
       for (const item of order.items || []) {
         const options = (item.options || []).map((o) => `${o.name}: ${o.choice}`).join(", ");
-        list.append(el("li", null, `${item.quantity} x ${item.name}${options ? ` (${options})` : ""}`));
+        const row = el("li", null, `${item.quantity} x ${item.name}${options ? ` (${options})` : ""}`);
+        if (item.contains && item.contains.length > 0) {
+          // The labels describe one deal, so "2 x Deal 2" must not read as one of each.
+          if (item.quantity > 1) row.append(el("div", "note", "Each deal has:"));
+          const contents = el("ul", "deal-contents");
+          for (const label of item.contains) contents.append(el("li", null, label));
+          row.append(contents);
+        }
+        list.append(row);
       }
       card.append(list);
 

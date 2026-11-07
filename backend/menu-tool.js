@@ -44,7 +44,9 @@ const MENU_TOOLS = [
   },
   {
     name: "list_deals",
-    description: "List the available deals with their ids, names, prices and exactly what comes in each one.",
+    description:
+      "List the available deals with their ids, names and prices. contains lists exactly what comes in each deal. A deal is " +
+      "fixed and sold at its own price, never the sum of its parts.",
   },
 ];
 
@@ -100,7 +102,8 @@ async function listDeals() {
         name: deal.name,
         pricePaisa: deal.pricePaisa,
         priceDisplay: deal.priceDisplay,
-        items: deal.items.map((dealItem) => ({ itemId: dealItem.itemId, name: dealItem.label, quantity: dealItem.quantity })),
+        // Labels only: they already say how many ("5 Zinger Burgers"), and no part has a price to add up.
+        contains: deal.items.map((dealItem) => dealItem.label),
       })),
   };
 }
@@ -128,7 +131,17 @@ async function getOrderableMenu() {
   return {
     categories: [
       ...categories.map((category) => ({ name: category.name, slug: category.slug, items: category.items.map(toOrderable) })),
-      { name: "Deals", slug: "deals", items: deals.filter((deal) => deal.isAvailable).map(toOrderable) },
+      {
+        name: "Deals",
+        slug: "deals",
+        items: deals
+          .filter((deal) => deal.isAvailable)
+          .map((deal) => ({
+            ...toOrderable(deal),
+            contains: deal.items.map((dealItem) => dealItem.label),
+            containsItemIds: deal.items.map((dealItem) => dealItem.itemId).filter(Boolean),
+          })),
+      },
     ],
   };
 }

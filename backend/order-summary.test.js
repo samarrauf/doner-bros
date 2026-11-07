@@ -1,7 +1,6 @@
 // Tests for the pre-checkout order summary. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const { buildOrderSummary, orderFingerprint } = require("./order-summary");
 const { checkCartPromotion } = require("./orders");
 const { priceCart, calculateTotals } = require("./totals");
@@ -14,9 +13,8 @@ const {
   applyDiscount,
   missingCheckoutDetails,
 } = require("./order-session");
-const { useFakeMenu } = require("./fake-menu");
+const { useFakeMenu, PERCENT } = require("./fake-menu");
 
-const promotions = require(path.join(__dirname, "..", "data", "promotions.json")).promotions;
 const TAXED = { tax_mode: "exclusive", tax_rate_bps: "1600", delivery_fee_paisa: "15000" };
 
 function cart() {
@@ -113,7 +111,7 @@ test("an incomplete order isn't ready, and says what's missing", async () => {
 });
 
 test("an applied promotion shows with its discount", async () => {
-  const live = promotions.map((p) => (p.id === "sample-percent-min-order" ? { ...p, active: true, sample: false } : p));
+  const live = [PERCENT];
   const state = createOrderState();
   addToCart(state, { item_id: "loaded-bro-box", quantity: 2, option_ids: [] });
   setPickupDetails(state, { customerName: "Ali", customerPhone: "0300 1234567" });
@@ -122,7 +120,18 @@ test("an applied promotion shows with its discount", async () => {
   applyDiscount(state, check, { promotionCode: "TEST10" });
   const { summary, text } = await summarise(state, check.discountPaisa);
   assert.equal(summary.promotion.discount, "-Rs 250");
-  assert.match(text, /Promotion: SAMPLE ONLY - 10% off orders over Rs 2,000 \(-Rs 250\)\nSubtotal: Rs 2,500\nDiscount: -Rs 250\nTotal: Rs 2,250/);
+  assert.match(text, /Promotion: Test 10% off \(-Rs 250\)\nSubtotal: Rs 2,500\nDiscount: -Rs 250\nTotal: Rs 2,250/);
+});
+
+test("a deal shows what it contains, indented under its line", async () => {
+  const state = createOrderState();
+  addToCart(state, { item_id: "d-combo", quantity: 1, option_ids: [] });
+  addToCart(state, { item_id: "i-drink", quantity: 1, option_ids: [] });
+  setPickupDetails(state, { customerName: "Ali", customerPhone: "0300 1234567" });
+  const { summary, text } = await summarise(state);
+  assert.deepEqual(summary.items[0].contains, ["1 Test Main", "1 Test Side", "1 Test Extra"]);
+  assert.equal("contains" in summary.items[1], false);
+  assert.match(text, /1\. 1 x Test Combo: Rs 900\n {4}1 Test Main\n {4}1 Test Side\n {4}1 Test Extra\n2\. 1 x Test Drink: Rs 150/);
 });
 
 test("any change to items, details or totals changes the fingerprint", async () => {

@@ -1,24 +1,14 @@
 // Tests for applying promotions to a chat's cart. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const { checkCartPromotion, eligibleCartPromotions } = require("./orders");
 const { createOrderState, applyDiscount, clearDiscount } = require("./order-session");
 const { priceCart, calculateTotals } = require("./totals");
-const { useFakeMenu } = require("./fake-menu");
-
-const realPromotions = require(path.join(__dirname, "..", "data", "promotions.json")).promotions;
+const { useFakeMenu, PERCENT, PICKUP_FIXED, EXPIRED } = require("./fake-menu");
 
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 const MONDAY = { date: "2026-11-02", weekday: "Monday" };
 
-// Test-only promotions: live copies of the samples, so eligibility rules can be exercised.
-function liveCopy(id) {
-  return { ...realPromotions.find((p) => p.id === id), active: true, sample: false };
-}
-const PERCENT = liveCopy("sample-percent-min-order"); // code TEST10, 10% off Rs 2,000+
-const PICKUP_FIXED = liveCopy("sample-pickup-fixed"); // no code, Rs 100 off each loaded-bro-box, pickup, Mondays
-const EXPIRED = liveCopy("sample-expired");
 const LIVE = [PERCENT, PICKUP_FIXED, EXPIRED];
 
 function pricedCart(...items) {
@@ -29,10 +19,10 @@ const EMPTY = { lines: [], subtotalPaisa: 0 };
 
 test.beforeEach(() => useFakeMenu());
 
-test("the real promotions file has nothing live, so nothing can be applied", async () => {
+test("with no promotions, as now, nothing can be applied", async () => {
   const cart = await pricedCart(["i-main", 3]);
-  assert.match(checkCartPromotion(cart, { promotionCode: "TEST10" }, realPromotions, FRIDAY).error, /isn't valid/);
-  assert.deepEqual(eligibleCartPromotions(cart, realPromotions, MONDAY, "pickup"), []);
+  assert.match(checkCartPromotion(cart, { promotionCode: "TEST10" }, [], FRIDAY).error, /isn't valid/);
+  assert.deepEqual(eligibleCartPromotions(cart, [], MONDAY, "pickup"), []);
 });
 
 test("an unrecognized code and an expired one get the same answer", async () => {

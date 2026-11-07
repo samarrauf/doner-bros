@@ -1,22 +1,11 @@
 // Tests for order checks, promotions and saving. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const { validateOrder, toOrderRow, placeOrder, isPromotionLive, todayInRestaurant } = require("./orders");
-const { useFakeMenu } = require("./fake-menu");
-
-const realPromotions = require(path.join(__dirname, "..", "data", "promotions.json")).promotions;
+const { useFakeMenu, PERCENT, PICKUP_FIXED, EXPIRED } = require("./fake-menu");
 
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 const MONDAY = { date: "2026-11-02", weekday: "Monday" };
-
-// Test-only promotions: live copies of the samples, so eligibility rules can be exercised.
-function liveCopy(id) {
-  return { ...realPromotions.find((p) => p.id === id), active: true, sample: false };
-}
-const PERCENT = liveCopy("sample-percent-min-order");
-const PICKUP_FIXED = liveCopy("sample-pickup-fixed");
-const EXPIRED = liveCopy("sample-expired");
 
 function order(overrides = {}) {
   return {
@@ -93,11 +82,19 @@ test("checks customer details and delivery requirements", async () => {
   assert.equal(pickup.order.deliveryAddress, null);
 });
 
-test("never applies the real promotions file's samples, even with their codes", async () => {
-  for (const promotion of realPromotions) {
-    const args = order({ promotionId: promotion.id, promotionCode: promotion.code || undefined });
-    assert.ok((await validateOrder(args, realPromotions, FRIDAY)).error, promotion.id);
-  }
+test("a deal is saved as one line carrying its labels, and shown indented on the confirmation", async () => {
+  const items = [{ item_id: "d-combo", quantity: 1, option_ids: [] }, { item_id: "i-drink", quantity: 1, option_ids: [] }];
+  let saved;
+  const result = await place(order({ items }), async (row) => {
+    saved = row;
+    return "DB-TEST";
+  });
+  assert.equal(saved.items.length, 2);
+  assert.deepEqual(saved.items[0].contains, ["1 Test Main", "1 Test Side", "1 Test Extra"]);
+  assert.equal(saved.items[0].unitPricePaisa, 90000);
+  assert.equal("contains" in saved.items[1], false, "a plain item has no contents");
+  assert.equal(saved.total_paisa, 105000);
+  assert.match(result.reply, /- 1 x Test Combo: Rs 900\n {4}1 Test Main\n {4}1 Test Side\n {4}1 Test Extra\n- 1 x Test Drink: Rs 150/);
 });
 
 test("only live promotions count", () => {

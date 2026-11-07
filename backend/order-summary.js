@@ -7,6 +7,7 @@ function orderFingerprint(state, totals) {
   return JSON.stringify({
     items: state.items.map((line) => [line.item_id, line.quantity, line.option_ids]),
     unitPrices: totals.lines.map((line) => line.unitPricePaisa),
+    dealContents: totals.lines.map((line) => line.contains || null),
     orderType: state.orderType,
     customer: state.customer,
     pickupTime: state.pickupTime,
@@ -67,6 +68,7 @@ function buildOrderSummary(state, totals, missing) {
     customizations: line.options.map((o) => `${o.name}: ${o.choice}`),
     unitPrice: line.unitPriceDisplay,
     lineTotal: line.lineTotalDisplay,
+    ...(line.contains ? { contains: line.contains } : {}),
   }));
   const fulfillment = fulfillmentFor(state);
   const promotion = state.discount.promotionId
@@ -91,9 +93,12 @@ function buildOrderSummary(state, totals, missing) {
 
   const text = [
     "Order summary",
-    ...items.map((item) => {
+    ...items.flatMap((item) => {
       const custom = item.customizations.length ? ` (${item.customizations.join(", ")})` : "";
-      return `${item.lineNumber}. ${item.quantity} x ${item.name}${custom}: ${item.lineTotal}`;
+      return [
+        `${item.lineNumber}. ${item.quantity} x ${item.name}${custom}: ${item.lineTotal}`,
+        ...(item.contains || []).map((label) => `    ${label}`),
+      ];
     }),
     ...fulfillmentLines(fulfillment),
     `Promotion: ${promotion ? `${promotion.name} (${promotion.discount})` : "none"}`,

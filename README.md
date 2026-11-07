@@ -9,7 +9,7 @@ dashboard for orders. Orders are saved to Supabase.
 frontend/   customer-facing site (index.html, styles.css, app.js)
 admin/      staff dashboard, served at /staff
 backend/    Express server and API code
-data/       menu, pricing, promotions and restaurant details
+data/       menu, pricing and restaurant details
 prompts/    AI Order Taker system prompt
 supabase/   SQL for the orders, chat sessions and rate limit tables
 server.js   Vercel's entrypoint; it loads the app from backend/server.js

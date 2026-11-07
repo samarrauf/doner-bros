@@ -307,7 +307,16 @@ function buildDealsSection(deals) {
     const contents = createElement("ul", "deal-items");
     deal.items.forEach((dealItem) => contents.appendChild(createElement("li", "", dealItem.label)));
     card.appendChild(contents);
-    card.appendChild(createElement("p", "deal-price", deal.priceDisplay));
+
+    const foot = createElement("div", "product-foot");
+    foot.appendChild(createElement("p", "deal-price", deal.priceDisplay));
+    const orderButton = createElement("button", "btn btn-small", "Order");
+    orderButton.type = "button";
+    orderButton.dataset.itemId = deal.id;
+    orderButton.setAttribute("aria-label", `Order ${deal.name}`);
+    foot.appendChild(orderButton);
+    card.appendChild(foot);
+
     grid.appendChild(card);
   });
   section.appendChild(grid);
@@ -385,7 +394,27 @@ function chatFallbackError() {
   return `Sorry, I couldn't reach AI Order Taker. Please try again, or call us on ${contactPhone.display}.`;
 }
 
-// Sends the message and prior turns to the backend; resolves with AI Order Taker's reply text.
+function newClickId() {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // randomUUID only exists on https and localhost.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+// The server's own account of the cart, shown after every Order click.
+function describeCartForCustomer(cart) {
+  if (cart.lines.length === 0) {
+    return "Your cart is empty.";
+  }
+  const lines = cart.lines.flatMap((line) => [
+    `${line.quantity} x ${line.name}${line.lineTotal ? `: ${line.lineTotal}` : ""}${line.orderable ? "" : " (can't be ordered right now)"}`,
+    ...line.contains.map((label) => `    ${label}`),
+  ]);
+  return ["Your cart:", ...lines, ...(cart.total ? [`Total: ${cart.total}`] : [])].join("\n");
+}
+
+// Sends the message and prior turns to the backend; resolves with the response body.
 // orderItem is set when a menu Order button sent the message: the server orders by its id, not the words.
 async function requestOrderTakerReply(message, conversationHistory, orderItem) {
   let response;
@@ -404,7 +433,7 @@ async function requestOrderTakerReply(message, conversationHistory, orderItem) {
   if (!response.ok || typeof data.reply !== "string") {
     throw new Error(data.error || chatFallbackError());
   }
-  return data.reply;
+  return data;
 }
 
 function setupChatWidget() {
@@ -466,6 +495,11 @@ function setupChatWidget() {
   const conversationHistory = [];
   // Messages from menu Order buttons clicked while a reply is still on its way.
   const queuedMessages = [];
+  // Item id -> id of its Order click the server hasn't answered for yet. If the answer never arrives
+  // (a dropped connection), the item may or may not have gone in, so the customer's next click on it
+  // is sent as the same click: the server adds it at most once. A new id is only made once the server
+  // has answered, when the customer can see the cart and another click means they want another.
+  const unansweredClicks = new Map();
   let isWaiting = false;
 
   function refreshSendButton() {
@@ -479,9 +513,15 @@ function setupChatWidget() {
 
     const typing = showTyping();
     try {
-      const reply = await requestOrderTakerReply(text, conversationHistory, orderItem);
+      const { reply, clickStatus, cart } = await requestOrderTakerReply(text, conversationHistory, orderItem);
       addBubble(reply, "bot");
       conversationHistory.push({ role: "user", content: text }, { role: "assistant", content: reply });
+      if (orderItem && clickStatus) {
+        unansweredClicks.delete(orderItem.item_id);
+      }
+      if (cart) {
+        addBubble(describeCartForCustomer(cart), "bot").classList.add("chat-bubble-cart");
+      }
     } catch (error) {
       // Failed turns stay out of the history so the next attempt starts clean.
       addBubble(error.message, "bot");
@@ -518,9 +558,12 @@ function setupChatWidget() {
     if (!button) {
       return;
     }
-    const itemName = button.closest(".product").querySelector("h4").textContent.trim();
+    const itemName = button.closest(".product, .deal").querySelector("h4").textContent.trim();
     const text = `I'd like to order 1 x ${itemName}.`;
-    const orderItem = { item_id: button.dataset.itemId, quantity: 1, option_ids: [] };
+    const itemId = button.dataset.itemId;
+    const clickId = unansweredClicks.get(itemId) || newClickId();
+    unansweredClicks.set(itemId, clickId);
+    const orderItem = { item_id: itemId, quantity: 1, option_ids: [], click_id: clickId };
     setOpen(true);
     if (isWaiting) {
       queuedMessages.push({ text, orderItem });

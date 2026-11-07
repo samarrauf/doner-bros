@@ -66,6 +66,36 @@ test("deals are priced from the service, and an unavailable one counts as finish
   assert.deepEqual((await total([line("d-gone")])).unavailableItems, [{ id: "d-gone", name: "Test Gone" }]);
 });
 
+test("a cart mixing deals and single items: each deal is one line at the deal price", async () => {
+  useFakeMenu({ settings: TAXED });
+  const result = await total([line("d-combo", 2), line("i-main"), line("d-combo"), line("i-drink", 3)], { orderType: "delivery" });
+
+  assert.deepEqual(
+    result.lines.map((l) => [l.name, l.quantity, l.unitPricePaisa, l.lineTotalPaisa]),
+    [
+      ["Test Combo", 2, 90000, 180000],
+      ["Test Main", 1, 75000, 75000],
+      ["Test Combo", 1, 90000, 90000],
+      ["Test Drink", 3, 15000, 45000],
+    ]
+  );
+  // Priced by its parts, one deal would be 75000 + 35000 = 110000.
+  assert.equal(result.subtotalPaisa, 390000);
+  assert.equal(result.taxPaisa, 62400); // 16% of Rs 3,900 = Rs 624
+  assert.equal(result.deliveryFeePaisa, 15000);
+  assert.equal(result.totalPaisa, 390000 + 62400 + 15000);
+  assert.equal(result.display.total, "Rs 4,674");
+
+  assert.deepEqual(result.lines[0].contains, ["1 Test Main", "1 Test Side", "1 Test Extra"]);
+  assert.equal("contains" in result.lines[1], false, "a plain item has no contents");
+});
+
+test("a mixed cart with one unavailable deal is refused as a whole", async () => {
+  const result = await total([line("i-main"), line("d-combo"), line("d-gone")]);
+  assert.equal(result.code, "items_not_orderable");
+  assert.deepEqual(result.unavailableItems, [{ id: "d-gone", name: "Test Gone" }]);
+});
+
 test("a quantity of zero is rejected, naming the item", async () => {
   const result = await total([line("i-main", 0)]);
   assert.equal(result.code, "invalid_quantity");
