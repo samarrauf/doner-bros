@@ -49,6 +49,7 @@ const {
 } = require("./order-session");
 const { GET_MENU_TOOL, getMenu } = require("./menu-tool");
 const { suggestItems } = require("./recommendations");
+const menuService = require("./services/menu-service");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -290,6 +291,7 @@ if (!supabase) {
   console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set; chat orders can't be saved until both are in .env.");
 }
 const orderStore = supabase ? createSupabaseOrderStore(supabase) : null;
+menuService.setClient(supabase);
 
 // The save function for one checkout: its submission key ties the row to this chat and to how
 // many orders the chat has already saved, so the database refuses a second copy of the same order.
@@ -1165,6 +1167,21 @@ app.use(express.json({ limit: "100kb" }));
 if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
 const { requireStaff, requireDatabase } = addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
 addMenuImageRoutes(app, { client: supabase, requireStaff, requireDatabase });
+
+// Public and read-only. Not cached by browsers: the service's own cache already sets how fresh it is.
+function menuRoute(read) {
+  return async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      res.json(await read());
+    } catch (error) {
+      if (error.code !== "MENU_UNAVAILABLE") console.error("Menu route failed:", error.message);
+      res.status(503).json({ error: "The menu is unavailable right now. Please try again in a minute." });
+    }
+  };
+}
+app.get("/api/menu", menuRoute(menuService.getPublicMenu));
+app.get("/api/menu/health", menuRoute(menuService.getHealth));
 
 app.post("/api/chat", async (req, res) => {
   try {
