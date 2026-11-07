@@ -7,7 +7,7 @@ const { validatePickupDetails, validateOrder, toOrderRow } = require("./orders")
 const { createOrderState, setPickupDetails, missingCheckoutDetails } = require("./order-session");
 
 const menu = require(path.join(__dirname, "..", "data", "menu.json"));
-const HOURS = require(path.join(__dirname, "..", "data", "restaurant.json")).hours;
+const HOURS = require(path.join(__dirname, "..", "data", "hours.json")).hours;
 
 // Restaurant time is UTC+5.
 const FRIDAY_8PM = new Date("2026-10-30T15:00:00Z");
