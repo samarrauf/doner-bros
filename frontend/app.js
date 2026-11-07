@@ -1,4 +1,4 @@
-// Doner Bros — landing page interactions: location popup, hero slider, menu category tabs.
+// Doner Bros — landing page interactions: location popup, menu and hero from /api/menu, category tabs.
 
 const STORAGE_KEY = "donersBros.location";
 
@@ -97,120 +97,6 @@ function setupLocationPopup() {
   }
 }
 
-/* ---------- Hero slider ---------- */
-
-const SLIDE_INTERVAL_MS = 6000;
-
-function setupHeroSlider() {
-  const hero = document.querySelector(".hero");
-  const track = document.getElementById("slides");
-  const slides = Array.from(track.querySelectorAll(".slide"));
-  const dots = Array.from(document.querySelectorAll("#slide-dots button"));
-  const prevButton = document.getElementById("slide-prev");
-  const nextButton = document.getElementById("slide-next");
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  let current = 0;
-  let timer = null;
-
-  function goTo(index) {
-    current = (index + slides.length) % slides.length;
-    track.style.transform = `translateX(-${current * 100}%)`;
-
-    slides.forEach((slide, i) => {
-      const isActive = i === current;
-      slide.classList.toggle("is-active", isActive);
-      slide.setAttribute("aria-hidden", String(!isActive));
-      // Keep links in hidden slides out of the keyboard tab order.
-      slide.querySelectorAll("a").forEach((link) => {
-        link.tabIndex = isActive ? 0 : -1;
-      });
-    });
-
-    dots.forEach((dot, i) => {
-      const isActive = i === current;
-      dot.classList.toggle("is-active", isActive);
-      if (isActive) {
-        dot.setAttribute("aria-current", "true");
-      } else {
-        dot.removeAttribute("aria-current");
-      }
-    });
-
-    hero.classList.toggle("on-light", slides[current].classList.contains("slide-2"));
-  }
-
-  function stop() {
-    clearInterval(timer);
-    timer = null;
-  }
-
-  function start() {
-    if (reduceMotion || timer) {
-      return;
-    }
-    timer = setInterval(() => goTo(current + 1), SLIDE_INTERVAL_MS);
-  }
-
-  function restart() {
-    stop();
-    start();
-  }
-
-  prevButton.addEventListener("click", () => {
-    goTo(current - 1);
-    restart();
-  });
-
-  nextButton.addEventListener("click", () => {
-    goTo(current + 1);
-    restart();
-  });
-
-  dots.forEach((dot, i) => {
-    dot.addEventListener("click", () => {
-      goTo(i);
-      restart();
-    });
-  });
-
-  // Pause while the visitor is reading or interacting with a slide.
-  hero.addEventListener("mouseenter", stop);
-  hero.addEventListener("mouseleave", start);
-  hero.addEventListener("focusin", stop);
-  hero.addEventListener("focusout", start);
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      stop();
-    } else {
-      start();
-    }
-  });
-
-  let touchStartX = null;
-
-  hero.addEventListener("touchstart", (event) => {
-    touchStartX = event.touches[0].clientX;
-    stop();
-  }, { passive: true });
-
-  hero.addEventListener("touchend", (event) => {
-    if (touchStartX === null) {
-      return;
-    }
-    const distance = event.changedTouches[0].clientX - touchStartX;
-    if (Math.abs(distance) > 50) {
-      goTo(distance < 0 ? current + 1 : current - 1);
-    }
-    touchStartX = null;
-    start();
-  });
-
-  goTo(0);
-  start();
-}
-
 /* ---------- Menu category tabs ---------- */
 
 function setupCategoryTabs() {
@@ -246,6 +132,197 @@ function setupCategoryTabs() {
   }, { rootMargin: "-140px 0px -60% 0px" });
 
   sections.forEach((section) => observer.observe(section));
+}
+
+/* ---------- Menu and hero, rendered from /api/menu ---------- */
+
+const MENU_ENDPOINT = "/api/menu";
+const WHATSAPP_DISPLAY = "0310-3994111";
+const WHATSAPP_LINK = "https://wa.me/923103994111";
+// Number of category colours defined in styles.css (.category[data-tone]).
+const CATEGORY_TONES = 6;
+
+// Text goes in through textContent, so menu data is never treated as HTML.
+function createElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) {
+    element.className = className;
+  }
+  if (text !== undefined) {
+    element.textContent = text;
+  }
+  return element;
+}
+
+function safeImageUrl(value) {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value, window.location.href);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function applyHeroSettings(settings) {
+  if (settings.address) {
+    document.getElementById("hero-location").textContent = settings.address;
+  }
+
+  const photoUrl = safeImageUrl(settings.hero_image_url);
+  if (!photoUrl) {
+    return;
+  }
+
+  // Swap the photo in only once it has loaded; if it fails the hero stays brand-coloured.
+  const photo = new Image();
+  photo.addEventListener("load", () => {
+    const hero = document.querySelector(".hero");
+    hero.style.setProperty("--hero-photo", `url("${photoUrl}")`);
+    hero.classList.add("has-photo");
+  });
+  photo.src = photoUrl;
+}
+
+function buildItemCard(item) {
+  const card = createElement("article", "product");
+  const photoUrl = safeImageUrl(item.imageUrl);
+
+  if (photoUrl) {
+    const frame = createElement("div", "product-img");
+    const image = document.createElement("img");
+    image.alt = item.name;
+    image.loading = "lazy";
+    // A photo that fails to load falls back to the photo-free card, never a broken image.
+    image.addEventListener("error", () => {
+      frame.remove();
+      card.classList.add("product-plain");
+    });
+    image.src = photoUrl;
+    frame.appendChild(image);
+    card.appendChild(frame);
+  } else {
+    card.classList.add("product-plain");
+  }
+
+  const info = createElement("div", "product-info");
+  info.appendChild(createElement("h4", "", item.name));
+
+  const foot = createElement("div", "product-foot");
+  foot.appendChild(createElement("span", "price", item.priceDisplay));
+
+  // Stage 7 wires up what this button sends.
+  const orderButton = createElement("button", "btn btn-small", "Order");
+  orderButton.type = "button";
+  orderButton.dataset.itemId = item.id;
+  orderButton.setAttribute("aria-label", `Order ${item.name}`);
+  foot.appendChild(orderButton);
+
+  info.appendChild(foot);
+  card.appendChild(info);
+  return card;
+}
+
+function buildCategorySection(category, index) {
+  const section = createElement("section", "category");
+  section.id = `cat-${category.slug}`;
+  section.dataset.tone = String(index % CATEGORY_TONES);
+  section.setAttribute("aria-labelledby", `h-${category.slug}`);
+
+  const title = createElement("h3", "category-title", category.name);
+  title.id = `h-${category.slug}`;
+  section.appendChild(title);
+
+  if (category.items.length === 0) {
+    section.appendChild(createElement("p", "menu-status", "Nothing available in this category right now."));
+    return section;
+  }
+
+  const grid = createElement("div", "product-grid");
+  category.items.forEach((item) => grid.appendChild(buildItemCard(item)));
+  section.appendChild(grid);
+  return section;
+}
+
+function buildDealsSection(deals) {
+  const section = createElement("section", "category");
+  section.id = "deals";
+  section.setAttribute("aria-labelledby", "h-deals");
+
+  const title = createElement("h3", "category-title", "Deals");
+  title.id = "h-deals";
+  section.appendChild(title);
+
+  const grid = createElement("div", "product-grid");
+  deals.forEach((deal) => {
+    const card = createElement("article", "deal");
+    card.appendChild(createElement("h4", "", deal.name));
+    const contents = createElement("ul", "deal-items");
+    deal.items.forEach((dealItem) => contents.appendChild(createElement("li", "", dealItem.label)));
+    card.appendChild(contents);
+    card.appendChild(createElement("p", "deal-price", deal.priceDisplay));
+    grid.appendChild(card);
+  });
+  section.appendChild(grid);
+  return section;
+}
+
+function renderMenu({ categories, deals }) {
+  const root = document.getElementById("menu-root");
+  const tabs = document.getElementById("category-tabs");
+
+  categories.forEach((category, index) => {
+    const tab = createElement("a", index === 0 ? "is-active" : "", category.name);
+    tab.href = `#cat-${category.slug}`;
+    tabs.appendChild(tab);
+  });
+
+  root.replaceChildren();
+  if (Array.isArray(deals) && deals.length > 0) {
+    root.appendChild(buildDealsSection(deals));
+  }
+  categories.forEach((category, index) => root.appendChild(buildCategorySection(category, index)));
+
+  document.getElementById("category-bar").hidden = false;
+  setupCategoryTabs();
+}
+
+function showMenuLoading() {
+  const status = createElement("p", "menu-status", "Loading the menu…");
+  status.setAttribute("role", "status");
+  document.getElementById("menu-root").replaceChildren(status);
+}
+
+function showMenuError() {
+  const message = createElement("p", "menu-status", "Sorry, the menu could not be loaded. Message us on WhatsApp: ");
+  message.setAttribute("role", "alert");
+  const link = createElement("a", "", WHATSAPP_DISPLAY);
+  link.href = WHATSAPP_LINK;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  message.appendChild(link);
+  document.getElementById("menu-root").replaceChildren(message);
+}
+
+async function loadMenu() {
+  showMenuLoading();
+  try {
+    const response = await fetch(MENU_ENDPOINT);
+    if (!response.ok) {
+      throw new Error(`Menu request failed with status ${response.status}`);
+    }
+    const menu = await response.json();
+    if (!Array.isArray(menu.categories) || menu.categories.length === 0) {
+      throw new Error("Menu response had no categories");
+    }
+    renderMenu(menu);
+    applyHeroSettings(menu.settings || {});
+  } catch (error) {
+    console.error(error);
+    showMenuError();
+  }
 }
 
 /* ---------- AI Order Taker chat widget ---------- */
@@ -395,6 +472,5 @@ function setupChatWidget() {
 }
 
 setupLocationPopup();
-setupHeroSlider();
-setupCategoryTabs();
 setupChatWidget();
+loadMenu();
