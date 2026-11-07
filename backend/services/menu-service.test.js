@@ -107,6 +107,17 @@ test("an allow-listed setting that is not in the table is simply absent", async 
   assert.deepEqual((await getApiMenu()).body.settings, {});
 });
 
+test("getPublicSettings never returns a key outside the list", async () => {
+  const allowed = ["currency", "order_types", "whatsapp", "address", "tax_mode", "tax_rate_bps", "delivery_fee_paisa", "hero_image_url", "brand_logo_url"];
+  const unlisted = ["internal_margin_bps", "whatsapp_api_token", "Currency", "currency ", "__proto__", "constructor"];
+  useTables({ menu_settings: [...allowed, ...unlisted].map((key) => ({ key, value: `value-${key}` })) });
+
+  const publicSettings = await menuService.getPublicSettings();
+
+  assert.deepEqual(Object.keys(publicSettings).sort(), [...allowed].sort());
+  assert.deepEqual((await getApiMenu()).body.settings, publicSettings);
+});
+
 test("getSettings still gives the backend the private settings", async () => {
   useTables({ menu_settings: [{ key: "internal_margin_bps", value: "1" }] });
   assert.equal((await menuService.getSettings()).internal_margin_bps, "1");
@@ -130,12 +141,35 @@ test("getItemById tells a finished item from an unknown one", async () => {
   assert.equal(await menuService.getItemById("no-such-id"), null);
 });
 
-test("getItemsByIds returns finished items flagged and leaves out unknown ids", async () => {
+test("getItemsByIds returns finished items flagged and reports unknown ids", async () => {
   useTables(finishedAndOpen);
 
-  const items = await menuService.getItemsByIds(["finished", "no-such-id", "open"]);
+  const { items, missingIds } = await menuService.getItemsByIds(["finished", "no-such-id", "open"]);
 
   assert.deepEqual(items.map((item) => [item.id, item.isAvailable]), [["finished", false], ["open", true]]);
+  assert.deepEqual(missingIds, ["no-such-id"]);
+});
+
+test("getItemsByIds accounts for every id it is given", async () => {
+  useTables(finishedAndOpen);
+  const ids = ["open", "open", "gone-1", "gone-1", null, "finished"];
+
+  const { items, missingIds } = await menuService.getItemsByIds(ids);
+
+  assert.equal(items.length + missingIds.length, ids.length);
+  assert.deepEqual(missingIds, ["gone-1", "gone-1", null]);
+  assert.deepEqual(await menuService.getItemsByIds([]), { items: [], missingIds: [] });
+});
+
+test("getItemsByIds reports an item in an inactive category as missing", async () => {
+  useTables({ menu_items: [itemRow("hidden", { category_id: "cat-inactive" })] });
+  assert.deepEqual(await menuService.getItemsByIds(["hidden"]), { items: [], missingIds: ["hidden"] });
+});
+
+test("getItemsByIds refuses anything that is not a list of ids", async () => {
+  useTables(finishedAndOpen);
+  await assert.rejects(menuService.getItemsByIds("open"), TypeError);
+  await assert.rejects(menuService.getItemsByIds(undefined), TypeError);
 });
 
 test("findItems finds finished items, flagged", async () => {

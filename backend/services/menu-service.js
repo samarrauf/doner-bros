@@ -169,9 +169,12 @@ async function getItemById(id) {
 }
 
 async function getItemsByIds(ids) {
+  if (!Array.isArray(ids)) throw new TypeError("getItemsByIds needs an array of ids.");
   const { itemsById } = await loadSnapshot();
-  if (!Array.isArray(ids)) return [];
-  return ids.filter((id) => itemsById.has(id)).map((id) => itemsById.get(id));
+  return {
+    items: ids.filter((id) => itemsById.has(id)).map((id) => itemsById.get(id)),
+    missingIds: ids.filter((id) => !itemsById.has(id)),
+  };
 }
 
 async function getDeals() {
@@ -180,6 +183,16 @@ async function getDeals() {
 
 async function getSettings() {
   return (await loadSnapshot()).settings;
+}
+
+// A setting not in PUBLIC_SETTING_KEYS stays private. getPublicMenu passes its snapshot in.
+async function getPublicSettings(snapshot) {
+  const { settings } = snapshot || (await loadSnapshot());
+  const publicSettings = {};
+  for (const key of PUBLIC_SETTING_KEYS) {
+    if (Object.hasOwn(settings, key)) publicSettings[key] = settings[key];
+  }
+  return publicSettings;
 }
 
 // Every word of the search must appear in the item's name, in any order, ignoring case.
@@ -196,15 +209,12 @@ async function findItems(searchText) {
 
 // One snapshot for the whole response, so its parts can't straddle a cache refresh.
 async function getPublicMenu() {
-  const { categories, deals, settings, fetchedAtMs } = await loadSnapshot();
-  const publicSettings = {};
-  for (const key of PUBLIC_SETTING_KEYS) {
-    if (Object.hasOwn(settings, key)) publicSettings[key] = settings[key];
-  }
+  const snapshot = await loadSnapshot();
+  const { categories, deals, fetchedAtMs } = snapshot;
   return {
     categories,
     deals: deals.filter((deal) => deal.isAvailable),
-    settings: publicSettings,
+    settings: await getPublicSettings(snapshot),
     fetchedAt: new Date(fetchedAtMs).toISOString(),
   };
 }
@@ -223,6 +233,7 @@ module.exports = {
   getItemsByIds,
   getDeals,
   getSettings,
+  getPublicSettings,
   findItems,
   getPublicMenu,
   getHealth,

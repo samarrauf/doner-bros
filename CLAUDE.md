@@ -30,6 +30,7 @@ Keep responses short. No summaries of code you just wrote unless asked.
 ## Secrets
 Supabase URL and service key come from environment variables only.
 Never print key values. Never commit .env.
+Any response sent to the browser uses getPublicSettings(), never getSettings().
 
 ## Security
 
