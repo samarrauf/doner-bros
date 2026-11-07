@@ -7,6 +7,7 @@ const path = require("path");
 const menuService = require("./services/menu-service");
 const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu } = require("./menu-tool");
 const { priceCart } = require("./totals");
+const { rupeeAmounts } = require("./price-guard");
 const { PRICE, rs } = require("./fake-menu");
 
 const TABLES = {
@@ -133,8 +134,8 @@ test("the chatbot files don't read the old menu or restaurant files", () => {
   }
 });
 
-test("the system prompt holds no rupee amounts except the one format example", () => {
+test("the system prompt holds no rupee amounts at all", () => {
   const prompt = fs.readFileSync(path.join(__dirname, "..", "prompts", "system-prompt.md"), "utf8");
-  assert.ok(new Set(prompt.match(/Rs\.? ?\d[\d,]*/g)).size <= 1);
+  assert.deepEqual(rupeeAmounts(prompt), []);
   assert.ok(!/\d{4}-?\d{7}/.test(prompt), "no phone number in the prompt");
 });
