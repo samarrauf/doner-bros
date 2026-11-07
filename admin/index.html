@@ -32,6 +32,11 @@
       background: var(--white); font: inherit; cursor: pointer;
     }
     .tab[aria-pressed="true"] { background: var(--ink); color: var(--white); border-color: var(--ink); }
+    .nav-link {
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--line);
+      border-radius: 999px; background: var(--white); color: var(--ink); text-decoration: none;
+    }
+    .nav-link:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     #updated { color: var(--muted); font-size: 0.85rem; }
     main { max-width: 1100px; margin: 0 auto; padding: 16px; }
     #message { margin: 0 0 12px; }
@@ -67,6 +72,7 @@
     <div class="controls">
       <button class="tab" type="button" data-view="active" aria-pressed="true">Active</button>
       <button class="tab" type="button" data-view="completed" aria-pressed="false">Completed</button>
+      <a class="nav-link" href="/admin/photos">Menu photos</a>
       <span id="updated" aria-live="polite"></span>
     </div>
   </header>

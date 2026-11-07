@@ -114,6 +114,8 @@
   <script>
     // Names come from the database, so everything is set with textContent, never innerHTML.
     const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const MAX_LONGEST_SIDE = 1600;
+    const JPEG_QUALITY = 0.85;
     const MB = 1024 * 1024;
     const CONNECTION_PROBLEM = "Couldn't reach the server. Check the connection and try again.";
 
@@ -149,7 +151,7 @@
 
     // One row: an item, or a brand image. endpoint takes POST and DELETE; responseKey names the new URL in the reply.
     function createSlot({ name, hint, imageUrl, endpoint, responseKey, isLogo }) {
-      const slot = { name, imageUrl, endpoint, responseKey };
+      const slot = { name, imageUrl, endpoint, responseKey, isLogo };
       const root = el("article", "slot");
       const thumb = el("div", isLogo ? "thumb logo" : "thumb");
       const body = el("div");
@@ -240,12 +242,42 @@
       });
     }
 
-    function problemWith(file) {
-      if (!ALLOWED_TYPES.has(file.type)) return "Only JPG, PNG and WebP photos are allowed.";
-      if (file.size > maxUploadBytes) {
-        return `This photo is ${(file.size / MB).toFixed(1)} MB. The limit is ${maxUploadBytes / MB} MB. Please use a smaller photo.`;
+    function formatSize(bytes) {
+      return bytes < MB ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / MB).toFixed(1)} MB`;
+    }
+
+    // Resolves to a smaller JPEG, or null if this browser can't make one.
+    async function shrink(file) {
+      const url = URL.createObjectURL(file);
+      try {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const longest = Math.max(image.naturalWidth, image.naturalHeight);
+        if (!longest) return null;
+        const scale = Math.min(1, MAX_LONGEST_SIDE / longest);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.naturalWidth * scale);
+        canvas.height = Math.round(image.naturalHeight * scale);
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#fff"; // JPEG has no transparency; see-through areas would otherwise turn black.
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height); // Browsers apply the phone's rotation here.
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
+        return blob && blob.type === "image/jpeg" ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : null;
+      } catch {
+        return null;
+      } finally {
+        URL.revokeObjectURL(url);
       }
-      return null;
+    }
+
+    // What to upload. Falls back to the original, for the server to accept or refuse.
+    async function prepare(slot, file) {
+      if (slot.isLogo && file.type !== "image/jpeg") return file; // Keeps a see-through logo see-through.
+      const small = await shrink(file);
+      if (!small) return file;
+      return small.size >= file.size && ALLOWED_TYPES.has(file.type) ? file : small;
     }
 
     function errorFrom(responseText, status) {
@@ -260,15 +292,14 @@
     }
 
     // XMLHttpRequest because fetch can't report upload progress.
-    function uploadPhoto(slot, file) {
-      const problem = problemWith(file);
-      if (problem) {
-        slot.setStatus(problem, "error");
-        return;
-      }
+    async function uploadPhoto(slot, picked) {
       slot.render(true);
+      slot.showProgress(undefined);
+      slot.setStatus("Preparing photo…");
+      const file = await prepare(slot, picked);
+      const size = formatSize(file.size);
       slot.showProgress(0);
-      slot.setStatus("Uploading 0%");
+      slot.setStatus(`Photo ready: ${size}. Uploading 0%`);
 
       const form = new FormData();
       form.append("image", file);
@@ -279,10 +310,10 @@
         if (event.loaded < event.total) {
           const percent = Math.floor((event.loaded / event.total) * 100);
           slot.showProgress(percent / 100);
-          slot.setStatus(`Uploading ${percent}%`);
+          slot.setStatus(`Photo ready: ${size}. Uploading ${percent}%`);
         } else {
           slot.showProgress(undefined);
-          slot.setStatus("Saving…");
+          slot.setStatus(`Photo ready: ${size}. Saving…`);
         }
       });
       const finish = (text, kind) => {
@@ -298,13 +329,15 @@
         }
         try {
           slot.imageUrl = JSON.parse(request.responseText)[slot.responseKey];
-          finish("Photo saved.", "done");
+          finish(`Photo saved (${size}).`, "done");
         } catch {
           finish("Something went wrong. Try again.", "error");
         }
       });
-      request.addEventListener("error", () => finish(CONNECTION_PROBLEM, "error"));
-      request.addEventListener("abort", () => finish(CONNECTION_PROBLEM, "error"));
+      // A server refusing a big upload can cut the connection before the browser reads its reply.
+      const failed = () => finish(file.size > maxUploadBytes ? `That photo is over the ${maxUploadBytes / MB} MB limit.` : CONNECTION_PROBLEM, "error");
+      request.addEventListener("error", failed);
+      request.addEventListener("abort", failed);
       request.send(form);
     }
 
@@ -341,7 +374,7 @@
         }).root,
         createSlot({
           name: "Logo",
-          hint: "Saved here, but the website doesn't show this logo yet.",
+          hint: "Shown across the website, in a circle. Use a square logo.",
           imageUrl: data.logoImageUrl,
           endpoint: "/api/admin/settings/logo-image",
           responseKey: "brand_logo_url",

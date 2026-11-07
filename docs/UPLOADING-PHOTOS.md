@@ -8,21 +8,22 @@ Please only use photos you took yourself, of your own food. Don't use pictures f
 
 You can do this yourself from your phone, on the photo screen.
 
-1. On your phone, go to your website's address followed by **/admin/photos**, and log in with the staff password. Bookmark the page so it's easy to find next time.
+1. On your phone, open the staff page and tap **Menu photos**. You can also go straight to your website's address followed by **/admin/photos**. Log in with the staff password if it asks.
 2. Find the item in the list. The line at the top tells you how many items have photos so far, and items still to do say **No photo**.
 3. Tap **Upload**, then **Take photo** to use the camera, or **Choose from gallery** for a photo you already took.
-4. Wait for the bar to finish. The new photo appears on that item's line, and there's no need to refresh the page.
+4. The screen shrinks the photo for you and shows its final size. Wait for the bar to finish. The new photo appears on that item's line, and there's no need to refresh the page.
 
 To change a photo, tap **Replace**. To take a photo down, tap **Remove**. The item stays on the menu without a photo.
 
 Customers will see the change on the website within about a minute.
 
-The **Brand images** panel at the top of the screen is for the large photo at the top of the website's main page, and for your logo. The website doesn't show the uploaded logo yet, so changing it there won't change the website for now.
+The **Brand images** panel at the top of the screen is for the large photo at the top of the website's main page, and for your logo. The logo appears across the website, in a circle, so use a square one. If you remove it, the website goes back to its built-in logo.
 
 ## Photo requirements
 
 - JPG, PNG or WebP. These are the normal formats for phone photos. If the screen says your photo's format isn't allowed, your phone may be saving in HEIC. On an iPhone, change it in **Settings > Camera > Formats > Most Compatible**. On other phones, look for a similar option in the camera's settings.
-- Under 4 MB each. If the screen says your photo is too big, lower the picture size or resolution in your camera's settings and take it again.
+- Under 4 MB each once shrunk. Normal phone photos end up well under this, so you shouldn't see the limit. If the screen does say your photo is too big, lower the picture size or resolution in your camera's settings and take it again.
+- A logo saved as PNG or WebP isn't shrunk, so that its see-through background is kept. It needs to be under 4 MB as it is.
 
 You don't need to resize anything. The website does that automatically.
 

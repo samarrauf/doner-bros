@@ -212,6 +212,26 @@ function applyHeroPhoto(settings) {
   photo.src = photoUrl;
 }
 
+function applyLogo(settings) {
+  const logoUrl = safeImageUrl(settings.brand_logo_url);
+  if (!logoUrl) {
+    return;
+  }
+
+  // Swap the logo in only once it has loaded; if it fails the built-in file stays.
+  const logo = new Image();
+  logo.addEventListener("load", () => {
+    document.querySelectorAll('img[src="images/logo.png"]').forEach((image) => {
+      image.style.objectFit = "contain"; // Their width and height are square; never stretch another shape.
+      image.src = logoUrl;
+    });
+    const icon = document.querySelector('link[rel="icon"]');
+    icon.type = "image/webp";
+    icon.href = logoUrl;
+  });
+  logo.src = logoUrl;
+}
+
 function buildItemCard(item) {
   const card = createElement("article", "product");
   const photoUrl = safeImageUrl(item.imageUrl);
@@ -341,6 +361,7 @@ async function loadMenu() {
     }
     const menu = await response.json();
     const settings = menu.settings || {};
+    applyLogo(settings);
     if (settings.whatsapp) {
       applyPhone(settings.whatsapp);
     }
