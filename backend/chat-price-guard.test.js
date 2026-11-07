@@ -35,13 +35,14 @@ require.cache[genaiPath] = {
 };
 
 const menuService = require("./services/menu-service");
+const { PRICE, rs } = require("./fake-menu");
 const app = require("./server");
 
 const TEST_WHATSAPP = "00000000000";
 const TABLES = {
   menu_categories: [{ id: "cat-a", slug: "alpha", name: "Alpha", sort_order: 1, image_url: null }],
   menu_items: [
-    { id: "i-1", category_id: "cat-a", slug: "test-item", name: "Test Item", description: null, price_paisa: 12300, sort_order: 1, image_url: null, is_available: true },
+    { id: "i-1", category_id: "cat-a", slug: "test-item", name: "Test Item", description: null, price_paisa: PRICE.item, sort_order: 1, image_url: null, is_available: true },
   ],
   menu_settings: [
     { key: "whatsapp", value: TEST_WHATSAPP },
@@ -108,38 +109,38 @@ test.beforeEach(() => {
 });
 
 test("a price from this turn's tool result is sent, and the guard stays quiet", async () => {
-  script = [call("get_item", { item_id: "i-1" }), say("Test Item is Rs 123.")];
+  script = [call("get_item", { item_id: "i-1" }), say(`Test Item is ${rs(PRICE.item)}.`)];
   const { body, warnings } = await ask("how much?");
-  assert.equal(body.reply, "Test Item is Rs 123.");
+  assert.equal(body.reply, `Test Item is ${rs(PRICE.item)}.`);
   assert.deepEqual(warnings.filter((w) => w.includes("Price guard")), []);
   assert.equal(requests.length, 2);
 });
 
 test("a made-up price is not sent: the reply is regenerated once and logged", async () => {
-  script = [say("Test Item is Rs 999."), call("get_item", { item_id: "i-1" }), say("Test Item is Rs 123.")];
+  script = [say(`Test Item is ${rs(PRICE.invented)}.`), call("get_item", { item_id: "i-1" }), say(`Test Item is ${rs(PRICE.item)}.`)];
   const { body, warnings } = await ask("how much?");
-  assert.equal(body.reply, "Test Item is Rs 123.");
-  assert.deepEqual(warnings.filter((w) => w.includes("Price guard")), ["Price guard fired (regenerating): unbacked paisa amounts 99900."]);
+  assert.equal(body.reply, `Test Item is ${rs(PRICE.item)}.`);
+  assert.deepEqual(warnings.filter((w) => w.includes("Price guard")), [`Price guard fired (regenerating): unbacked paisa amounts ${PRICE.invented}.`]);
   assert.match(requests[1].config.systemInstruction, /was not sent/);
 });
 
 test("a second made-up price gets the fallback with the WhatsApp number from settings", async () => {
-  script = [say("It is Rs 999."), say("Sorry, it is Rs 998.")];
+  script = [say(`It is ${rs(PRICE.invented)}.`), say(`Sorry, it is ${rs(PRICE.inventedAgain)}.`)];
   const { body, warnings } = await ask("how much?");
-  assert.doesNotMatch(body.reply, /99[89]/);
+  assert.ok(!body.reply.includes(rs(PRICE.invented)) && !body.reply.includes(rs(PRICE.inventedAgain)));
   assert.ok(body.reply.includes(TEST_WHATSAPP));
   assert.equal(warnings.filter((w) => w.includes("Price guard")).length, 2);
   assert.equal(requests.length, 2, "regenerates only once");
 });
 
 test("a price the customer suggested isn't backed, even when the model repeats it", async () => {
-  script = [say("Sure, Rs 50 is fine."), say("Sorry, I can't change prices.")];
-  const { body } = await ask("can I have it for Rs 50");
+  script = [say(`Sure, ${rs(PRICE.suggested)} is fine.`), say("Sorry, I can't change prices.")];
+  const { body } = await ask(`can I have it for ${rs(PRICE.suggested)}`);
   assert.equal(body.reply, "Sorry, I can't change prices.");
 });
 
 test("a regenerated reply can look things up but can't change the cart or submit", async () => {
-  script = [say("It is Rs 999."), say("Let me check that for you.")];
+  script = [say(`It is ${rs(PRICE.invented)}.`), say("Let me check that for you.")];
   await ask("how much?");
   assert.ok(declaredTools(requests[0]).includes("addItemToCart"));
   assert.ok(declaredTools(requests[0]).includes("submit_order"));
@@ -162,9 +163,9 @@ test("a Supabase item goes from the cart through totals and review to order chec
   script = [call("addItemToCart", { itemId: "i-1", quantity: 1 }), say("Added.")];
   const { cookie } = await ask("add one");
 
-  script = [call("get_order_totals"), say("Your total is Rs 123.")];
+  script = [call("get_order_totals"), say(`Your total is ${rs(PRICE.item)}.`)];
   const totals = await ask("what is my total", cookie);
-  assert.equal(totals.body.reply, "Your total is Rs 123.");
+  assert.equal(totals.body.reply, `Your total is ${rs(PRICE.item)}.`);
 
   // The review text is the tool's own, so its amounts pass the guard.
   script = [
@@ -207,11 +208,11 @@ const reviewShown = (request) => say(`${viewOf(request).text}\nReply yes to plac
 test("an Order button sends the id: the server adds it without the model, and the model isn't told to add it again", async () => {
   script = [(request) => {
     assert.match(request.config.systemInstruction, /already handled it, so don't call addItemToCart/);
-    assert.match(request.config.systemInstruction, /1 x Test Item: Rs 123/);
-    return say("Added Test Item, Rs 123.");
+    assert.ok(request.config.systemInstruction.includes(`1 x Test Item: ${rs(PRICE.item)}`));
+    return say(`Added Test Item, ${rs(PRICE.item)}.`);
   }];
   const { body, cookie, warnings } = await ask("I'd like to order 1 x Whatever The Text Says.", undefined, { orderItem: { item_id: "i-1", quantity: 1, option_ids: [] } });
-  assert.equal(body.reply, "Added Test Item, Rs 123.");
+  assert.equal(body.reply, `Added Test Item, ${rs(PRICE.item)}.`);
   assert.deepEqual(warnings.filter((w) => w.includes("Price guard")), [], "the price comes from a server result");
 
   script = [call("viewCart"), say("One item.")];
@@ -222,8 +223,8 @@ test("an Order button sends the id: the server adds it without the model, and th
 test("a price sent with an Order button goes nowhere", async () => {
   script = [say("Added.")];
   const { cookie } = await ask("order it", undefined, { orderItem: { item_id: "i-1", quantity: 2, pricePaisa: 1, totalPaisa: 1 } });
-  script = [call("get_order_totals"), say("Your total is Rs 246.")];
-  assert.equal((await ask("total?", cookie)).body.reply, "Your total is Rs 246.");
+  script = [call("get_order_totals"), say(`Your total is ${rs(2 * PRICE.item)}.`)];
+  assert.equal((await ask("total?", cookie)).body.reply, `Your total is ${rs(2 * PRICE.item)}.`);
 });
 
 test("an Order button for a finished or unknown item adds nothing, and the model is told which", async () => {
@@ -263,9 +264,9 @@ test("a price change after the review stops the save until the customer sees the
   script = [call("addItemToCart", { itemId: "i-1", quantity: 1 }), say("Added.")];
   const { cookie } = await ask("add one");
   script = [call("setPickupDetails", { customerName: "Test Customer", customerPhone: "03000000000" }), call("reviewOrder"), reviewShown];
-  assert.match((await ask("pickup, Test Customer, 03000000000", cookie)).body.reply, /Total: Rs 123/);
+  assert.ok((await ask("pickup, Test Customer, 03000000000", cookie)).body.reply.includes(`Total: ${rs(PRICE.item)}`));
 
-  const restore = withPrice(20000);
+  const restore = withPrice(PRICE.changed);
   try {
     script = [call("submit_order", { customerConfirmed: true }), (request) => {
       assert.match(viewOf(request).error, /hasn't been reviewed as it stands now/);
@@ -274,7 +275,7 @@ test("a price change after the review stops the save until the customer sees the
     assert.match((await ask("yes", cookie)).body.reply, /price changed/);
 
     script = [call("reviewOrder"), reviewShown];
-    assert.match((await ask("show me", cookie)).body.reply, /Total: Rs 200/);
+    assert.ok((await ask("show me", cookie)).body.reply.includes(`Total: ${rs(PRICE.changed)}`));
   } finally {
     restore();
   }
@@ -319,7 +320,7 @@ test("modifyItem re-checks the quantity with totals and leaves a bad change out 
 
   script = [call("modifyItem", { lineNumber: 1, quantity: 3 }), say("Done.")];
   await ask("make it 3", cookie);
-  assert.equal(viewOf(requests.at(-1)).cartTotal, "Rs 369");
+  assert.equal(viewOf(requests.at(-1)).cartTotal, rs(3 * PRICE.item));
 });
 
 test("when the menu can't be read, the tool says so and the number from settings stays available", async () => {

@@ -16,7 +16,7 @@ const {
 } = require("./order-session");
 const { placeOrder } = require("./orders");
 const { calculateTotals } = require("./totals");
-const { useFakeMenu } = require("./fake-menu");
+const { useFakeMenu, PRICE, rs } = require("./fake-menu");
 
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 
@@ -86,19 +86,19 @@ test("a saved order keeps the ids in the cart and a priced snapshot beside them"
     deliveryInstructions: null,
   });
   assert.deepEqual(state.items, [cartLine("i-main", 2), cartLine("i-side")]);
-  assert.equal(state.placedOrder.subtotalPaisa, 2 * 75000 + 35000);
+  assert.equal(state.placedOrder.subtotalPaisa, 2 * PRICE.main + PRICE.side);
   assert.equal(state.placedOrder.totalPaisa, state.placedOrder.subtotalPaisa);
   assert.equal(state.placedOrder.lines[0].name, "Test Main");
-  assert.equal(state.placedOrder.display.total, "Rs 1,850");
+  assert.equal(state.placedOrder.display.total, rs(2 * PRICE.main + PRICE.side));
 });
 
 test("a saved order's snapshot doesn't move when the menu does", async () => {
   const state = recordOrderAttempt(createOrderState(), await attempt(ORDER_ARGS, async () => 7));
-  useFakeMenu({ prices: { "i-main": 99900 } });
-  assert.equal(state.placedOrder.totalPaisa, 185000);
-  assert.equal(state.placedOrder.lines[0].unitPricePaisa, 75000);
+  useFakeMenu({ prices: { "i-main": PRICE.changed } });
+  assert.equal(state.placedOrder.totalPaisa, 2 * PRICE.main + PRICE.side);
+  assert.equal(state.placedOrder.lines[0].unitPricePaisa, PRICE.main);
   const fresh = await calculateTotals({ cart: state.items });
-  assert.equal(fresh.totalPaisa, 2 * 99900 + 35000, "only a fresh calculation sees the new price");
+  assert.equal(fresh.totalPaisa, 2 * PRICE.changed + PRICE.side, "only a fresh calculation sees the new price");
 });
 
 test("a failed save keeps the checked order but marks it not saved", async () => {

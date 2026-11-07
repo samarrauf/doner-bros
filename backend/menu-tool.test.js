@@ -7,6 +7,7 @@ const path = require("path");
 const menuService = require("./services/menu-service");
 const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu } = require("./menu-tool");
 const { priceCart } = require("./totals");
+const { PRICE, rs } = require("./fake-menu");
 
 const TABLES = {
   menu_categories: [
@@ -14,13 +15,13 @@ const TABLES = {
     { id: "cat-b", slug: "beta", name: "Beta", sort_order: 2, image_url: null },
   ],
   menu_items: [
-    { id: "i-1", category_id: "cat-a", slug: "red-widget", name: "Red Widget", description: null, price_paisa: 12300, sort_order: 1, image_url: null, is_available: true },
-    { id: "i-2", category_id: "cat-a", slug: "blue-widget", name: "Blue Widget", description: "Test", price_paisa: 45600, sort_order: 2, image_url: null, is_available: false },
-    { id: "i-3", category_id: "cat-b", slug: "green-gadget", name: "Green Gadget", description: null, price_paisa: 78900, sort_order: 1, image_url: null, is_available: true },
+    { id: "i-1", category_id: "cat-a", slug: "red-widget", name: "Red Widget", description: null, price_paisa: PRICE.item, sort_order: 1, image_url: null, is_available: true },
+    { id: "i-2", category_id: "cat-a", slug: "blue-widget", name: "Blue Widget", description: "Test", price_paisa: PRICE.other, sort_order: 2, image_url: null, is_available: false },
+    { id: "i-3", category_id: "cat-b", slug: "green-gadget", name: "Green Gadget", description: null, price_paisa: PRICE.third, sort_order: 1, image_url: null, is_available: true },
   ],
   menu_deals: [
-    { id: "d-1", slug: "test-deal", name: "Test Deal", price_paisa: 11100, sort_order: 1 },
-    { id: "d-2", slug: "off-deal", name: "Off Deal", price_paisa: 22200, sort_order: 2 },
+    { id: "d-1", slug: "test-deal", name: "Test Deal", price_paisa: PRICE.combo, sort_order: 1 },
+    { id: "d-2", slug: "off-deal", name: "Off Deal", price_paisa: PRICE.otherCombo, sort_order: 2 },
   ],
   menu_deal_items: [
     { deal_id: "d-1", label: "1 Red Widget", item_id: "i-1", quantity: 1, sort_order: 1 },
@@ -62,8 +63,8 @@ test("list_categories returns slugs and counts, and no prices", async () => {
 
 test("list_items returns ids, names and paisa prices for that category only", async () => {
   const result = await runMenuTool("list_items", { category_slug: "alpha" });
-  assert.deepEqual(result.items.map((item) => [item.id, item.name, item.pricePaisa]), [["i-1", "Red Widget", 12300]]);
-  assert.equal(result.items[0].priceDisplay, "Rs 123");
+  assert.deepEqual(result.items.map((item) => [item.id, item.name, item.pricePaisa]), [["i-1", "Red Widget", PRICE.item]]);
+  assert.equal(result.items[0].priceDisplay, rs(PRICE.item));
 });
 
 test("list_items with an unknown slug finds nothing and names the real slugs", async () => {
@@ -85,7 +86,7 @@ test("search_items with no full match gives real, available close matches", asyn
 
 test("get_item returns the item, or not found", async () => {
   const result = await runMenuTool("get_item", { item_id: "i-2" });
-  assert.equal(result.item.pricePaisa, 45600);
+  assert.equal(result.item.pricePaisa, PRICE.other);
   assert.equal(result.item.available, false);
   assert.deepEqual(await runMenuTool("get_item", { item_id: "nope" }), { found: false });
 });
@@ -96,8 +97,8 @@ test("list_deals gives only available deals, with their contents", async () => {
     {
       id: "d-1",
       name: "Test Deal",
-      pricePaisa: 11100,
-      priceDisplay: "Rs 111",
+      pricePaisa: PRICE.combo,
+      priceDisplay: rs(PRICE.combo),
       contains: ["1 Red Widget", "1 Extra"],
     },
   ]);
@@ -113,13 +114,13 @@ test("a failed read tells the model to give up on the menu, with no items", asyn
 });
 
 test("the cart prices items and deals from the service, and refuses anything else", async () => {
-  assert.equal((await priceCart([{ item_id: "i-1", quantity: 2 }])).lines[0].lineTotalPaisa, 24600);
-  assert.equal((await priceCart([{ item_id: "d-1", quantity: 1 }])).lines[0].unitPricePaisa, 11100);
+  assert.equal((await priceCart([{ item_id: "i-1", quantity: 2 }])).lines[0].lineTotalPaisa, 2 * PRICE.item);
+  assert.equal((await priceCart([{ item_id: "d-1", quantity: 1 }])).lines[0].unitPricePaisa, PRICE.combo);
   assert.ok((await priceCart([{ item_id: "i-2", quantity: 1 }])).error, "a finished item can't be ordered");
   assert.ok((await priceCart([{ item_id: "d-2", quantity: 1 }])).error, "an unavailable deal can't be ordered");
   assert.ok((await priceCart([{ item_id: "nope", quantity: 1 }])).error);
   const pricedAnyway = await priceCart([{ item_id: "i-1", quantity: 1, pricePaisa: 1 }]);
-  assert.equal(pricedAnyway.lines[0].unitPricePaisa, 12300, "a price passed in is ignored");
+  assert.equal(pricedAnyway.lines[0].unitPricePaisa, PRICE.item, "a price passed in is ignored");
 });
 
 test("the chatbot files don't read the old menu or restaurant files", () => {
@@ -128,11 +129,12 @@ test("the chatbot files don't read the old menu or restaurant files", () => {
     assert.ok(!source.includes("menu.json"), `${file} reads menu.json`);
     assert.ok(!source.includes("restaurant.json"), `${file} reads restaurant.json`);
     assert.ok(!source.includes("promotions.json"), `${file} reads promotions.json`);
+    assert.ok(!source.includes("pricing.json"), `${file} reads pricing.json`);
   }
 });
 
 test("the system prompt holds no rupee amounts except the one format example", () => {
   const prompt = fs.readFileSync(path.join(__dirname, "..", "prompts", "system-prompt.md"), "utf8");
-  assert.deepEqual([...new Set(prompt.match(/Rs\.? ?\d[\d,]*/g))], ["Rs 290"]);
+  assert.ok(new Set(prompt.match(/Rs\.? ?\d[\d,]*/g)).size <= 1);
   assert.ok(!/\d{4}-?\d{7}/.test(prompt), "no phone number in the prompt");
 });

@@ -34,7 +34,7 @@ require.cache[genaiPath] = {
 };
 
 const { createOrderState, isClickApplied, recordClick, addToCart, upgradeOrderState } = require("./order-session");
-const { useFakeMenu } = require("./fake-menu");
+const { useFakeMenu, PRICE, rs } = require("./fake-menu");
 const app = require("./server");
 
 function say(text) {
@@ -93,7 +93,7 @@ test("the same click id twice leaves the quantity at 1, without asking the model
   assert.equal(second.body.clickStatus, "duplicate");
   assert.match(second.body.reply, /already in your cart/);
   assert.deepEqual(second.body.cart.lines.map((l) => [l.name, l.quantity]), [["Test Main", 1]]);
-  assert.equal(second.body.cart.total, "Rs 750");
+  assert.equal(second.body.cart.total, rs(PRICE.main));
   assert.equal(requests.length, 1, "the repeat never reached the model");
 });
 
@@ -116,7 +116,7 @@ test("two different clicks are two different orders of the item", async () => {
   const second = await ask(first.cookie, click("i-main", "click-2"));
   assert.equal(second.body.clickStatus, "applied");
   assert.deepEqual(second.body.cart.lines.map((l) => l.quantity), [1, 1]);
-  assert.equal(second.body.cart.total, "Rs 1,500");
+  assert.equal(second.body.cart.total, rs(2 * PRICE.main));
 });
 
 test("a click that couldn't be added isn't remembered, so it can succeed later", async () => {
@@ -136,10 +136,10 @@ test("the cart holds a deal and a single item, and shows the deal's contents", a
   const { body } = await ask(first.cookie, click("i-drink", "click-2"));
   assert.deepEqual(body.cart, {
     lines: [
-      { name: "Test Combo", quantity: 1, orderable: true, contains: ["1 Test Main", "1 Test Side", "1 Test Extra"], lineTotal: "Rs 900" },
-      { name: "Test Drink", quantity: 1, orderable: true, contains: [], lineTotal: "Rs 150" },
+      { name: "Test Combo", quantity: 1, orderable: true, contains: ["1 Test Main", "1 Test Side", "1 Test Extra"], lineTotal: rs(PRICE.combo) },
+      { name: "Test Drink", quantity: 1, orderable: true, contains: [], lineTotal: rs(PRICE.drink) },
     ],
-    total: "Rs 1,050",
+    total: rs(PRICE.combo + PRICE.drink),
   });
 });
 
@@ -152,8 +152,8 @@ test("the model is given a deal's labels, and can't change its price", async () 
 
   script = [call("list_deals"), (request) => {
     const { deals } = request.contents.at(-1).parts[0].functionResponse.response;
-    assert.deepEqual(deals, [{ id: "d-combo", name: "Test Combo", pricePaisa: 90000, priceDisplay: "Rs 900", contains: ["1 Test Main", "1 Test Side", "1 Test Extra"] }]);
-    return say("Test Combo without the drink is Rs 500.");
+    assert.deepEqual(deals, [{ id: "d-combo", name: "Test Combo", pricePaisa: PRICE.combo, priceDisplay: rs(PRICE.combo), contains: ["1 Test Main", "1 Test Side", "1 Test Extra"] }]);
+    return say(`Test Combo without the drink is ${rs(PRICE.invented)}.`);
   }, say("Deals are fixed, sorry.")];
   const { body } = await ask(null, { message: "Test Combo without the side, how much?" });
   assert.equal(body.reply, "Deals are fixed, sorry.", "the invented price never reaches the customer");

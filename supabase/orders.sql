@@ -1,5 +1,5 @@
 -- Doner Bros orders table. Run once in Supabase: Dashboard > SQL Editor > New query.
--- Prices are integer paisa (100 paisa = Rs 1), worked out by the backend from data/menu.json.
+-- Prices are integer paisa (100 paisa = Rs 1), worked out by the backend from the menu service.
 
 create table if not exists public.orders (
   id               uuid primary key default gen_random_uuid(),

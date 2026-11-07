@@ -8,9 +8,10 @@ const { suggestItems } = require("./recommendations");
 const { createOrderState, addToCart } = require("./order-session");
 const { getOrderableMenu } = require("./menu-tool");
 const menuService = require("./services/menu-service");
+const { PRICE } = require("./fake-menu");
 
 const item = (id, category_id, name, is_available = true, sort_order = 1) => ({
-  id, category_id, slug: id, name, description: null, price_paisa: 10000, sort_order, image_url: null, is_available,
+  id, category_id, slug: id, name, description: null, price_paisa: PRICE.item, sort_order, image_url: null, is_available,
 });
 
 const TABLES = {
@@ -28,9 +29,9 @@ const TABLES = {
     item("chips", "c-fries", "Test Chips"),
   ],
   menu_deals: [
-    { id: "deal-linked", slug: "deal-linked", name: "Deal Linked", price_paisa: 50000, sort_order: 1 },
-    { id: "deal-labels", slug: "deal-labels", name: "Deal Labels", price_paisa: 50000, sort_order: 2 },
-    { id: "deal-food", slug: "deal-food", name: "Deal Food", price_paisa: 50000, sort_order: 3 },
+    { id: "deal-linked", slug: "deal-linked", name: "Deal Linked", price_paisa: PRICE.combo, sort_order: 1 },
+    { id: "deal-labels", slug: "deal-labels", name: "Deal Labels", price_paisa: PRICE.combo, sort_order: 2 },
+    { id: "deal-food", slug: "deal-food", name: "Deal Food", price_paisa: PRICE.combo, sort_order: 3 },
   ],
   menu_deal_items: [
     { deal_id: "deal-linked", label: "1 Test Main", item_id: "main", quantity: 1, sort_order: 1 },
@@ -69,7 +70,7 @@ test("a cart with neither gets a drink and fries from the live menu, at their me
   const suggestions = suggestItems(cartWith("main"), await getOrderableMenu());
   assert.deepEqual(ids(suggestions), ["cola", "chips"]);
   assert.equal(suggestions[0].name, "Test Cola");
-  assert.equal(suggestions[0].pricePaisa, 10000);
+  assert.equal(suggestions[0].pricePaisa, PRICE.item);
 });
 
 test("a drink or fries already in the cart means no suggestion", async () => {

@@ -245,6 +245,7 @@ async function getHealth() {
 }
 
 module.exports = {
+  CACHE_TTL_MS,
   formatPrice,
   setClient,
   refreshMenu,

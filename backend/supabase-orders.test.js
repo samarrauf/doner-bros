@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createSupabaseOrderStore, submissionKey, newOrderId } = require("./supabase-orders");
 const { placeOrder, validateOrder, toOrderRow } = require("./orders");
-const { useFakeMenu } = require("./fake-menu");
+const { useFakeMenu, PRICE } = require("./fake-menu");
 
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 const ARGS = { customerConfirmed: true, orderType: "pickup", customerName: "Ali", customerPhone: "0300 1234567", items: [{ item_id: "i-drink", quantity: 1 }] };
@@ -68,7 +68,7 @@ test("a confirmed order is inserted once with an order ID, its submission key an
   assert.equal(saved.submission_key, KEY);
   assert.equal(saved.status, "NEW");
   assert.equal(saved.customer_name, "Ali");
-  assert.equal(saved.total_paisa, 15000);
+  assert.equal(saved.total_paisa, PRICE.drink);
 });
 
 test("the same submission again returns the existing order instead of a second row", async () => {

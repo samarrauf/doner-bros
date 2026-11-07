@@ -1,57 +1,58 @@
-# Menu migration notes
+# Menu architecture
 
-A map of the system before the menu moves to Supabase. Written at the start of the
-`menu-supabase` branch. Item names and prices are left out on purpose.
+The menu lives in Supabase. Nothing else holds it. `data/menu.json`, `data/promotions.json` and
+`data/pricing.json` are gone. Item names and prices are left out of this page on purpose.
 
-## Where menu data is hardcoded today
+```
+Supabase ──> backend/services/menu-service.js ──┬──> /api/menu ──> website
+                                                ├──> backend/menu-tool.js ──> AI agent
+                                                └──> backend/totals.js ──> cart, orders
+```
 
-| File | What it holds |
-|---|---|
-| `frontend/index.html` | Hero slide 2 (item and price), category tabs, all menu cards (from line 222) |
-| `data/menu.json` | Categories and items: IDs, prices in paisa, options, allergens, tags, availability |
-| `data/promotions.json` | Offers. Three samples only, all inactive; no real deals exist yet |
-| `data/pricing.json` | Tax percent and delivery fee |
-| `prompts/system-prompt.md` | Example items and prices in the "Example behaviour" section (line 117) |
+## Supabase is the source of truth
 
-The website copy and `data/menu.json` are separate. Nothing keeps them in step.
+Tables: `menu_categories`, `menu_items`, `menu_deals`, `menu_deal_items` and `menu_settings`
+(tax, delivery fee, contact details, images). Prices are integer paisa. The schema is in
+`supabase/migrations/`, and `supabase/seed/0001_menu_data.sql` is the one file allowed to contain
+menu data. To change a price, change the row.
 
-## Files that read the menu
+The backend connects with the `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` environment variables.
 
-| File | How it uses the menu |
-|---|---|
-| `backend/server.js` | Loads `menu.json`, `promotions.json` and `pricing.json` once at startup (line 170); puts the menu and offers in the AI prompt; passes the menu to cart, order and suggestion code |
-| `backend/menu-tool.js` | The `getMenu` AI tool; reads `menu.json` from disk on every call |
-| `backend/orders.js` | Checks and prices cart lines and orders; checks promotions |
-| `backend/recommendations.js` | Picks add-on suggestions |
-| `frontend/app.js` | Reads the item name from a menu card and sends it to the chat (line 385) |
-| `vercel.json` | Bundles the `data` folder into the deployment |
+## menu-service is the only reader
 
-`backend/totals.js` works out totals from lines already priced by `orders.js`, using the
-tax and delivery settings from `pricing.json`.
+`backend/services/menu-service.js` is the only code that reads menu tables. It holds one snapshot
+for 60 seconds (`CACHE_TTL_MS`), so a change in Supabase reaches customers within a minute. If the
+read fails it retries once, then reports the menu as unavailable. It never falls back to stored data.
 
-These nine test files load the real `data/menu.json`: `apply-promotion`, `delivery`,
-`order-session`, `orders`, `order-summary`, `pickup`, `supabase-orders`, `totals` and
-`recommendations` (all `backend/*.test.js`).
+- Backend code uses `getSettings()`. Anything sent to the browser uses `getPublicSettings()`,
+  which returns only an allow-listed set of keys.
+- Staff photo uploads (`backend/menu-images.js`) write image URLs to those tables. They look up only
+  a row's id to confirm it exists, and new photos reach customers when the cache expires.
 
-Saved orders keep their own copy of item names and prices in `orders.items`, so menu changes
-do not alter past orders. The staff dashboard reads from that copy.
+## /api/menu serves the site
 
-## Supabase tables that exist
+`frontend/app.js` builds the menu, deals and prices on the page from `/api/menu`. The HTML holds no
+items or prices. A failed read returns a 503 with no menu data.
 
-All are accessed only through the backend with the service role key. None holds menu data.
+## The agent uses tools
 
-| Table | Purpose | Defined in |
-|---|---|---|
-| `orders` | Customer orders | `supabase/orders.sql` |
-| `chat_sessions` | Chats in progress, including carts | `supabase/chat-sessions.sql` |
-| `rate_limit_hits` | Rate limit counts, used through the `rate_limit_hit` function | `supabase/chat-sessions.sql` |
+The agent gets menu data only from tool calls in `backend/menu-tool.js`: `list_categories`,
+`list_items`, `search_items`, `get_item` and `list_deals`. None of them accepts a price.
 
-Connection settings come from the `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` environment
-variables, read in `backend/server.js` (line 281).
+- **Totals:** the agent never adds anything up. `backend/totals.js` prices carts from ids and
+  quantities, ignoring any price sent with them, and rejects unknown or finished items.
+- **Price guard:** `backend/price-guard.js` checks each reply. An amount no tool returned that turn
+  is not sent; the reply is regenerated once, then replaced with a fallback message.
+- **Saved orders:** `orders.items` keeps its own copy of names and prices, so later menu changes
+  don't alter past orders.
 
-## Differences to resolve against the new CLAUDE.md
+## Tests
 
-- **Delivery fee:** `data/pricing.json` has it unset (`null`); the rules say it is currently 0.
-- **Phone:** the website's Call and Order links use a different number from the WhatsApp number in the rules.
-- **Location name:** the website says "Shalimar City"; the rules say "Food Court, Shalimar Smart City".
-- **GST:** the website says prices include GST; `data/pricing.json` says tax is unconfirmed.
+Tests never touch Supabase or the real menu. `backend/fake-menu.js` serves made-up items through the
+real menu service, and is the one place test prices are written. Tests read prices from it and work
+out what they expect.
+
+## What is still a file
+
+`data/hours.json` (opening hours) and `prompts/system-prompt.md` (agent instructions). Neither is
+menu data, and `vercel.json` still bundles both.

@@ -5,6 +5,7 @@ const path = require("path");
 const express = require("express");
 const { nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes } = require("./staff");
 const { createMemoryRateLimiter } = require("./rate-limit");
+const { PRICE } = require("./fake-menu");
 
 const PASSWORD = "correct horse battery staple";
 const basic = (password) => `Basic ${Buffer.from(`staff:${password}`).toString("base64")}`;
@@ -48,7 +49,7 @@ async function startApp(options) {
   return { base, close: () => server.close() };
 }
 
-const order = (id, status, createdAt) => ({ order_id: id, status, created_at: createdAt, order_type: "pickup", customer_name: "Ali", items: [], total_paisa: 15000 });
+const order = (id, status, createdAt) => ({ order_id: id, status, created_at: createdAt, order_type: "pickup", customer_name: "Ali", items: [], total_paisa: PRICE.drink });
 
 test("statuses only move one step forward", () => {
   assert.equal(nextStatus("NEW"), "PREPARING");

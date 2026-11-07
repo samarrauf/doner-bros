@@ -2,6 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const menuService = require("./menu-service");
+const { PRICE, useFakeMenu } = require("../fake-menu");
 
 // Stops server.js binding its own PORT on load; these tests listen on a free port below.
 process.env.VERCEL = "1";
@@ -16,7 +17,7 @@ function itemRow(id, overrides = {}) {
     slug: id,
     name: `Test ${id}`,
     description: null,
-    price_paisa: 12345,
+    price_paisa: PRICE.item,
     sort_order: 1,
     image_url: null,
     is_available: true,
@@ -25,7 +26,7 @@ function itemRow(id, overrides = {}) {
 }
 
 function dealRow(id) {
-  return { id, slug: id, name: `Deal ${id}`, price_paisa: 54321, sort_order: 1 };
+  return { id, slug: id, name: `Deal ${id}`, price_paisa: PRICE.combo, sort_order: 1 };
 }
 
 function dealItemRow(dealId, itemId, label = "Test label") {
@@ -135,7 +136,7 @@ test("getItemById tells a finished item from an unknown one", async () => {
   const finished = await menuService.getItemById("finished");
   assert.equal(finished.isAvailable, false);
   assert.equal(finished.name, "Test finished thing");
-  assert.equal(finished.pricePaisa, 12345);
+  assert.equal(finished.pricePaisa, PRICE.item);
 
   assert.equal((await menuService.getItemById("open")).isAvailable, true);
   assert.equal(await menuService.getItemById("no-such-id"), null);
@@ -246,6 +247,38 @@ test("/api/menu excludes unavailable deals", async () => {
 
   assert.deepEqual(body.deals.map((deal) => deal.id), ["all-open", "labels-only", "mixed-open"]);
   assert.ok(body.deals.every((deal) => deal.isAvailable === true));
+});
+
+// 4. What the site gets
+
+test("/api/menu returns the expected category and item counts", async () => {
+  useFakeMenu(); // One category, five items of which one is finished, two deals of which one is unavailable.
+
+  const { status, body } = await getApiMenu();
+
+  assert.equal(status, 200);
+  assert.equal(body.categories.length, 1);
+  assert.equal(body.categories[0].items.length, 4);
+  assert.equal(body.deals.length, 1);
+});
+
+test("a price changed in Supabase appears in /api/menu after the cache expires", async () => {
+  const row = itemRow("open", { price_paisa: PRICE.item });
+  useTables({ menu_items: [row] });
+  const shownPrice = async () => (await getApiMenu()).body.categories[0].items[0].pricePaisa;
+
+  assert.equal(await shownPrice(), PRICE.item);
+
+  row.price_paisa = PRICE.changed;
+  assert.equal(await shownPrice(), PRICE.item, "still cached");
+
+  const realNow = Date.now;
+  Date.now = () => realNow() + menuService.CACHE_TTL_MS + 1;
+  try {
+    assert.equal(await shownPrice(), PRICE.changed);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 // The 503 behaviour stays as it was

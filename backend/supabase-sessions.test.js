@@ -34,11 +34,11 @@ test("a chat's state survives between messages, as a separate copy each time", a
   const store = createSupabaseSessionStore(client);
   const { id, state } = await store.create(0);
   assert.deepEqual(state, createOrderState());
-  state.items.push({ itemId: "ayran", quantity: 2 });
+  state.items.push({ itemId: "i-drink", quantity: 2 });
   await store.save(id, state, 1000);
 
   const loaded = await store.load(id, 2000);
-  assert.deepEqual(loaded.items, [{ itemId: "ayran", quantity: 2 }]);
+  assert.deepEqual(loaded.items, [{ itemId: "i-drink", quantity: 2 }]);
   assert.notEqual(loaded, state, "comes from the database, not this process's memory");
 });
 
