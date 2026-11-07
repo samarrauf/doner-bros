@@ -3,6 +3,19 @@
 
 const CACHE_TTL_MS = 60 * 1000;
 
+// The only settings /api/menu may return. A setting not named here stays private.
+const PUBLIC_SETTING_KEYS = [
+  "currency",
+  "order_types",
+  "whatsapp",
+  "address",
+  "tax_mode",
+  "tax_rate_bps",
+  "delivery_fee_paisa",
+  "hero_image_url",
+  "brand_logo_url",
+];
+
 let client = null;
 let cache = null;
 let inFlight = null;
@@ -37,6 +50,7 @@ function toItem(row) {
     pricePaisa: row.price_paisa,
     priceDisplay: formatPrice(row.price_paisa),
     imageUrl: row.image_url || null,
+    isAvailable: row.is_available === true,
   };
 }
 
@@ -56,23 +70,30 @@ function buildSnapshot({ categoryRows, itemRows, dealRows, dealItemRows, setting
     slug: row.slug,
     name: row.name,
     imageUrl: row.image_url || null,
-    items: items.filter((item) => item.categoryId === row.id),
+    items: items.filter((item) => item.categoryId === row.id && item.isAvailable),
   }));
   // An item in an inactive category is not on the menu, so it can't be found or ordered either.
-  const itemsById = new Map(categories.flatMap((category) => category.items).map((item) => [item.id, item]));
-  const deals = dealRows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    pricePaisa: row.price_paisa,
-    priceDisplay: formatPrice(row.price_paisa),
-    items: dealItemRows
+  const activeCategoryIds = new Set(categoryRows.map((row) => row.id));
+  const itemsById = new Map(items.filter((item) => activeCategoryIds.has(item.categoryId)).map((item) => [item.id, item]));
+  const deals = dealRows.map((row) => {
+    const dealItems = dealItemRows
       .filter((dealItem) => dealItem.deal_id === row.id)
-      .map((dealItem) => ({ label: dealItem.label, itemId: dealItem.item_id, quantity: dealItem.quantity })),
-  }));
+      .map((dealItem) => ({ label: dealItem.label, itemId: dealItem.item_id, quantity: dealItem.quantity }));
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      pricePaisa: row.price_paisa,
+      priceDisplay: formatPrice(row.price_paisa),
+      items: dealItems,
+      // Only linked items can be checked. A linked item that is off the menu makes the deal unavailable.
+      isAvailable: dealItems.every((dealItem) => !dealItem.itemId || itemsById.get(dealItem.itemId)?.isAvailable === true),
+    };
+  });
   const settings = Object.fromEntries(settingRows.map((row) => [row.key, row.value]));
   const fetchedAtMs = Date.now();
 
+  deepFreeze(items);
   deepFreeze(categories);
   deepFreeze(deals);
   deepFreeze(settings);
@@ -88,7 +109,7 @@ async function rows(query) {
 async function fetchSnapshot() {
   const [categoryRows, itemRows, dealRows, dealItemRows, settingRows] = await Promise.all([
     rows(client.from("menu_categories").select("id, slug, name, sort_order, image_url").eq("is_active", true).order("sort_order").order("name")),
-    rows(client.from("menu_items").select("id, category_id, slug, name, description, price_paisa, sort_order, image_url").eq("is_available", true).order("sort_order").order("name")),
+    rows(client.from("menu_items").select("id, category_id, slug, name, description, price_paisa, sort_order, image_url, is_available").order("sort_order").order("name")),
     rows(client.from("menu_deals").select("id, slug, name, price_paisa, sort_order").eq("is_active", true).order("sort_order").order("name")),
     rows(client.from("menu_deal_items").select("deal_id, label, item_id, quantity, sort_order").order("sort_order").order("label")),
     rows(client.from("menu_settings").select("key, value")),
@@ -142,6 +163,7 @@ async function getMenu() {
   return (await loadSnapshot()).categories;
 }
 
+// Unknown id: null. Known but finished for now: the item, with isAvailable false.
 async function getItemById(id) {
   return (await loadSnapshot()).itemsById.get(id) || null;
 }
@@ -175,12 +197,22 @@ async function findItems(searchText) {
 // One snapshot for the whole response, so its parts can't straddle a cache refresh.
 async function getPublicMenu() {
   const { categories, deals, settings, fetchedAtMs } = await loadSnapshot();
-  return { categories, deals, settings, fetchedAt: new Date(fetchedAtMs).toISOString() };
+  const publicSettings = {};
+  for (const key of PUBLIC_SETTING_KEYS) {
+    if (Object.hasOwn(settings, key)) publicSettings[key] = settings[key];
+  }
+  return {
+    categories,
+    deals: deals.filter((deal) => deal.isAvailable),
+    settings: publicSettings,
+    fetchedAt: new Date(fetchedAtMs).toISOString(),
+  };
 }
 
 async function getHealth() {
-  const { itemsById, fetchedAtMs } = await loadSnapshot();
-  return { itemCount: itemsById.size, cacheAgeMs: Date.now() - fetchedAtMs };
+  const { categories, fetchedAtMs } = await loadSnapshot();
+  const itemCount = categories.reduce((count, category) => count + category.items.length, 0);
+  return { itemCount, cacheAgeMs: Date.now() - fetchedAtMs };
 }
 
 module.exports = {
