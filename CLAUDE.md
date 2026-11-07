@@ -30,3 +30,18 @@ Keep responses short. No summaries of code you just wrote unless asked.
 ## Secrets
 Supabase URL and service key come from environment variables only.
 Never print key values. Never commit .env.
+
+## Security
+
+- **Never commit secrets.** API keys, DB passwords, and payment keys live in `.env` files,
+  which must be in `.gitignore`. Provide a `.env.example` with placeholder values only.
+- Never hard-code credentials, tokens, or real customer data in code, tests, or docs.
+- Use parameterised queries / an ORM — no string-built SQL.
+- Escape or sanitise anything rendered from user input (XSS protection).
+- Card details are handled only by the payment provider's hosted fields/SDK. Our servers
+  never see or store card numbers.
+- Admin routes require authentication and authorisation checks on the **server**.
+- Hash passwords with a modern algorithm (bcrypt/argon2). Never log passwords or tokens.
+- Collect only the customer data needed to fulfil an order (name, contact, address).
+- Use HTTPS everywhere; set secure, HTTP-only cookies for sessions.
+- Rate-limit login and order endpoints.
