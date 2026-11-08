@@ -26,6 +26,11 @@ function percent(part, whole) {
 
 const minutesSince = (iso, at) => Math.max(0, Math.floor((at - Date.parse(iso)) / 60000));
 
+// Chat sessions hold no phone number; a chat that ended in an order has it on the linked order
+// (chat_sessions.order_id -> orders.order_id), embedded in the same select.
+const SESSION_COLUMNS = "id, started_at, last_seen, ended_in_order, order_id, orders(customer_phone)";
+const phoneOf = (session) => (session.orders && session.orders.customer_phone) || null;
+
 // [{ query }] -> the n most common, as [{ query, count }].
 function topQueries(rows, n = 10) {
   const counts = new Map();
@@ -109,7 +114,7 @@ function createConversationService({ client, now = () => new Date() }) {
     const at = now().getTime();
     const { data, error } = await client
       .from("chat_sessions")
-      .select("id, started_at, last_seen, ended_in_order, order_id")
+      .select(SESSION_COLUMNS)
       .gte("last_seen", new Date(at - LIVE_WINDOW_MS).toISOString())
       .order("last_seen", { ascending: false })
       .limit(200);
@@ -126,6 +131,7 @@ function createConversationService({ client, now = () => new Date() }) {
         lastMessage: preview(summaries.get(s.id).last),
         ordered: s.ended_in_order,
         orderId: s.order_id,
+        phone: phoneOf(s),
       })),
     };
   }
@@ -136,7 +142,7 @@ function createConversationService({ client, now = () => new Date() }) {
     const sessions = await pages(() =>
       client
         .from("chat_sessions")
-        .select("id, started_at, last_seen, ended_in_order, order_id")
+        .select(SESSION_COLUMNS)
         .gte("started_at", startIso)
         .lt("started_at", endIso)
         .order("started_at", { ascending: false })
@@ -153,6 +159,7 @@ function createConversationService({ client, now = () => new Date() }) {
         lastMessage: preview(summaries.get(s.id).last),
         outcome: s.ended_in_order ? "ordered" : "not_ordered",
         orderId: s.order_id,
+        phone: phoneOf(s),
       })),
     };
   }
@@ -162,7 +169,7 @@ function createConversationService({ client, now = () => new Date() }) {
     if (!SESSION_ID_PATTERN.test(String(id))) return null;
     const { data: session, error } = await client
       .from("chat_sessions")
-      .select("id, started_at, last_seen, ended_in_order, order_id")
+      .select(SESSION_COLUMNS)
       .eq("id", id)
       .maybeSingle();
     if (error) throw error;
@@ -176,6 +183,7 @@ function createConversationService({ client, now = () => new Date() }) {
       lastSeen: session.last_seen,
       outcome: session.ended_in_order ? "ordered" : "not_ordered",
       orderId: session.order_id,
+      phone: phoneOf(session),
       messages: messages.map((m) => ({ role: m.role, content: m.content, at: m.created_at })),
     };
   }

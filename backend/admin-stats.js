@@ -2,8 +2,13 @@
 // the staff password (requireStaff, checked on the server), so a request without it gets 401.
 // Dates are "YYYY-MM-DD" Asia/Karachi days; with none given, the range is today in Karachi.
 
-function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations }) {
+const path = require("path");
+
+function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir }) {
   const guard = [requireStaff, requireDatabase];
+
+  // The owner dashboard page itself.
+  app.get("/admin/dashboard", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "dashboard.html")));
 
   // Runs read(req) and sends its JSON. A bad date range is the caller's fault (400).
   const route = (label, read) => async (req, res) => {
@@ -23,7 +28,7 @@ function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, co
   app.get("/api/admin/stats/month", ...guard, route("month", () => analytics.getMonth()));
   app.get("/api/admin/stats/range", ...guard, route("range", (req) => analytics.getRange(q(req, "from"), q(req, "to"))));
   app.get("/api/admin/stats/comparison", ...guard, route("comparison", (req) => analytics.getComparison(q(req, "from"), q(req, "to"))));
-  app.get("/api/admin/stats/hourly", ...guard, route("hourly", (req) => analytics.getHourly(q(req, "date"))));
+  app.get("/api/admin/stats/hourly", ...guard, route("hourly", (req) => analytics.getHourly(q(req, "from") || q(req, "date"), q(req, "to"))));
   app.get("/api/admin/stats/top-items", ...guard, route("top items", (req) => analytics.getTopItems(q(req, "from"), q(req, "to"), q(req, "limit"))));
   app.get("/api/admin/stats/deals", ...guard, route("deals", (req) => analytics.getDealPerformance(q(req, "from"), q(req, "to"))));
   app.get("/api/admin/stats/customers", ...guard, route("customers", (req) => analytics.getRepeatCustomers(q(req, "from"), q(req, "to"))));

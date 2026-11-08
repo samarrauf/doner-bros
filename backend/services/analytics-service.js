@@ -46,11 +46,18 @@ function salesOf(orders) {
   return { orderCount: orders.length, netSalesPaisa: sum(orders, (o) => o.total_paisa) };
 }
 
+// Share of part in whole as a percentage to one decimal place. null when whole is zero.
+function sharePercent(part, whole) {
+  return whole ? Math.round((part * 1000) / whole) / 10 : null;
+}
+
 function summarise(orders) {
   const sold = orders.filter((o) => o.status !== CANCELLED);
   const cancelled = orders.filter((o) => o.status === CANCELLED);
   const netSalesPaisa = sum(sold, (o) => o.total_paisa);
+  const deliveryCount = sold.filter((o) => o.order_type === "delivery").length;
   return {
+    deliverySharePercent: sharePercent(deliveryCount, sold.length),
     orderCount: sold.length,
     uniqueCustomers: new Set(sold.map((o) => o.customer_phone)).size,
     netSalesPaisa,
@@ -145,9 +152,14 @@ function repeatCustomers(orders) {
 
 function change(current, previous) {
   const fields = ["orderCount", "uniqueCustomers", "netSalesPaisa", "averageOrderValuePaisa"];
-  return Object.fromEntries(
+  const figures = Object.fromEntries(
     fields.map((field) => [field, { difference: current[field] - previous[field], percent: percentChange(current[field], previous[field]) }])
   );
+  // Delivery share is already a percentage, so its change is in percentage points.
+  const a = current.deliverySharePercent;
+  const b = previous.deliverySharePercent;
+  figures.deliverySharePercent = { points: a === null || b === null ? null : Math.round((a - b) * 10) / 10 };
+  return figures;
 }
 
 /* ---------- CSV ---------- */
@@ -244,9 +256,10 @@ function createAnalyticsService({ client, now = () => new Date() }) {
     };
   }
 
-  async function getHourly(date) {
-    const range = normaliseRange(date, date, today());
-    return { date: range.from, timeZone: time.TIME_ZONE, hours: hourly(await fetchOrders(range.from, range.to)) };
+  // One day (date), or every day from..to added together hour by hour.
+  async function getHourly(from, to) {
+    const range = normaliseRange(from, to || from, today());
+    return { date: range.from, from: range.from, to: range.to, timeZone: time.TIME_ZONE, hours: hourly(await fetchOrders(range.from, range.to)) };
   }
 
   async function getTopItems(from, to, limit = 10) {

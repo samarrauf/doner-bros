@@ -137,6 +137,32 @@ test("hourly buckets use Karachi hours", async () => {
   assert.equal(hours[12].orderCount, 1);
 });
 
+test("hourly over a range adds the days together hour by hour", async () => {
+  const twoDays = [order({ at: "2026-11-07T07:10:00Z" }), order({ at: NOON_KARACHI })];
+  const result = await service(twoDays).getHourly("2026-11-07", "2026-11-08");
+  assert.equal(result.from, "2026-11-07");
+  assert.equal(result.to, "2026-11-08");
+  assert.equal(result.hours[12].orderCount, 2);
+});
+
+test("delivery share is a percentage of sold orders, and its change is in points", async () => {
+  const s = summarise([
+    order({ at: NOON_KARACHI, type: "delivery" }),
+    order({ at: NOON_KARACHI, type: "pickup" }),
+    order({ at: NOON_KARACHI, type: "pickup" }),
+    order({ at: NOON_KARACHI, type: "delivery", status: "CANCELLED" }),
+  ]);
+  assert.equal(s.deliverySharePercent, 33.3);
+  assert.equal(summarise([]).deliverySharePercent, null, "no orders, no share");
+
+  const yesterday = order({ at: "2026-11-07T07:00:00Z", type: "delivery" });
+  const today = [order({ at: NOON_KARACHI, type: "delivery" }), order({ at: NOON_KARACHI, type: "pickup" })];
+  const comparison = await service([yesterday, ...today]).getComparison("2026-11-08", "2026-11-08");
+  assert.equal(comparison.current.deliverySharePercent, 50);
+  assert.equal(comparison.previous.deliverySharePercent, 100);
+  assert.deepEqual(comparison.change.deliverySharePercent, { points: -50 });
+});
+
 test("bad ranges are refused", () => {
   assert.throws(() => normaliseRange("2026-11-31", undefined, "2026-11-08"), { code: "BAD_RANGE" });
   assert.throws(() => normaliseRange("2026-11-08", "2026-11-01", "2026-11-08"), { code: "BAD_RANGE" });

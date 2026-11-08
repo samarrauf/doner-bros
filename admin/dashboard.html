@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="color-scheme" content="dark">
+  <title>Doner Bros Owner Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@700&display=swap" rel="stylesheet">
+  <style>
+    /* Dark only: this sits on a screen at the counter. Sales figures only; every number comes from the API. */
+    :root {
+      --bg: #0c0d0f;
+      --surface: #141619;
+      --surface-2: #1b1e22;
+      --surface-3: #22262b;
+      --border: #25292e;
+      --grid: #24282d;
+      --ink: #f3f2ef;
+      --ink-2: #b9bdc2;
+      --muted: #80868d;
+      --accent: #f5a623;          /* the menu's yellow: active state, one chart series, one key number */
+      --accent-ink: #141005;
+      --pickup: #6b7179;          /* second series: same family as the surface, clearly lighter than it, darker than yellow */
+      --good: #46b884;            /* status only */
+      --bad: #f06a5f;             /* status only */
+      --radius: 14px;
+      --gap: 16px;
+      --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      /* One type scale */
+      --t-xs: 12px; --t-sm: 14px; --t-md: 16px; --t-lg: 20px; --t-xl: 30px;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 400 var(--t-sm)/1.5 var(--font);
+      font-variant-numeric: tabular-nums lining-nums; font-feature-settings: "tnum" 1, "lnum" 1;
+    }
+    button, input { font: inherit; color: inherit; }
+    a { color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+    .wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+    .muted { color: var(--muted); }
+    .num { font-variant-numeric: tabular-nums lining-nums; }
+
+    /* ---------- Header ---------- */
+    .top { border-bottom: 1px solid var(--border); background: var(--bg); }
+    .top-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand img { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; background: var(--surface-2); }
+    .brand-name { font: 700 var(--t-lg)/1.1 "Poppins", var(--font); letter-spacing: -0.01em; }
+    .brand-sub { font-size: var(--t-xs); color: var(--muted); }
+    .views { display: flex; gap: 4px; margin-left: auto; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; }
+    .view-tab {
+      border: 0; background: transparent; color: var(--ink-2); padding: 7px 16px; border-radius: 999px; cursor: pointer; font-weight: 500;
+    }
+    .view-tab[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+    .top-links { display: flex; gap: 14px; font-size: var(--t-xs); }
+    .top-links a { color: var(--muted); text-decoration: none; }
+    .top-links a:hover { color: var(--ink); }
+
+    /* ---------- Filter row: the only controls above the panels ---------- */
+    .filters { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .filter-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; flex-wrap: wrap; }
+    .ranges { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+    .ranges::-webkit-scrollbar { display: none; }
+    .range {
+      flex: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+      padding: 6px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; font-size: var(--t-sm);
+    }
+    .range:hover { color: var(--ink); }
+    .range[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+    .custom { display: none; align-items: center; gap: 6px; }
+    .custom.open { display: flex; }
+    .custom input {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; color-scheme: dark; font-size: var(--t-sm);
+    }
+    .filter-end { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .updated { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface);
+      color: var(--ink); padding: 6px 12px; border-radius: 8px; cursor: pointer; text-decoration: none; white-space: nowrap; font-size: var(--t-sm);
+    }
+    .btn:hover { background: var(--surface-2); }
+    .btn svg { width: 15px; height: 15px; }
+    .btn.spin svg { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------- Layout ---------- */
+    main.wrap { padding-top: 24px; padding-bottom: 48px; }
+    .stack { display: grid; gap: var(--gap); }
+    .grid-2 { display: grid; gap: var(--gap); grid-template-columns: 1.6fr 1fr; }
+    .grid-3 { display: grid; gap: var(--gap); grid-template-columns: repeat(3, 1fr); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; min-width: 0; }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .card-title { margin: 0; font-size: var(--t-md); font-weight: 600; }
+    .card-note { font-size: var(--t-xs); color: var(--muted); }
+    .alert { padding: 12px 16px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border)); color: var(--ink); background: color-mix(in srgb, var(--bad) 8%, var(--surface)); }
+
+    /* ---------- KPI tiles ---------- */
+    .kpis { display: grid; gap: var(--gap); grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .kpi { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; }
+    .kpi-label { font-size: var(--t-xs); color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+    .kpi-value { font-size: var(--t-xl); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi-value small { font-size: var(--t-md); font-weight: 500; color: var(--ink-2); margin-right: 3px; letter-spacing: 0; }
+    .delta { font-size: var(--t-xs); color: var(--muted); display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+    .delta b { font-weight: 600; }
+    .delta .up { color: var(--good); }
+    .delta .down { color: var(--bad); }
+    .delta .flat { color: var(--ink-2); }
+
+    /* ---------- Month strip ---------- */
+    .card.month { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 0; padding: 0; }
+    .month > div { padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; }
+    .month > div + div { border-left: 1px solid var(--border); }
+    .month-label { font-size: var(--t-xs); color: var(--muted); }
+    .month-figs { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
+    .month-rev { font-size: var(--t-lg); font-weight: 600; }
+    .month-now .month-rev { color: var(--accent); }
+    .month-orders { font-size: var(--t-sm); color: var(--ink-2); }
+    .month-change { justify-content: center; min-width: 190px; }
+
+    /* ---------- Hourly bar chart ---------- */
+    .chart { position: relative; height: 220px; }
+    .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .chart .grid line { stroke: var(--grid); stroke-width: 1; }
+    .chart .axis text { fill: var(--muted); font-size: 11px; }
+    .chart .bar { fill: var(--accent); transition: opacity 120ms; }
+    .chart.hovering .bar { opacity: 0.35; }
+    .chart.hovering .bar.on { opacity: 1; }
+    .chart .val { fill: var(--ink); font-size: 11px; font-weight: 600; }
+    .chart .hit { fill: transparent; cursor: default; }
+    .tip {
+      position: absolute; pointer-events: none; z-index: 3; background: var(--surface-3); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px; font-size: var(--t-xs); white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      transform: translate(-50%, calc(-100% - 10px)); opacity: 0; transition: opacity 100ms;
+    }
+    .tip.show { opacity: 1; }
+    .tip strong { display: block; font-size: var(--t-sm); font-weight: 600; }
+
+    /* ---------- Delivery vs pickup ---------- */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .split-fig { display: flex; flex-direction: column; gap: 2px; }
+    .split-name { display: flex; align-items: center; gap: 8px; font-size: var(--t-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+    .split-count { font-size: var(--t-lg); font-weight: 600; }
+    .split-sales { color: var(--ink-2); }
+    .share { margin-top: 22px; }
+    .share-bar { position: relative; display: flex; gap: 2px; height: 12px; }
+    .share-bar span { border-radius: 4px; min-width: 0; }
+    .share-bar .d { background: var(--accent); }
+    .share-bar .p { background: var(--pickup); }
+    .share-bar .none { flex: 1; background: var(--surface-3); }
+    .share-caption { margin-top: 10px; font-size: var(--t-xs); color: var(--muted); }
+    .share-caption b { color: var(--ink); font-weight: 600; }
+
+    /* ---------- Tables ---------- */
+    .seg { display: flex; gap: 2px; padding: 3px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+    .seg button { border: 0; background: transparent; color: var(--muted); padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: var(--t-xs); }
+    .seg button[aria-pressed="true"] { background: var(--surface-3); color: var(--ink); }
+    .table-scroll { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: var(--t-xs); font-weight: 500; color: var(--muted); padding: 0 0 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 9px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    th + th, td + td { padding-left: 16px; }
+    .r { text-align: right; }
+    td.name { white-space: normal; min-width: 140px; }
+    td.rank { color: var(--muted); width: 1%; padding-right: 4px; }
+    tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+
+    /* ---------- Empty / skeleton ---------- */
+    .empty { display: grid; place-items: center; text-align: center; gap: 6px; padding: 28px 12px; color: var(--muted); }
+    .empty svg { width: 36px; height: 36px; color: var(--surface-3); }
+    .empty strong { color: var(--ink-2); font-weight: 500; font-size: var(--t-sm); }
+    .empty span { font-size: var(--t-xs); max-width: 34ch; }
+    .sk { position: relative; overflow: hidden; background: var(--surface-2); border-radius: 6px; }
+    .sk::after {
+      content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent); animation: shimmer 1.4s infinite;
+    }
+    @keyframes shimmer { to { transform: translateX(100%); } }
+    @media (prefers-reduced-motion: reduce) { .sk::after, .btn.spin svg { animation: none; } }
+    .sk-line { height: 12px; margin: 10px 0; }
+    .sk-bars { display: flex; align-items: flex-end; gap: 2px; height: 100%; padding-bottom: 22px; }
+    .sk-bars .sk { flex: 1; border-radius: 4px 4px 0 0; }
+
+    /* ---------- Conversations ---------- */
+    .figs { display: grid; gap: var(--gap); grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .fig { padding: 14px 18px; }
+    .fig-value { font-size: var(--t-lg); font-weight: 600; }
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 6px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); vertical-align: 1px; }
+    .convo-layout { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; }
+    .list { display: flex; flex-direction: column; margin: 0 -10px; }
+    .item {
+      display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; text-align: left; width: 100%;
+      border: 0; background: transparent; padding: 10px; border-radius: 10px; cursor: pointer;
+    }
+    .item:hover { background: var(--surface-2); }
+    .item { position: relative; }
+    .item[aria-current="true"] { background: var(--surface-3); }
+    .item[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: var(--accent); }
+    .item-who { font-weight: 600; font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-who .guest { color: var(--ink-2); font-weight: 500; }
+    .item-when { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .item-last { grid-column: 1 / -1; font-size: var(--t-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-last b { color: var(--ink-2); font-weight: 500; }
+    .badge { font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--border); color: var(--muted); }
+    .badge.ordered { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, var(--border)); }
+    .search { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: var(--t-sm); }
+    .search::placeholder { color: var(--muted); }
+    .past-list { max-height: 520px; overflow-y: auto; overflow-x: hidden; margin: 0 -10px; padding: 0 10px; }
+    .past-list .list { margin: 0; }
+    .more { margin-top: 8px; }
+
+    .reader { position: sticky; top: 72px; display: flex; flex-direction: column; padding: 0; max-height: calc(100vh - 96px); min-height: 420px; }
+    .reader-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .reader-title { font-weight: 600; font-size: var(--t-md); }
+    .reader-meta { font-size: var(--t-xs); color: var(--muted); width: 100%; }
+    .reader-close { display: none; margin-left: auto; }
+    .transcript { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 4px; }
+    .msg { max-width: min(62ch, 82%); display: flex; flex-direction: column; }
+    .msg.customer { align-self: flex-start; align-items: flex-start; }
+    .msg.assistant { align-self: flex-end; align-items: flex-end; }
+    .who { font-size: 11px; color: var(--muted); margin: 10px 4px 3px; }
+    .bubble { padding: 9px 13px; border-radius: 16px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--t-sm); }
+    .customer .bubble { background: var(--surface-3); border-bottom-left-radius: 5px; }
+    .assistant .bubble { background: #2a2416; color: #f4ead5; border-bottom-right-radius: 5px; }
+    .stamp { font-size: 11px; color: var(--muted); margin: 3px 6px 0; }
+    .day-sep { align-self: center; font-size: 11px; color: var(--muted); margin: 10px 0; }
+    .reader-foot { padding: 10px 18px; border-top: 1px solid var(--border); font-size: var(--t-xs); color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .reader-foot svg { width: 14px; height: 14px; flex: none; }
+
+    .misses { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .miss { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: baseline; }
+    .miss-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .miss-n { color: var(--ink-2); font-size: var(--t-xs); }
+    .miss-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--surface-3); }
+    .miss-bar span { display: block; height: 100%; border-radius: 2px; background: var(--pickup); }
+
+    [hidden] { display: none !important; }
+
+    /* ---------- Narrow screens ---------- */
+    @media (max-width: 1080px) {
+      .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+      .grid-3 > :last-child { grid-column: 1 / -1; }
+    }
+    @media (max-width: 860px) {
+      .grid-2, .convo-layout { grid-template-columns: 1fr; }
+      .card.month { grid-template-columns: 1fr 1fr; }
+      .month-change { grid-column: 1 / -1; border-left: 0 !important; border-top: 1px solid var(--border); }
+      .figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .reader { position: fixed; inset: 0; z-index: 20; border-radius: 0; max-height: none; border: 0; }
+      .reader:not(.open) { display: none; }
+      .reader-close { display: inline-flex; }
+    }
+    @media (max-width: 640px) {
+      .wrap { padding: 0 16px; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .kpis > :last-child { grid-column: 1 / -1; }
+      .kpi { padding: 14px; }
+      .kpi-value { font-size: 24px; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .card { padding: 16px; }
+      .table-scroll { margin: 0 -16px; padding: 0 16px; }
+      .card.month { grid-template-columns: 1fr; }
+      .month > div + div { border-left: 0; border-top: 1px solid var(--border); }
+      .views { margin-left: 0; order: 3; width: 100%; }
+      .view-tab { flex: 1; }
+      .top-links { margin-left: auto; }
+      .filter-end { margin-left: 0; width: 100%; justify-content: space-between; }
+      .chart { height: 190px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <div class="brand">
+        <img src="/images/logo.png" alt="" width="40" height="40">
+        <div>
+          <div class="brand-name">Doner Bros</div>
+          <div class="brand-sub" id="today-label">&nbsp;</div>
+        </div>
+      </div>
+      <div class="views" role="tablist" aria-label="Dashboard view">
+        <button class="view-tab" role="tab" id="tab-overview" aria-controls="view-overview" aria-selected="true">Overview</button>
+        <button class="view-tab" role="tab" id="tab-convos" aria-controls="view-convos" aria-selected="false">Conversations</button>
+      </div>
+      <nav class="top-links" aria-label="Other staff pages">
+        <a href="/staff">Kitchen orders</a>
+        <a href="/admin/photos">Menu photos</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="filters">
+    <div class="wrap filter-row">
+      <div class="ranges" role="group" aria-label="Date range" id="ranges"></div>
+      <div class="custom" id="custom">
+        <input type="date" id="custom-from" aria-label="From">
+        <span class="muted">to</span>
+        <input type="date" id="custom-to" aria-label="To">
+      </div>
+      <div class="filter-end">
+        <span class="updated" id="updated" aria-live="polite"></span>
+        <button class="btn" id="refresh" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          Refresh
+        </button>
+        <a class="btn" id="export" href="#" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Export CSV
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <div id="error" class="alert" role="alert" hidden></div>
+
+    <!-- ===================== OVERVIEW ===================== -->
+    <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview" class="stack">
+      <div class="kpis" id="kpis"></div>
+      <div class="card month" id="month"></div>
+      <div class="grid-2">
+        <section class="card" aria-labelledby="hourly-title">
+          <div class="card-head">
+            <h2 class="card-title" id="hourly-title">Orders by hour</h2>
+            <span class="card-note" id="hourly-note"></span>
+          </div>
+          <div class="chart" id="hourly"></div>
+        </section>
+        <section class="card" aria-labelledby="split-title">
+          <div class="card-head">
+            <h2 class="card-title" id="split-title">Delivery vs pickup</h2>
+          </div>
+          <div id="split"></div>
+        </section>
+      </div>
+      <div class="grid-3">
+        <section class="card" aria-labelledby="top-title">
+          <div class="card-head">
+            <h2 class="card-title" id="top-title">Top selling items</h2>
+            <div class="seg" role="group" aria-label="Top items period" id="top-period">
+              <button type="button" data-p="today" aria-pressed="true">Today</button>
+              <button type="button" data-p="week" aria-pressed="false">This week</button>
+              <button type="button" data-p="month" aria-pressed="false">This month</button>
+            </div>
+          </div>
+          <div id="top"></div>
+        </section>
+        <section class="card" aria-labelledby="deals-title">
+          <div class="card-head">
+            <h2 class="card-title" id="deals-title">Deal performance</h2>
+            <span class="card-note" id="deals-note"></span>
+          </div>
+          <div id="deals"></div>
+        </section>
+        <section class="card" aria-labelledby="repeat-title">
+          <div class="card-head">
+            <h2 class="card-title" id="repeat-title">Repeat customers</h2>
+            <span class="card-note">2 or more orders in range</span>
+          </div>
+          <div id="repeat"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ===================== CONVERSATIONS ===================== -->
+    <section id="view-convos" role="tabpanel" aria-labelledby="tab-convos" class="stack" hidden>
+      <div class="figs" id="chat-figs"></div>
+      <div class="convo-layout">
+        <div class="stack">
+          <section class="card" aria-labelledby="live-title">
+            <div class="card-head">
+              <h2 class="card-title" id="live-title"><span class="live-dot" aria-hidden="true"></span>Live now</h2>
+              <span class="card-note">Active in the last 15 min · refreshes every 15 s</span>
+            </div>
+            <div id="live"></div>
+          </section>
+          <section class="card" aria-labelledby="past-title">
+            <div class="card-head">
+              <h2 class="card-title" id="past-title">Past conversations</h2>
+              <span class="card-note" id="past-note"></span>
+            </div>
+            <input class="search" id="search" type="search" placeholder="Search phone or message" aria-label="Search conversations">
+            <div id="past" class="past-list"></div>
+          </section>
+          <section class="card" aria-labelledby="miss-title">
+            <div class="card-head">
+              <h2 class="card-title" id="miss-title">Asked for but not on the menu</h2>
+              <span class="card-note" id="miss-note"></span>
+            </div>
+            <div id="misses"></div>
+          </section>
+        </div>
+        <section class="card reader" id="reader" aria-label="Conversation">
+          <div class="reader-head" id="reader-head">
+            <span class="reader-title">Select a conversation</span>
+          </div>
+          <div class="transcript" id="transcript">
+            <div class="empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>
+              <strong>Pick a chat to read it</strong>
+              <span>Live chats keep updating here while the customer is still talking.</span>
+            </div>
+          </div>
+          <div class="reader-foot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            Read only. You can't reply to a chat from here.
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  (() => {
+    "use strict";
+    const TZ = "Asia/Karachi";
+    const LIVE_MS = 15000;
+    const FOLLOW_MS = 5000;
+
+    /* ---------- Small helpers (display only: no figures are calculated here) ---------- */
+    const $ = (id) => document.getElementById(id);
+    function h(tag, attrs, ...children) {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v === null || v === undefined || v === false) continue;
+        if (k === "class") el.className = v;
+        else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? "" : v);
+      }
+      for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
+      return el;
+    }
+    const svgNS = "http://www.w3.org/2000/svg";
+    function s(tag, attrs, ...children) {
+      const el = document.createElementNS(svgNS, tag);
+      for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+      for (const c of children) el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+      return el;
+    }
+    const intFmt = new Intl.NumberFormat("en-PK");
+    const count = (n) => intFmt.format(n);
+    const orders = (n) => `${count(n)} ${n === 1 ? "order" : "orders"}`;
+    // Paisa -> "Rs 1,290". Whole rupees as integers; paisa shown only if present.
+    function rupees(paisa) {
+      const sign = paisa < 0 ? "−" : "";
+      const p = Math.abs(paisa);
+      const rem = p % 100;
+      return `${sign}${intFmt.format((p - rem) / 100)}${rem ? "." + String(rem).padStart(2, "0") : ""}`;
+    }
+    const rs = (paisa) => `Rs ${rupees(paisa)}`;
+    const dateFmt = (opts) => new Intl.DateTimeFormat("en-GB", { timeZone: TZ, ...opts });
+    const fmtTime = dateFmt({ hour: "numeric", minute: "2-digit", hour12: true });
+    const fmtDay = dateFmt({ day: "numeric", month: "short" });
+    const fmtDayTime = (iso) => `${fmtDay.format(new Date(iso))}, ${fmtTime.format(new Date(iso))}`;
+    const fmtLong = dateFmt({ weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const fmtMonth = new Intl.DateTimeFormat("en-GB", { month: "long", timeZone: "UTC" });
+    const hourLabel = (hr) => `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
+    const hourTick = (hr) => `${hr % 12 || 12}${hr < 12 ? "a" : "p"}`;
+    const ago = (min) => (min < 1 ? "just now" : min < 60 ? `${min} min ago` : `${Math.floor(min / 60)} h ago`);
+
+    // Karachi calendar dates as "YYYY-MM-DD" strings.
+    const karachiToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    function shift(date, days) {
+      const d = new Date(`${date}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    }
+    const monthStart = (date) => `${date.slice(0, 8)}01`;
+    function weekStart(date) { // Monday
+      const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+      return shift(date, -((dow + 6) % 7));
+    }
+    const shortDate = (date) => fmtDay.format(new Date(`${date}T12:00:00Z`));
+
+    const RANGES = [
+      { id: "today", label: "Today", get: (t) => [t, t], vs: "vs yesterday", noun: "today" },
+      { id: "yesterday", label: "Yesterday", get: (t) => [shift(t, -1), shift(t, -1)], vs: "vs day before", noun: "yesterday" },
+      { id: "7d", label: "Last 7 days", get: (t) => [shift(t, -6), t], vs: "vs previous 7 days", noun: "in the last 7 days" },
+      { id: "month", label: "This month", get: (t) => [monthStart(t), t], vs: "vs previous period", noun: "this month" },
+      { id: "30d", label: "Last 30 days", get: (t) => [shift(t, -29), t], vs: "vs previous 30 days", noun: "in the last 30 days" },
+      { id: "custom", label: "Custom", get: () => [$("custom-from").value, $("custom-to").value], vs: "vs previous period", noun: "in this period" },
+    ];
+
+    const state = { range: "today", view: "overview", topPeriod: "today", openChat: null, liveIds: new Set(), past: [], pastShown: 60, generation: 0 };
+    const currentRange = () => RANGES.find((r) => r.id === state.range);
+    function rangeDates() {
+      const [from, to] = currentRange().get(karachiToday());
+      return { from, to };
+    }
+
+    /* ---------- API ---------- */
+    class ApiError extends Error {}
+    async function api(path) {
+      // Resolved against the origin, which never carries a user:password@ part from the address bar.
+      const res = await fetch(new URL(path, location.origin), { cache: "no-store", credentials: "same-origin" });
+      if (res.status === 401) throw new ApiError("Your sign-in has expired. Reload the page to sign in again.");
+      let body = null;
+      try { body = await res.json(); } catch { /* not JSON */ }
+      if (!res.ok) throw new ApiError((body && body.error) || "Couldn't load this right now.");
+      return body;
+    }
+    const qs = (o) => new URLSearchParams(o).toString();
+
+    /* ---------- Shared pieces ---------- */
+    const icons = {
+      bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+      chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>',
+      person: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    };
+    function empty(title, text, icon = "bag") {
+      const el = h("div", { class: "empty" });
+      el.innerHTML = icons[icon]; // static markup, no data
+      el.append(h("strong", null, title), h("span", null, text));
+      return el;
+    }
+    function failed(message, retry) {
+      return h("div", { class: "empty" }, h("strong", null, "Couldn't load this"), h("span", null, message),
+        h("button", { class: "btn", type: "button", onclick: retry }, "Try again"));
+    }
+    const skLines = (n, widths = ["100%"]) => Array.from({ length: n }, (_, i) => h("div", { class: "sk sk-line", style: `width:${widths[i % widths.length]}` }));
+    function skTable(rows) {
+      return h("div", null, h("div", { class: "sk sk-line", style: "width:40%;height:10px" }),
+        ...Array.from({ length: rows }, (_, i) => h("div", { style: "display:flex;gap:16px;align-items:center" },
+          h("div", { class: "sk sk-line", style: `flex:1;max-width:${[70, 55, 62, 48, 58][i % 5]}%` }),
+          h("div", { class: "sk sk-line", style: "width:32px;margin-left:auto" }),
+          h("div", { class: "sk sk-line", style: "width:64px" }))));
+    }
+    function table(head, rows) {
+      return h("div", { class: "table-scroll" }, h("table", null,
+        h("thead", null, h("tr", null, head.map(([label, cls]) => h("th", { class: cls || null, scope: "col" }, label)))),
+        h("tbody", null, rows)));
+    }
+    function fill(id, ...nodes) { const el = $(id); el.replaceChildren(...nodes.filter(Boolean)); return el; }
+
+    // Trend chip: arrow + figure, coloured only as status. kind "points" for percentage-point changes.
+    function delta(value, vs, kind) {
+      if (value === null || value === undefined) return h("div", { class: "delta" }, h("span", { class: "flat" }, "–"), h("span", null, "no earlier figure"));
+      const dir = value > 0 ? "up" : value < 0 ? "down" : "flat";
+      const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "•";
+      const abs = Math.abs(value).toLocaleString("en-PK", { maximumFractionDigits: 1 });
+      const text = kind === "points" ? `${abs} pts` : `${abs}%`;
+      return h("div", { class: "delta" }, h("b", { class: dir, "aria-label": `${dir === "up" ? "Up" : dir === "down" ? "Down" : "No change"} ${text}` }, `${arrow} ${text}`), h("span", null, vs));
+    }
+
+    /* ---------- Overview ---------- */
+    function kpiSkeleton() {
+      fill("kpis", ...Array.from({ length: 5 }, () => h("div", { class: "card kpi" },
+        h("div", { class: "sk", style: "height:12px;width:55%" }), h("div", { class: "sk", style: "height:33px;width:75%" }), h("div", { class: "sk", style: "height:12px;width:65%" }))));
+    }
+    function renderKpis(c) {
+      const cur = c.current, ch = c.change, vs = currentRange().vs;
+      const tile = (label, value, d) => h("div", { class: "card kpi" }, h("div", { class: "kpi-label" }, label), value, d);
+      const money = (p) => h("div", { class: "kpi-value", title: rs(p) }, h("small", null, "Rs"), rupees(p));
+      fill("kpis",
+        tile("Orders", h("div", { class: "kpi-value" }, count(cur.orderCount)), delta(ch.orderCount.percent, vs)),
+        tile("Customers", h("div", { class: "kpi-value" }, count(cur.uniqueCustomers)), delta(ch.uniqueCustomers.percent, vs)),
+        tile("Net sales", money(cur.netSalesPaisa), delta(ch.netSalesPaisa.percent, vs)),
+        tile("Average order", money(cur.averageOrderValuePaisa), delta(ch.averageOrderValuePaisa.percent, vs)),
+        tile("Delivery share", h("div", { class: "kpi-value" }, cur.deliverySharePercent === null ? "–" : `${cur.deliverySharePercent}%`),
+          delta(ch.deliverySharePercent.points, vs, "points")));
+    }
+
+    function monthSkeleton() {
+      fill("month", ...[0, 1, 2].map(() => h("div", null, h("div", { class: "sk", style: "height:12px;width:40%" }), h("div", { class: "sk", style: "height:22px;width:70%" }))));
+    }
+    function renderMonth(m) {
+      const name = (month) => fmtMonth.format(new Date(`${month}-01T00:00:00Z`));
+      const block = (cls, label, f) => h("div", { class: cls },
+        h("span", { class: "month-label" }, label),
+        h("div", { class: "month-figs" }, h("span", { class: "month-rev" }, rs(f.revenuePaisa)), h("span", { class: "month-orders" }, orders(f.orderCount))));
+      fill("month",
+        block("month-now", `${name(m.thisMonth.month)} so far`, m.thisMonth),
+        block("", `${name(m.lastMonth.month)} (whole month)`, m.lastMonth),
+        h("div", { class: "month-change" },
+          h("span", { class: "month-label" }, "Change"),
+          delta(m.change.revenuePercent, "revenue"),
+          delta(m.change.orderCountPercent, "orders")));
+    }
+
+    function hourlySkeleton() {
+      $("hourly-note").textContent = "";
+      fill("hourly", h("div", { class: "sk-bars" }, ...Array.from({ length: 24 }, (_, i) => h("div", { class: "sk", style: `height:${[8, 6, 4, 4, 4, 4, 6, 10, 14, 18, 26, 34, 52, 60, 48, 38, 34, 42, 58, 76, 82, 64, 40, 20][i]}%` }))));
+    }
+
+    let hourlyData = null;
+    function renderHourly(data) {
+      hourlyData = data;
+      const box = $("hourly");
+      const hours = data.hours;
+      let peak = null;
+      for (const hr of hours) if (hr.orderCount > 0 && (!peak || hr.orderCount > peak.orderCount)) peak = hr;
+      if (!peak) {
+        $("hourly-note").textContent = "";
+        fill("hourly", empty(`No orders ${currentRange().noun}`, "Bars appear here as orders come in, so the busy hours stand out."));
+        return;
+      }
+      $("hourly-note").textContent = `Peak ${hourLabel(peak.hour)}–${hourLabel((peak.hour + 1) % 24)}`;
+
+      const W = Math.max(box.clientWidth, 240), H = box.clientHeight || 220;
+      const left = 28, right = 4, top = 18, bottom = 24;
+      const plotW = W - left - right, plotH = H - top - bottom;
+      const gap = 2, n = hours.length;
+      const bw = (plotW - gap * (n - 1)) / n;
+      // Axis scale: gridlines at a round step (1, 2, 5, 10, 20 ...), the top one just clearing the peak.
+      const raw = Math.max(1, peak.orderCount / 2);
+      const pow = 10 ** Math.floor(Math.log10(raw));
+      const step = [1, 2, 5, 10].map((m) => m * pow).find((v) => v >= raw);
+      const yMax = step * Math.ceil(peak.orderCount / step);
+      const ticks = Array.from({ length: yMax / step + 1 }, (_, i) => i * step);
+      const y = (v) => top + plotH - (v / yMax) * plotH;
+      const x = (i) => left + i * (bw + gap);
+
+      const svg = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Orders by hour. Peak ${hourLabel(peak.hour)} with ${peak.orderCount} orders.` });
+      const grid = s("g", { class: "grid" }), axis = s("g", { class: "axis" });
+      for (const v of ticks) {
+        grid.append(s("line", { x1: left, x2: W - right, y1: Math.round(y(v)) + 0.5, y2: Math.round(y(v)) + 0.5 }));
+        axis.append(s("text", { x: left - 8, y: y(v) + 4, "text-anchor": "end" }, v));
+      }
+      for (let i = 0; i < n; i += 3) axis.append(s("text", { x: x(i) + bw / 2, y: H - 6, "text-anchor": "middle" }, hourTick(hours[i].hour)));
+      svg.append(grid, axis);
+
+      const bars = s("g");
+      const r = Math.min(4, bw / 2);
+      hours.forEach((hr, i) => {
+        if (!hr.orderCount) return;
+        const x0 = x(i), y0 = y(hr.orderCount), base = top + plotH, hgt = base - y0, rr = Math.min(r, hgt);
+        // Rounded at the data end, flat on the baseline.
+        const d = `M${x0},${base} V${y0 + rr} Q${x0},${y0} ${x0 + rr},${y0} H${x0 + bw - rr} Q${x0 + bw},${y0} ${x0 + bw},${y0 + rr} V${base} Z`;
+        bars.append(s("path", { d, class: "bar", "data-i": i }));
+      });
+      svg.append(bars);
+
+      // Direct labels: first and last busy hour, and the peak. Skip any that would crowd another.
+      const busy = hours.map((hr, i) => [hr, i]).filter(([hr]) => hr.orderCount > 0);
+      const picks = [];
+      for (const [hr, i] of [busy.find(([b]) => b === peak), busy[0], busy[busy.length - 1]]) {
+        if (picks.some((p) => Math.abs(p[1] - i) * (bw + gap) < 26)) continue;
+        picks.push([hr, i]);
+      }
+      const labels = s("g");
+      for (const [hr, i] of picks) labels.append(s("text", { class: "val", x: x(i) + bw / 2, y: y(hr.orderCount) - 6, "text-anchor": "middle" }, hr.orderCount));
+      svg.append(labels);
+
+      // Hover layer: hit targets are the full column, wider than the bar.
+      const tip = h("div", { class: "tip", role: "status" });
+      const hits = s("g");
+      hours.forEach((hr, i) => {
+        const hit = s("rect", { class: "hit", x: x(i) - gap / 2, y: top, width: bw + gap, height: plotH + bottom });
+        const show = () => {
+          box.classList.add("hovering");
+          svg.querySelectorAll(".bar.on").forEach((b) => b.classList.remove("on"));
+          const bar = svg.querySelector(`.bar[data-i="${i}"]`);
+          if (bar) bar.classList.add("on");
+          tip.replaceChildren(h("strong", null, orders(hr.orderCount)),
+            `${hourLabel(hr.hour)}–${hourLabel((hr.hour + 1) % 24)} · ${rs(hr.netSalesPaisa)}`);
+          const tx = Math.min(Math.max(x(i) + bw / 2, 80), W - 80);
+          tip.style.left = `${tx}px`;
+          tip.style.top = `${Math.min(y(hr.orderCount), top + plotH)}px`;
+          tip.classList.add("show");
+        };
+        hit.addEventListener("mouseenter", show);
+        hit.addEventListener("click", show);
+        hits.append(hit);
+      });
+      svg.addEventListener("mouseleave", () => { box.classList.remove("hovering"); tip.classList.remove("show"); });
+      svg.append(hits);
+      box.replaceChildren(svg, tip);
+    }
+    new ResizeObserver(() => { if (hourlyData) renderHourly(hourlyData); }).observe($("hourly"));
+
+    function splitSkeleton() {
+      fill("split", h("div", { class: "split" }, ...[0, 1].map(() => h("div", null, ...skLines(3, ["50%", "40%", "60%"])))),
+        h("div", { class: "sk", style: "height:12px;margin-top:22px" }));
+    }
+    function renderSplit(cur) {
+      const d = cur.delivery, p = cur.pickup;
+      const fig = (name, colour, f) => h("div", { class: "split-fig" },
+        h("span", { class: "split-name" }, h("span", { class: "swatch", style: `background:var(${colour})` }), name),
+        h("span", { class: "split-count" }, orders(f.orderCount)),
+        h("span", { class: "split-sales" }, rs(f.netSalesPaisa)));
+      const bar = h("div", { class: "share-bar", role: "img", "aria-label": `Delivery ${d.orderCount} orders, pickup ${p.orderCount} orders` });
+      const tip = h("div", { class: "tip", role: "status" });
+      if (cur.orderCount === 0) bar.append(h("span", { class: "none" }));
+      for (const [cls, name, f] of [["d", "Delivery", d], ["p", "Pickup", p]]) {
+        if (!f.orderCount) continue;
+        const seg = h("span", { class: cls, style: `flex:${f.orderCount}` });
+        const show = () => {
+          tip.replaceChildren(h("strong", null, `${name}: ${orders(f.orderCount)}`), rs(f.netSalesPaisa));
+          tip.style.left = `${seg.offsetLeft + seg.offsetWidth / 2}px`;
+          tip.style.top = "0px";
+          tip.classList.add("show");
+        };
+        seg.addEventListener("mouseenter", show);
+        seg.addEventListener("click", show);
+        seg.addEventListener("mouseleave", () => tip.classList.remove("show"));
+        bar.append(seg);
+      }
+      bar.append(tip);
+      const caption = cur.deliverySharePercent === null
+        ? h("div", { class: "share-caption" }, `No orders ${currentRange().noun} yet.`)
+        : h("div", { class: "share-caption" }, h("b", null, `${cur.deliverySharePercent}%`), " of orders were delivered");
+      fill("split", h("div", { class: "split" }, fig("Delivery", "--accent", d), fig("Pickup", "--pickup", p)), h("div", { class: "share" }, bar, caption));
+    }
+
+    function topRange() {
+      const t = karachiToday();
+      return state.topPeriod === "today" ? { from: t, to: t } : state.topPeriod === "week" ? { from: weekStart(t), to: t } : { from: monthStart(t), to: t };
+    }
+    async function loadTop() {
+      const gen = ++state.topGen;
+      fill("top", skTable(5));
+      try {
+        const data = await api(`/api/admin/stats/top-items?${qs({ ...topRange(), limit: 10 })}`);
+        if (gen !== state.topGen) return;
+        if (!data.items.length) {
+          const label = { today: "today", week: "this week", month: "this month" }[state.topPeriod];
+          return fill("top", empty(`Nothing sold ${label} yet`, "The best sellers will be listed here once orders arrive."));
+        }
+        fill("top", table([["#", "rank"], ["Item"], ["Qty", "r"], ["Sales", "r"]],
+          data.items.map((it, i) => h("tr", null, h("td", { class: "rank" }, i + 1), h("td", { class: "name" }, it.name), h("td", { class: "r" }, count(it.quantity)), h("td", { class: "r" }, rs(it.salesPaisa))))));
+      } catch (e) { if (gen === state.topGen) fill("top", failed(e.message, loadTop)); }
+    }
+    state.topGen = 0;
+
+    function renderDeals(perf, menu) {
+      // Every active deal from the menu, with its sales from the API (none sold shows as 0).
+      const byId = new Map(perf.deals.map((d) => [d.dealId, d]));
+      const rows = (menu ? menu.deals : []).map((deal) => ({ name: deal.name, sold: byId.get(deal.id) }));
+      for (const d of perf.deals) if (!menu || !menu.deals.some((m) => m.id === d.dealId)) rows.push({ name: d.name, sold: d });
+      $("deals-note").textContent = perf.ordersWithADeal ? `${count(perf.ordersWithADeal)} orders had a deal` : "";
+      if (!rows.length) return fill("deals", empty("No deals on the menu", "Active deals will be listed here with their sales."));
+      fill("deals", table([["Deal"], ["Times ordered", "r"], ["Sales", "r"]],
+        rows.map(({ name, sold }) => h("tr", null, h("td", { class: "name" }, name),
+          h("td", { class: "r" + (sold ? "" : " muted") }, count(sold ? sold.quantity : 0)),
+          h("td", { class: "r" + (sold ? "" : " muted") }, sold ? rs(sold.salesPaisa) : "–")))));
+    }
+
+    function renderRepeat(data) {
+      if (!data.customers.length) return fill("repeat", empty(`No repeat customers ${currentRange().noun}`, "Anyone who orders twice or more in the range shows up here.", "person"));
+      fill("repeat", table([["Phone"], ["Orders", "r"], ["Spend", "r"], ["Last order", "r"]],
+        data.customers.slice(0, 25).map((c) => h("tr", null, h("td", null, c.phone), h("td", { class: "r" }, count(c.orderCount)), h("td", { class: "r" }, rs(c.totalSpendPaisa)), h("td", { class: "r muted" }, fmtDayTime(c.lastOrderAt))))));
+    }
+
+    let menuDeals = null;
+    async function loadOverview() {
+      const { from, to } = rangeDates();
+      const range = qs({ from, to });
+      const gen = state.generation;
+      kpiSkeleton(); monthSkeleton(); hourlySkeleton(); splitSkeleton();
+      fill("deals", skTable(3)); fill("repeat", skTable(4));
+      hourlyData = null;
+      const task = (promise, ok, slot, retry) => promise.then((d) => { if (gen === state.generation) ok(d); })
+        .catch((e) => { if (gen === state.generation) { if (slot) fill(slot, failed(e.message, retry)); else throw e; } });
+      const deals = Promise.all([api(`/api/admin/stats/deals?${range}`), menuDeals ? Promise.resolve(menuDeals) : api("/api/menu").then((m) => (menuDeals = m)).catch(() => null)]);
+      await Promise.allSettled([
+        task(api(`/api/admin/stats/comparison?${range}`), (c) => { renderKpis(c); renderSplit(c.current); }, null).catch((e) => {
+          fill("kpis", h("div", { class: "card", style: "grid-column:1/-1" }, failed(e.message, loadOverview))); fill("split", failed(e.message, loadOverview));
+        }),
+        task(api("/api/admin/stats/month"), renderMonth, "month", loadOverview),
+        task(api(`/api/admin/stats/hourly?${range}`), renderHourly, "hourly", loadOverview),
+        task(deals, ([perf, menu]) => renderDeals(perf, menu), "deals", loadOverview),
+        task(api(`/api/admin/stats/customers?${range}`), renderRepeat, "repeat", loadOverview),
+        loadTop(),
+      ]);
+    }
+
+    /* ---------- Conversations ---------- */
+    const who = (c) => (c.phone ? h("span", null, c.phone) : h("span", { class: "guest" }, `Guest · ${c.id.slice(0, 6)}`));
+    const lastLine = (m) => (m ? [h("b", null, m.role === "assistant" ? "AI: " : "Customer: "), m.content] : [h("i", null, "No messages yet")]);
+
+    function figsSkeleton() {
+      fill("chat-figs", ...Array.from({ length: 4 }, () => h("div", { class: "card fig" }, h("div", { class: "sk", style: "height:12px;width:60%" }), h("div", { class: "sk", style: "height:24px;width:40%;margin-top:8px" }))));
+    }
+    function renderFigs(today, liveCount) {
+      const fig = (label, value, extra) => h("div", { class: "card fig" }, h("div", { class: "kpi-label" }, label), h("div", { class: "fig-value" }, extra || null, value));
+      fill("chat-figs",
+        fig("Chats today", count(today.totalChats)),
+        fig("Ended in order", count(today.endedInOrder)),
+        fig("Conversion", today.conversionPercent === null ? "–" : `${today.conversionPercent}%`),
+        fig("Chatting now", liveCount === null ? "–" : count(liveCount), h("span", { class: "live-dot", "aria-hidden": "true" })));
+    }
+
+    function listItem(c, when, badge) {
+      return h("button", { class: "item", type: "button", "aria-current": state.openChat === c.id ? "true" : null, "data-id": c.id, onclick: () => openChat(c.id) },
+        h("span", { class: "item-who" }, who(c)),
+        h("span", { class: "item-when" }, badge || null, badge ? " " : null, when),
+        h("span", { class: "item-last" }, ...lastLine(c.lastMessage)));
+    }
+    const outcomeBadge = (ordered) => h("span", { class: "badge" + (ordered ? " ordered" : "") }, ordered ? "✓ Ordered" : "Not ordered");
+
+    let liveCache = null, todayStats = null;
+    async function loadLive(showSkeleton) {
+      if (showSkeleton) fill("live", h("div", null, ...skLines(4, ["70%", "90%", "60%", "85%"])));
+      try {
+        const data = await api("/api/admin/chats/live");
+        liveCache = data.conversations;
+        state.liveIds = new Set(liveCache.map((c) => c.id));
+        if (todayStats) renderFigs(todayStats, liveCache.length);
+        if (!liveCache.length) fill("live", empty("Nobody is chatting right now", "New chats appear here within 15 seconds.", "chat"));
+        else fill("live", h("div", { class: "list" }, liveCache.map((c) => listItem(c, ago(c.idleMinutes), c.ordered ? outcomeBadge(true) : null))));
+      } catch (e) { fill("live", failed(e.message, () => loadLive(true))); }
+    }
+
+    function renderPast() {
+      const term = $("search").value.trim().toLowerCase();
+      const rows = term ? state.past.filter((c) => (c.phone || "").includes(term) || (c.lastMessage && c.lastMessage.content.toLowerCase().includes(term)) || c.id.startsWith(term)) : state.past;
+      if (!state.past.length) return fill("past", empty(`No chats ${currentRange().noun}`, "Conversations with the AI Order Taker will be listed here.", "chat"));
+      if (!rows.length) return fill("past", empty("No matches", "Try part of a phone number or a word from the chat.", "chat"));
+      const shown = rows.slice(0, state.pastShown);
+      const multiDay = rangeDates().from !== rangeDates().to;
+      fill("past", h("div", { class: "list" }, shown.map((c) => listItem(c, multiDay ? fmtDayTime(c.startedAt) : fmtTime.format(new Date(c.startedAt)), outcomeBadge(c.outcome === "ordered")))),
+        rows.length > shown.length ? h("button", { class: "btn more", type: "button", onclick: () => { state.pastShown += 60; renderPast(); } }, `Show more (${count(rows.length - shown.length)} left)`) : null);
+    }
+
+    function renderMisses(stats) {
+      $("miss-note").textContent = stats.searchMisses ? `${count(stats.searchMisses)} searches with no match` : "";
+      const list = stats.topUnmatchedRequests;
+      if (!list.length) return fill("misses", empty("Nothing missing", `Every item customers asked for ${currentRange().noun} was on the menu.`, "chat"));
+      const top = list[0].count;
+      fill("misses", h("ol", { class: "misses" }, list.map((m) => h("li", { class: "miss" },
+        h("span", { class: "miss-q", title: m.query }, m.query),
+        h("span", { class: "miss-n" }, `${count(m.count)}×`),
+        h("span", { class: "miss-bar", "aria-hidden": "true" }, h("span", { style: `width:${(m.count / top) * 100}%` }))))));
+    }
+
+    async function loadConversations() {
+      const { from, to } = rangeDates();
+      const today = karachiToday();
+      const gen = state.generation;
+      figsSkeleton();
+      fill("past", h("div", null, ...skLines(6, ["80%", "95%", "70%", "90%"])));
+      fill("misses", h("div", null, ...skLines(5, ["60%", "45%", "52%", "38%", "48%"])));
+      $("past-note").textContent = from === to ? shortDate(from) : `${shortDate(from)} – ${shortDate(to)}`;
+      state.pastShown = 60;
+      const todayP = api(`/api/admin/chats/stats?${qs({ from: today, to: today })}`);
+      const rangeP = from === today && to === today ? todayP : api(`/api/admin/chats/stats?${qs({ from, to })}`);
+      await Promise.allSettled([
+        loadLive(!liveCache),
+        todayP.then((t) => { if (gen === state.generation) { todayStats = t; renderFigs(t, liveCache ? liveCache.length : null); } })
+          .catch((e) => fill("chat-figs", h("div", { class: "card", style: "grid-column:1/-1" }, failed(e.message, loadConversations)))),
+        rangeP.then((r) => { if (gen === state.generation) renderMisses(r); }).catch((e) => fill("misses", failed(e.message, loadConversations))),
+        api(`/api/admin/chats?${qs({ from, to })}`).then((d) => { if (gen === state.generation) { state.past = d.conversations; renderPast(); } })
+          .catch((e) => fill("past", failed(e.message, loadConversations))),
+      ]);
+    }
+
+    // Reading pane
+    let followTimer = null, chatGen = 0;
+    function markCurrent() {
+      document.querySelectorAll(".item").forEach((el) => el.setAttribute("aria-current", el.dataset.id === state.openChat ? "true" : "false"));
+    }
+    function renderChat(chat, live) {
+      const head = $("reader-head");
+      head.replaceChildren(...[
+        h("span", { class: "reader-title" }, chat.phone || `Guest · ${chat.id.slice(0, 6)}`),
+        outcomeBadge(chat.outcome === "ordered"),
+        live ? h("span", { class: "card-note" }, h("span", { class: "live-dot", "aria-hidden": "true" }), "Live · following") : null,
+        h("button", { class: "btn reader-close", type: "button", onclick: closeChat }, "Back"),
+        h("span", { class: "reader-meta" }, `Started ${fmtDayTime(chat.startedAt)} · last active ${fmtTime.format(new Date(chat.lastSeen))}${chat.orderId ? ` · Order ${chat.orderId}` : ""}`)].filter(Boolean));
+      const box = $("transcript");
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      if (!chat.messages.length) { box.replaceChildren(empty("No messages in this chat", "The customer opened the chat but hasn't typed yet.", "chat")); return; }
+      const nodes = [];
+      let prevRole = null, prevDay = null;
+      for (const m of chat.messages) {
+        const day = fmtDay.format(new Date(m.at));
+        if (day !== prevDay) { nodes.push(h("div", { class: "day-sep" }, day)); prevDay = day; prevRole = null; }
+        const el = h("div", { class: `msg ${m.role}` });
+        if (m.role !== prevRole) el.append(h("span", { class: "who" }, m.role === "assistant" ? "AI Order Taker" : "Customer"));
+        el.append(h("div", { class: "bubble" }, m.content), h("span", { class: "stamp" }, fmtTime.format(new Date(m.at))));
+        nodes.push(el);
+        prevRole = m.role;
+      }
+      box.replaceChildren(...nodes);
+      if (atBottom || box.dataset.chat !== chat.id) box.scrollTop = box.scrollHeight;
+      box.dataset.chat = chat.id;
+    }
+    async function openChat(id) {
+      state.openChat = id;
+      markCurrent();
+      clearTimeout(followTimer);
+      const gen = ++chatGen;
+      $("reader").classList.add("open");
+      const box = $("transcript");
+      if (box.dataset.chat !== id) {
+        $("reader-head").replaceChildren(h("div", { class: "sk", style: "height:16px;width:40%" }));
+        box.replaceChildren(...[["customer", "45%"], ["assistant", "70%"], ["customer", "30%"], ["assistant", "60%"]].map(([role, w]) =>
+          h("div", { class: `msg ${role}`, style: `width:${w}` }, h("div", { class: "sk", style: "height:38px;width:100%;border-radius:16px;margin-top:10px" }))));
+      }
+      try {
+        const chat = await api(`/api/admin/chats/${encodeURIComponent(id)}`);
+        if (gen !== chatGen) return;
+        const live = state.liveIds.has(id);
+        renderChat(chat, live);
+        if (live && state.view === "convos") followTimer = setTimeout(() => openChat(id), FOLLOW_MS);
+      } catch (e) {
+        if (gen === chatGen) box.replaceChildren(failed(e.message, () => openChat(id)));
+      }
+    }
+    function closeChat() {
+      $("reader").classList.remove("open");
+      clearTimeout(followTimer);
+      chatGen++;
+    }
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("reader").classList.contains("open")) closeChat(); });
+
+    /* ---------- Controls ---------- */
+    let liveTimer = null;
+    function setLivePolling(on) {
+      clearInterval(liveTimer);
+      if (on) liveTimer = setInterval(() => { if (!document.hidden) loadLive(false); }, LIVE_MS);
+    }
+
+    function syncExport() {
+      const { from, to } = rangeDates();
+      $("export").href = from && to ? `/api/admin/stats/export.csv?${qs({ from, to })}` : "#";
+      $("export").hidden = state.view !== "overview";
+    }
+    function stamp() { $("updated").textContent = `Updated ${fmtTime.format(new Date())}`; }
+
+    async function refresh() {
+      const { from, to } = rangeDates();
+      if (!from || !to) return;
+      if (from > to) { showError("The start date must be on or before the end date."); return; }
+      showError(null);
+      state.generation++;
+      syncExport();
+      $("refresh").classList.add("spin");
+      try {
+        if (state.view === "overview") await loadOverview();
+        else { await loadConversations(); if (state.openChat && $("reader").classList.contains("open")) openChat(state.openChat); }
+        stamp();
+      } finally { $("refresh").classList.remove("spin"); }
+    }
+    function showError(message) {
+      $("error").hidden = !message;
+      $("error").textContent = message || "";
+    }
+
+    function buildRanges() {
+      $("ranges").replaceChildren(...RANGES.map((r) => h("button", {
+        class: "range", type: "button", "aria-pressed": String(r.id === state.range),
+        onclick: () => {
+          state.range = r.id;
+          $("ranges").querySelectorAll(".range").forEach((b, i) => b.setAttribute("aria-pressed", String(RANGES[i].id === r.id)));
+          $("custom").classList.toggle("open", r.id === "custom");
+          if (r.id === "custom") {
+            const t = karachiToday();
+            if (!$("custom-from").value) $("custom-from").value = shift(t, -13);
+            if (!$("custom-to").value) $("custom-to").value = t;
+          }
+          refresh();
+        },
+      }, r.label)));
+    }
+    for (const id of ["custom-from", "custom-to"]) $(id).addEventListener("change", refresh);
+    $("custom-from").max = $("custom-to").max = karachiToday();
+
+    function setView(view) {
+      state.view = view;
+      $("tab-overview").setAttribute("aria-selected", String(view === "overview"));
+      $("tab-convos").setAttribute("aria-selected", String(view === "convos"));
+      $("view-overview").hidden = view !== "overview";
+      $("view-convos").hidden = view !== "convos";
+      setLivePolling(view === "convos");
+      if (view !== "convos") clearTimeout(followTimer);
+      try { localStorage.setItem("db-dash-view", view); } catch { /* storage blocked */ }
+      refresh();
+    }
+    $("tab-overview").addEventListener("click", () => setView("overview"));
+    $("tab-convos").addEventListener("click", () => setView("convos"));
+    $("refresh").addEventListener("click", refresh);
+    $("search").addEventListener("input", () => { state.pastShown = 60; renderPast(); });
+    $("top-period").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      state.topPeriod = b.dataset.p;
+      $("top-period").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      loadTop();
+    });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && state.view === "convos") loadLive(false); });
+
+    $("today-label").textContent = fmtLong.format(new Date());
+    buildRanges();
+    let saved = "overview";
+    try { saved = localStorage.getItem("db-dash-view") === "convos" ? "convos" : "overview"; } catch { /* storage blocked */ }
+    setView(saved);
+  })();
+  </script>
+</body>
+</html>

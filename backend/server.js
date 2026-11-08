@@ -1314,7 +1314,7 @@ function menuRoute(read) {
   };
 }
 // Owner dashboard data, all behind the staff password.
-addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations });
+addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin") });
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));
