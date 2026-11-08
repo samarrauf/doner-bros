@@ -6,6 +6,8 @@
 const crypto = require("crypto");
 const { createOrderState, SESSION_IDLE_MS } = require("./order-session");
 
+const CLEARED_STATE = { cleared: true };
+
 // The row id is a hash of the cookie's session id, so a row on its own can't be used as a cookie.
 function sessionRowId(sessionId) {
   return crypto.createHash("sha256").update(String(sessionId)).digest("hex");
@@ -22,9 +24,14 @@ function createSupabaseSessionStore(client, { idleMs = SESSION_IDLE_MS } = {}) {
     return data.state;
   }
 
-  // A new chat. Expired chats are deleted here, with the customer details in them.
+  // A new chat. Expired chats have their state (cart and customer details) cleared here. The row
+  // stays for the dashboard, with its messages, until conversation-service purges it after 30 days.
   async function create(now = Date.now()) {
-    const { error } = await client.from("chat_sessions").delete().lt("last_seen", new Date(now - idleMs).toISOString());
+    const { error } = await client
+      .from("chat_sessions")
+      .update({ state: CLEARED_STATE })
+      .lt("last_seen", new Date(now - idleMs).toISOString())
+      .is("state->cleared", null);
     if (error) throw error;
     return { id: crypto.randomUUID(), state: createOrderState() };
   }

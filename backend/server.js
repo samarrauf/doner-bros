@@ -23,7 +23,10 @@ const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
 const { addStaffRoutes } = require("./staff");
-const { createSupabaseSessionStore } = require("./supabase-sessions");
+const { createSupabaseSessionStore, sessionRowId } = require("./supabase-sessions");
+const { addAdminStatsRoutes } = require("./admin-stats");
+const { createAnalyticsService } = require("./services/analytics-service");
+const { createConversationService } = require("./services/conversation-service");
 const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = require("./rate-limit");
 const { addMenuImageRoutes } = require("./menu-images");
 const {
@@ -48,7 +51,7 @@ const {
   readSessionId,
   sessionCookie,
 } = require("./order-session");
-const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu } = require("./menu-tool");
+const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu, setSearchMissLogger } = require("./menu-tool");
 const { findUnbackedPrices } = require("./price-guard");
 const { suggestItems } = require("./recommendations");
 const menuService = require("./services/menu-service");
@@ -295,6 +298,19 @@ if (!supabase) {
 }
 const orderStore = supabase ? createSupabaseOrderStore(supabase) : null;
 menuService.setClient(supabase);
+const analytics = supabase ? createAnalyticsService({ client: supabase }) : null;
+const conversations = supabase ? createConversationService({ client: supabase }) : null;
+if (conversations) setSearchMissLogger(conversations.logSearchMiss);
+
+// Dashboard records are best effort: a failure is logged and never stops the customer's chat.
+async function recordForDashboard(label, write) {
+  if (!conversations) return;
+  try {
+    await write(conversations);
+  } catch (error) {
+    console.error(`Dashboard ${label} failed:`, error.code || error.message);
+  }
+}
 
 // The save function for one checkout: its submission key ties the row to this chat and to how
 // many orders the chat has already saved, so the database refuses a second copy of the same order.
@@ -1252,6 +1268,7 @@ async function loadOrderSession(req, res) {
   if (existing) return { id, state: upgradeOrderState(existing) };
 
   const created = await sessionStore.create();
+  recordForDashboard("purge", (c) => c.purgeOld()); // not awaited: old rows can go in the background
   res.setHeader("Set-Cookie", sessionCookie(created.id, req.secure));
   return created;
 }
@@ -1296,6 +1313,9 @@ function menuRoute(read) {
     }
   };
 }
+// Owner dashboard data, all behind the staff password.
+addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations });
+
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));
 
@@ -1355,6 +1375,15 @@ app.post("/api/chat", async (req, res) => {
     const sessionSaved = await saveOrderSession(session);
     if (!sessionSaved && (orderState.savedOrderCount || 0) === ordersSavedBefore) {
       return res.status(503).json({ error: await chatUnavailable() });
+    }
+    if (sessionSaved) {
+      const rowId = sessionRowId(session.id);
+      await recordForDashboard("message log", (c) =>
+        c.logMessages(rowId, [{ role: "customer", content: message.trim() }, { role: "assistant", content: reply || "" }])
+      );
+      if ((orderState.savedOrderCount || 0) > ordersSavedBefore) {
+        await recordForDashboard("order link", (c) => c.markOrdered(rowId, orderState.orderNumber));
+      }
     }
     const click = sessionSaved ? await clickFields() : {};
     if (!reply) {

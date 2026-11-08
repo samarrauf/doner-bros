@@ -13,12 +13,14 @@ function fakeSupabase(rows = new Map(), { failWith } = {}) {
     rows,
     from: () => ({
       select: () => ({ eq: (column, id) => ({ maybeSingle: async () => (failWith ? fail() : { data: rows.get(id) || null, error: null }) }) }),
-      delete: () => ({
-        lt: async (column, iso) => {
-          if (failWith) return fail();
-          for (const [id, row] of rows) if (row.last_seen < iso) rows.delete(id);
-          return { error: null };
-        },
+      update: (values) => ({
+        lt: (column, iso) => ({
+          is: async () => {
+            if (failWith) return fail();
+            for (const row of rows.values()) if (row.last_seen < iso && !row.state.cleared) Object.assign(row, values);
+            return { error: null };
+          },
+        }),
       }),
       upsert: async (row) => {
         if (failWith) return fail();
@@ -62,16 +64,18 @@ test("an unknown, missing or idle chat isn't loaded", async () => {
   assert.notEqual(await store.load(id, 2 * HOUR), null);
 });
 
-test("starting a new chat deletes chats idle for over 2 hours, with their customer details", async () => {
+test("starting a new chat clears the customer details of chats idle for over 2 hours", async () => {
   const client = fakeSupabase();
   const store = createSupabaseSessionStore(client);
   const old = await store.create(0);
+  old.state.customer.name = "Test Customer";
   await store.save(old.id, old.state, 0);
   const recent = await store.create(2 * HOUR);
   await store.save(recent.id, recent.state, 2 * HOUR);
 
   await store.create(2 * HOUR + 1000);
-  assert.deepEqual([...client.rows.keys()], [sessionRowId(recent.id)]);
+  assert.deepEqual(client.rows.get(sessionRowId(old.id)).state, { cleared: true });
+  assert.deepEqual(client.rows.get(sessionRowId(recent.id)).state, recent.state);
 });
 
 test("database errors are thrown, not hidden", async () => {

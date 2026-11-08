@@ -75,9 +75,24 @@ async function listItems(categorySlug) {
   return { found: true, category: category.name, items: category.items.map(toToolItem) };
 }
 
+// Told about every search_items call that found nothing, for the dashboard's "asked for but not on
+// the menu" list. Never awaited and never allowed to fail the search.
+let searchMissLogger = null;
+function setSearchMissLogger(logger) {
+  searchMissLogger = logger;
+}
+
+function reportSearchMiss(text) {
+  if (!searchMissLogger || typeof text !== "string" || !text.trim()) return;
+  Promise.resolve()
+    .then(() => searchMissLogger(text))
+    .catch((error) => console.error("Search miss log failed:", error.code || error.message));
+}
+
 async function searchItems(text) {
   const items = await menuService.findItems(text);
   if (items.length > 0) return { found: true, items: items.map(toToolItem) };
+  reportSearchMiss(text);
 
   const words = typeof text === "string" ? text.split(/\s+/).filter(Boolean) : [];
   const matches = new Map();
@@ -146,4 +161,4 @@ async function getOrderableMenu() {
   };
 }
 
-module.exports = { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu };
+module.exports = { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu, setSearchMissLogger };
