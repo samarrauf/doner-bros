@@ -1121,11 +1121,24 @@ async function submitCheckedOrder(call, contents, orderState, turn) {
   }
 }
 
+// For the submit_order log line: item ids, quantities and the server's total only. Ids are cut to
+// id characters because a cart line's id comes from the model; nothing personal is ever included.
+function orderLogDetails(result, cartItems) {
+  const lines = result.order
+    ? result.order.lines.map((line) => [line.itemId, line.quantity])
+    : cartItems.map((line) => [line.item_id, line.quantity]);
+  const items = lines.map(([id, qty]) => `${String(id).replace(/[^\w-]/g, "").slice(0, 64)}x${Number.isInteger(qty) ? qty : "?"}`);
+  const total = result.order && Number.isInteger(result.order.totalPaisa) ? result.order.totalPaisa : "-";
+  return `items=[${items.join(",")}] total_paisa=${total}`;
+}
+
 // fromServer marks the server's own fixed order messages, which the price guard doesn't check.
 async function handleOrderCall(call, contents, response, orderState, turn) {
-  console.log(`Gemini called ${call.name}.`);
+  const cartItems = [...(orderState.items || [])];
   const duplicate = duplicateSubmission(orderState);
   const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState, turn);
+  // The rejection reason can quote customer input, so it stays in the chat state (state.problem), not the log.
+  console.log(`Gemini called ${call.name}: ${result.status} ${orderLogDetails(result, cartItems)}`);
   // A refused duplicate leaves the saved order's state exactly as it was.
   if (result.status !== "duplicate") recordOrderAttempt(orderState, result);
 
@@ -1138,8 +1151,6 @@ async function handleOrderCall(call, contents, response, orderState, turn) {
     console.error(`Order not saved (${result.reason}).`);
     return { text: result.reply, fromServer: true };
   }
-  // The reason can quote customer input, so it stays in the chat state (state.problem), not the log.
-  console.warn(`submit_order ${result.status === "duplicate" ? "refused as a duplicate" : "rejected"}.`);
 
   contents.push(response.candidates[0].content, {
     role: "user",
