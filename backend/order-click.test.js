@@ -1,11 +1,11 @@
-// Tests Order clicks through the real /api/chat route, with Gemini and Supabase replaced. Run with: npm test
+// Tests Order clicks through the real /api/chat route, with Claude and Supabase replaced. Run with: npm test
 // Fixtures are made-up placeholders, not the real menu. Supabase stays the only source of menu data.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
 // Set before server.js loads. dotenv leaves these alone, so .env's real services are never used.
 process.env.VERCEL = "1";
-process.env.GEMINI_API_KEY = "test";
+process.env.ANTHROPIC_API_KEY = "test";
 process.env.SUPABASE_URL = "";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "";
 
@@ -13,23 +13,21 @@ let script = [];
 let requests = [];
 let testCount = 0;
 let clientIp = "10.1.0.0";
-const genaiPath = require.resolve("@google/genai");
-require.cache[genaiPath] = {
-  id: genaiPath,
-  filename: genaiPath,
-  loaded: true,
-  exports: {
-    GoogleGenAI: class {
-      models = {
-        generateContent: async (request) => {
-          requests.push(request);
-          const next = script.shift();
-          if (!next) throw new Error("the model was called more times than scripted");
-          if (next instanceof Error) throw next;
-          return typeof next === "function" ? next(request) : next;
-        },
-      };
-    },
+// Only the client is replaced; the SDK's real error classes stay.
+const sdk = require("@anthropic-ai/sdk");
+const sdkPath = require.resolve("@anthropic-ai/sdk");
+require.cache[sdkPath].exports = {
+  ...sdk,
+  Anthropic: class {
+    messages = {
+      create: async (request) => {
+        requests.push(request);
+        const next = script.shift();
+        if (!next) throw new Error("the model was called more times than scripted");
+        if (next instanceof Error) throw next;
+        return typeof next === "function" ? next(request) : next;
+      },
+    };
   },
 };
 
@@ -37,13 +35,22 @@ const { createOrderState, isClickApplied, recordClick, addToCart, upgradeOrderSt
 const { useFakeMenu, PRICE, rs } = require("./fake-menu");
 const app = require("./server");
 
+// Replies in the Messages API's shape. Each starts with an (omitted) thinking block, as Haiku's do.
+const THINKING = { type: "thinking", thinking: "", signature: "test" };
+const USAGE = { input_tokens: 1, output_tokens: 1 };
+
 function say(text) {
-  return { text, functionCalls: [], candidates: [{ content: { role: "model", parts: [{ text }] } }] };
+  return { type: "message", role: "assistant", content: [THINKING, { type: "text", text }], stop_reason: "end_turn", usage: USAGE };
 }
 
 function call(name, args = {}) {
-  const functionCall = { id: name, name, args };
-  return { text: "", functionCalls: [functionCall], candidates: [{ content: { role: "model", parts: [{ functionCall }] } }] };
+  return { type: "message", role: "assistant", content: [THINKING, { type: "tool_use", id: `toolu_${name}`, name, input: args }], stop_reason: "tool_use", usage: USAGE };
+}
+
+// The result the model was sent for its last tool call.
+function lastToolResult(request) {
+  const block = request.messages.at(-1).content.find((b) => b.type === "tool_result");
+  return JSON.parse(block.content);
 }
 
 async function ask(cookie, body) {
@@ -145,13 +152,13 @@ test("the cart holds a deal and a single item, and shows the deal's contents", a
 
 test("the model is given a deal's labels, and can't change its price", async () => {
   script = [(request) => {
-    assert.match(request.config.systemInstruction, /"dealContains":\["1 Test Main","1 Test Side","1 Test Extra"\]/);
+    assert.match(request.system, /"dealContains":\["1 Test Main","1 Test Side","1 Test Extra"\]/);
     return say("Added.");
   }];
   await ask(null, click("d-combo", "click-1"));
 
   script = [call("list_deals"), (request) => {
-    const { deals } = request.contents.at(-1).parts[0].functionResponse.response;
+    const { deals } = lastToolResult(request);
     assert.deepEqual(deals, [{ id: "d-combo", name: "Test Combo", pricePaisa: PRICE.combo, priceDisplay: rs(PRICE.combo), contains: ["1 Test Main", "1 Test Side", "1 Test Extra"] }]);
     return say(`Test Combo without the drink is ${rs(PRICE.invented)}.`);
   }, say("Deals are fixed, sorry.")];
@@ -162,8 +169,8 @@ test("the model is given a deal's labels, and can't change its price", async () 
 test("an empty promotions list doesn't read as there being no deals", async () => {
   script = [say("Hello!")];
   await ask(null, { message: "hi" });
-  assert.match(requests[0].config.systemInstruction, /Deals are separate: see list_deals/);
-  assert.match(requests[0].config.systemInstruction, /Deals are fixed/);
+  assert.match(requests[0].system, /Deals are separate: see list_deals/);
+  assert.match(requests[0].system, /Deals are fixed/);
 });
 
 test("a badly shaped click id is refused", async () => {

@@ -1,4 +1,4 @@
-// Doner Bros — the menu tools Gemini can call. Every lookup goes through the menu service, which
+// Doner Bros — the menu tools the chat model can call. Every lookup goes through the menu service, which
 // reads Supabase. No tool takes a price as input; prices only ever come out of the service.
 
 const menuService = require("./services/menu-service");
@@ -16,7 +16,7 @@ const MENU_TOOLS = [
   {
     name: "list_items",
     description: "List the items in one category, with item ids, names and prices. Use this rather than asking for the whole menu.",
-    parametersJsonSchema: {
+    input_schema: {
       type: "object",
       properties: { category_slug: { type: "string", description: "The slug of one category from <categories>." } },
       required: ["category_slug"],
@@ -27,7 +27,7 @@ const MENU_TOOLS = [
     description:
       "Search all menu items by name, with item ids, names and prices. If no item matches every word, closeMatches lists " +
       "real items matching some of the words, which are the alternatives to offer.",
-    parametersJsonSchema: {
+    input_schema: {
       type: "object",
       properties: { text: { type: "string", description: "The words to look for, such as what the customer asked for." } },
       required: ["text"],
@@ -36,7 +36,7 @@ const MENU_TOOLS = [
   {
     name: "get_item",
     description: "Get one menu item by its item id, including whether it is available right now.",
-    parametersJsonSchema: {
+    input_schema: {
       type: "object",
       properties: { item_id: { type: "string", description: "An item id from an earlier menu tool result." } },
       required: ["item_id"],

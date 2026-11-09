@@ -1,12 +1,12 @@
 // Doner Bros — Express server: loads .env, serves the static frontend, and answers
-// AI Order Taker chat messages through Google Gemini.
+// AI Order Taker chat messages through Claude.
 
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 const express = require("express");
-const { GoogleGenAI } = require("@google/genai");
+const { Anthropic, APIError, RateLimitError, AuthenticationError, BadRequestError } = require("@anthropic-ai/sdk");
 const { createClient } = require("@supabase/supabase-js");
 const {
   todayInRestaurant,
@@ -74,11 +74,14 @@ const MAX_HISTORY_ENTRIES = 20;
 // Room for a full order confirmation: 20 deal lines, each with its contents listed.
 const MAX_HISTORY_ENTRY_LENGTH = 4000;
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-const GEMINI_TIMEOUT_MS = 20000;
+// The only place the chat model is named. Change it with CHAT_MODEL, no code change needed.
+const CHAT_MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
+const MODEL_TIMEOUT_MS = 20000;
+// Room for the model's thinking plus a full order summary.
+const MODEL_MAX_TOKENS = 4096;
 const SUPABASE_TIMEOUT_MS = 10000;
 
-// Per-visitor limit so the paid Gemini API can't be spammed.
+// Per-visitor limit so the paid model API can't be spammed.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 
@@ -211,7 +214,18 @@ async function formatOpenOrderState(state, opening) {
     if (error.code !== "MENU_UNAVAILABLE") throw error;
     cart = "The cart can't be shown because the menu can't be checked right now.";
   }
-  return `${opening}\n${cart}\n${formatCheckoutDetails(state)}`;
+  return `${opening}\n${cart}\n${formatCheckoutDetails(state)}${formatShownSummary(state)}`;
+}
+
+// Earlier turns reach the model as text only, so it can't see that its last summary came from
+// reviewOrder. The server checked that itself (recordShownSummary), so it says so here.
+// submit_order still re-checks everything, including the customer's yes.
+function formatShownSummary(state) {
+  if (!state.shownFingerprint || state.shownFingerprint !== state.reviewedFingerprint) return "";
+  return (
+    "\nYour last message showed the customer the reviewOrder summary of this order, as the server checked. " +
+    "If their latest message is a plain yes, call submit_order now; don't call reviewOrder again."
+  );
 }
 
 async function formatOrderState(state) {
@@ -276,11 +290,38 @@ async function reachUs() {
   return whatsapp ? `message us on WhatsApp on ${whatsapp}` : "try again in a few minutes";
 }
 
-/* ---------- Gemini client ---------- */
+/* ---------- Claude client ---------- */
 
-const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-if (!gemini) {
-  console.warn("GEMINI_API_KEY is not set; /api/chat will return 503 until it is added to .env.");
+// One SDK retry covers a brief 429 or overload (it waits as the API asks); after that the
+// customer gets the fallback message rather than a long wait.
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: MODEL_TIMEOUT_MS, maxRetries: 1 })
+  : null;
+if (!anthropic) {
+  console.warn("ANTHROPIC_API_KEY is not set; /api/chat will return 503 until it is added to .env.");
+}
+
+// Which kind of model failure this is, so each gets its own log line.
+function classifyModelError(error) {
+  if (error instanceof RateLimitError) return "rate_limit";
+  if (!(error instanceof APIError)) return "other";
+  if (error.status === 529 || error.type === "overloaded_error") return "overloaded";
+  if (error.status === 402 || error.type === "billing_error") return "no_credit";
+  // The API has also reported an empty balance as a 400 whose message says so.
+  if (error instanceof BadRequestError && /credit balance/i.test(String(error.message))) return "no_credit";
+  if (error instanceof AuthenticationError) return "auth";
+  return "other";
+}
+
+// Status, error type and request id only: never the request, which could hold customer details.
+function logModelError(failure, error) {
+  const detail = `status=${error.status || "-"} type=${error.type || error.name} request_id=${error.requestID || "-"}`;
+  if (failure === "rate_limit") console.error(`Claude rate limit hit (429) after retry; customer sent to WhatsApp. ${detail}`);
+  else if (failure === "overloaded") console.error(`Claude overloaded (529) after retry; customer sent to WhatsApp. ${detail}`);
+  else if (failure === "no_credit") {
+    console.error(`CLAUDE CREDIT EXHAUSTED: the Anthropic account is out of credit, so the chat is DOWN for every customer until it is topped up in the Claude Console (Billing). ${detail}`);
+  } else if (failure === "auth") console.error(`Claude rejected ANTHROPIC_API_KEY (401); check the key. ${detail}`);
+  else console.error(`Claude request failed. ${detail} message=${String(error.message).slice(0, 200)}`);
 }
 
 /* ---------- Supabase (orders) ---------- */
@@ -325,24 +366,42 @@ function saveOrderFor(orderState) {
   };
 }
 
-// conversationHistory uses { role: "user" | "assistant", content } entries; Gemini calls the
-// assistant role "model".
-function toGeminiContents(history, message) {
-  const contents = history.slice(-MAX_HISTORY_ENTRIES).map((entry) => ({
-    role: entry.role === "assistant" ? "model" : "user",
-    parts: [{ text: entry.content }],
+// conversationHistory uses { role: "user" | "assistant", content } entries, the same roles Claude
+// uses. Each message's content is kept as a list of blocks so tool turns and text turns look alike.
+function toClaudeMessages(history, message) {
+  const messages = history.slice(-MAX_HISTORY_ENTRIES).map((entry) => ({
+    role: entry.role === "assistant" ? "assistant" : "user",
+    content: [{ type: "text", text: entry.content }],
   }));
 
-  // Gemini expects the conversation to start with the customer, so drop leading bot greetings.
-  while (contents.length && contents[0].role === "model") {
-    contents.shift();
+  // Claude expects the conversation to start with the customer, so drop leading bot greetings.
+  while (messages.length && messages[0].role === "assistant") {
+    messages.shift();
   }
 
-  contents.push({ role: "user", parts: [{ text: message }] });
-  return contents;
+  messages.push({ role: "user", content: [{ type: "text", text: message }] });
+  return messages;
 }
 
-const OVERLOAD_RETRY_DELAY_MS = 1500;
+// The customer's own words in a message: its text blocks. Tool results carry none.
+function messageText(message) {
+  if (typeof message.content === "string") return message.content;
+  return (message.content || []).filter((block) => block.type === "text").map((block) => block.text).join("\n");
+}
+
+// The model's reply text, with thinking and tool calls left out.
+function replyText(response) {
+  return response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+}
+
+// Tool calls in the shape the tool code takes: { id, name, args }.
+function toolCalls(response) {
+  return response.content.filter((block) => block.type === "tool_use").map((block) => ({ id: block.id, name: block.name, args: block.input }));
+}
+
+function toolResult(call, result, isError = false) {
+  return { type: "tool_result", tool_use_id: call.id, content: JSON.stringify(result), ...(isError ? { is_error: true } : {}) };
+}
 
 // The model fills these in from the conversation; orders.js re-checks every field.
 const SUBMIT_ORDER_TOOL = {
@@ -350,7 +409,7 @@ const SUBMIT_ORDER_TOOL = {
   description:
     "Save the customer's order. Call only after showing the reviewOrder summary and getting a clear yes. The items, " +
     "promotion and customer details saved are the reviewed cart's, not anything passed here.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerConfirmed: { type: "boolean", description: "True only if the customer clearly said yes to the read-back." },
@@ -370,7 +429,7 @@ const SUBMIT_ORDER_TOOL = {
 const ADD_ITEM_TO_CART_TOOL = {
   name: "addItemToCart",
   description: "Add one menu item or deal to this customer's cart, by its id. The server looks up its name and price.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       itemId: { type: "string", description: "The id of the item or deal from a menu tool result." },
@@ -424,7 +483,7 @@ const MODIFY_ITEM_TOOL = {
   description:
     "Change the quantity of one item already in this customer's cart. Use the line number shown in <current_order>. " +
     "If the result has an error, nothing was changed: ask the customer to clarify.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       lineNumber: { type: "integer", description: "The cart line to change, numbered as in <current_order>." },
@@ -462,7 +521,7 @@ const REMOVE_ITEM_TOOL = {
     "Remove an item from this customer's cart, or reduce how many of it there are. Name the item by its line number in " +
     "<current_order>, or by its menu id. Leave out quantity to remove the whole line. If the result has an error or " +
     "lists ambiguous lines, nothing was removed: ask the customer which item and how many.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       lineNumber: { type: "integer", description: "The cart line, numbered as in <current_order>." },
@@ -568,7 +627,7 @@ const APPLY_PROMOTION_TOOL = {
     "gave it; never guess, complete or suggest a code. Pass promotionId for an offer from <promotions> that needs no code. " +
     "With neither, lists the running offers this cart already qualifies for. If the result has an error, nothing was " +
     "applied: tell the customer, and don't try other codes or ids.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>." },
@@ -584,10 +643,7 @@ function customerGaveCode(contents, code) {
   if (!wanted) return false;
   const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const asWord = new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`);
-  return contents
-    .filter((turn) => turn.role === "user")
-    .flatMap((turn) => turn.parts || [])
-    .some((part) => typeof part.text === "string" && asWord.test(part.text.toLowerCase()));
+  return contents.filter((turn) => turn.role === "user").some((turn) => asWord.test(messageText(turn).toLowerCase()));
 }
 
 // The cart as priced right now, in the shape the promotion checks take. May hold { error }.
@@ -672,7 +728,7 @@ const SET_PICKUP_DETAILS_TOOL = {
     "Record that this order is for pickup, with the details the customer has given. Include only fields the customer " +
     "actually said; leave out anything already shown in <current_order>. pickupTime is optional: include it only if the " +
     "customer asked for a specific time. The result lists what is still missing: ask only for that.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerName: { type: "string" },
@@ -723,7 +779,7 @@ const SET_DELIVERY_DETAILS_TOOL = {
     "Record that this order is for delivery, with the details the customer has given. Include only what the customer " +
     "actually said, in their words; never guess, complete or tidy up an address, and leave out anything already shown in " +
     "<current_order>. The result lists what is still missing: ask only for that.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerName: { type: "string" },
@@ -922,7 +978,7 @@ async function runCartTool(call, orderState, contents, turn) {
 // Tools that only read or update this chat's data; the model sees the result and carries on.
 async function runDataTool(call, orderState, contents, turn) {
   // Tool name only: arguments can hold the customer's name, phone or address.
-  console.log(`Gemini called ${call.name}.`);
+  console.log(`Model called ${call.name}.`);
   if (MENU_TOOL_NAMES.includes(call.name)) return runMenuTool(call.name, call.args);
   try {
     return await runCartTool(call, orderState, contents, turn);
@@ -988,30 +1044,25 @@ const DATA_TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name).filter((name) => name
 // Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
 const MAX_TOOL_ROUNDS = 3;
 
-async function generateReply(contents, { tools, orderState, turn, correction }) {
-  const systemInstruction = await currentSystemPrompt(orderState, turn, correction);
-  return gemini.models.generateContent({
-    model: GEMINI_MODEL,
-    contents,
-    config: {
-      systemInstruction,
-      temperature: 0.4,
-      maxOutputTokens: 1024,
-      abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
-      ...(tools ? { tools: [{ functionDeclarations: tools }] } : {}),
-    },
-  });
+// A tool with no arguments still needs an (empty) input schema.
+function toClaudeTool(tool) {
+  return { name: tool.name, description: tool.description, input_schema: tool.input_schema || { type: "object", properties: {} } };
 }
 
-async function generateWithRetry(contents, options) {
-  try {
-    return await generateReply(contents, options);
-  } catch (error) {
-    // 503 = Gemini briefly overloaded; one retry usually gets through. Other errors aren't retried.
-    if (error.status !== 503) throw error;
-    await new Promise((resolve) => setTimeout(resolve, OVERLOAD_RETRY_DELAY_MS));
-    return generateReply(contents, options);
-  }
+// The system prompt is a top-level parameter, not a message. Once the history holds tool calls the
+// tools stay declared, so allowTools: false switches them off with tool_choice "none" instead.
+// Retries for 429 and overload are done by the SDK (maxRetries on the client).
+async function generateWithRetry(contents, { system, tools, allowTools = true }) {
+  return anthropic.messages.create({
+    model: CHAT_MODEL,
+    max_tokens: MODEL_MAX_TOKENS,
+    system,
+    messages: contents,
+    // A chat reply needs little thinking; low effort keeps it fast and cheap.
+    output_config: { effort: "low" },
+    tools: tools.map(toClaudeTool),
+    ...(allowTools ? {} : { tool_choice: { type: "none" } }),
+  });
 }
 
 // Saved and failed orders get a fixed reply from the server, so the customer is told exactly
@@ -1064,8 +1115,8 @@ async function withReviewedCart(args, orderState) {
 function latestCustomerMessage(contents) {
   for (let i = contents.length - 1; i >= 0; i--) {
     if (contents[i].role !== "user") continue;
-    const part = (contents[i].parts || []).find((p) => typeof p.text === "string");
-    if (part) return part.text;
+    const text = messageText(contents[i]);
+    if (text) return text;
   }
   return "";
 }
@@ -1134,12 +1185,12 @@ function orderLogDetails(result, cartItems) {
 }
 
 // fromServer marks the server's own fixed order messages, which the price guard doesn't check.
-async function handleOrderCall(call, contents, response, orderState, turn) {
+async function handleOrderCall(call, contents, response, orderState, turn, { system, tools }) {
   const cartItems = [...(orderState.items || [])];
   const duplicate = duplicateSubmission(orderState);
   const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState, turn);
   // The rejection reason can quote customer input, so it stays in the chat state (state.problem), not the log.
-  console.log(`Gemini called ${call.name}: ${result.status} ${orderLogDetails(result, cartItems)}`);
+  console.log(`Model called ${call.name}: ${result.status} ${orderLogDetails(result, cartItems)}`);
   // A refused duplicate leaves the saved order's state exactly as it was.
   if (result.status !== "duplicate") recordOrderAttempt(orderState, result);
 
@@ -1153,39 +1204,69 @@ async function handleOrderCall(call, contents, response, orderState, turn) {
     return { text: result.reply, fromServer: true };
   }
 
-  contents.push(response.candidates[0].content, {
-    role: "user",
-    parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error, instruction: NOT_ORDERABLE_INSTRUCTION } } }],
-  });
-  const followUp = await generateWithRetry(contents, { tools: null, orderState, turn });
-  return { text: (followUp.text || "").trim(), fromServer: false };
+  // Claude needs an answer to every tool call in its message. Calls made beside submit_order are
+  // not run, as before; they are only answered as skipped.
+  const results = toolCalls(response).map((other) =>
+    other.id === call.id
+      ? toolResult(call, { error: result.error, instruction: NOT_ORDERABLE_INSTRUCTION })
+      : toolResult(other, { error: "not run: submit_order was called in the same reply." }, true)
+  );
+  contents.push({ role: "assistant", content: response.content }, { role: "user", content: results });
+  const followUp = await generateWithRetry(contents, { system, tools, allowTools: false });
+  return { text: replyText(followUp), fromServer: false };
 }
 
-// Gemini may call menu or cart tools, get the results back as functionResponses, then answer or
+// Claude may call menu or cart tools, get the results back as tool_result blocks, then answer or
 // submit an order. Every result is kept in turn.toolResults for the price guard.
+// The system prompt is built once per run: Claude only accepts its thinking blocks back while the
+// system prompt and tools are unchanged, so a cart change mid-run reaches the model through the
+// tool results instead of a rebuilt <current_order>.
 async function runModel(contents, orderState, turn, { tools, correction }) {
-  let response = await generateWithRetry(contents, { tools, orderState, turn, correction });
+  const system = await currentSystemPrompt(orderState, turn, correction);
+  let response = await generateWithRetry(contents, { system, tools });
 
   for (let rounds = 1; ; rounds++) {
-    const calls = response.functionCalls || [];
+    const calls = toolCalls(response);
     const orderCall = calls.find((call) => call.name === SUBMIT_ORDER_TOOL.name);
-    if (orderCall) return handleOrderCall(orderCall, contents, response, orderState, turn);
+    if (orderCall) return handleOrderCall(orderCall, contents, response, orderState, turn, { system, tools });
 
     const dataCalls = calls.filter((call) => DATA_TOOL_NAMES.includes(call.name));
-    if (dataCalls.length === 0) return { text: (response.text || "").trim(), fromServer: false };
+    if (dataCalls.length === 0) return { text: replyText(response), fromServer: false };
 
-    const parts = [];
-    for (const call of dataCalls) {
+    // Every call gets a result block; one for a tool that isn't offered is answered as an error.
+    const results = [];
+    for (const call of calls) {
+      if (!dataCalls.includes(call)) {
+        results.push(toolResult(call, { error: `unknown tool ${call.name}` }, true));
+        continue;
+      }
       const result = await runDataTool(call, orderState, contents, turn);
       turn.toolResults.push(result);
-      parts.push({ functionResponse: { id: call.id, name: call.name, response: result } });
+      results.push(toolResult(call, result));
     }
-    contents.push(response.candidates[0].content, { role: "user", parts });
+    // The whole reply goes back unchanged, thinking blocks included.
+    contents.push({ role: "assistant", content: response.content }, { role: "user", content: results });
     // Past the cap, tools are switched off so the model has to reply in text.
-    const nextTools = rounds < MAX_TOOL_ROUNDS ? tools : null;
-    response = await generateWithRetry(contents, { tools: nextTools, orderState, turn, correction });
+    response = await generateWithRetry(contents, { system, tools, allowTools: rounds < MAX_TOOL_ROUNDS });
   }
 }
+
+// The regenerated reply runs with a new system prompt and only the lookup tools, so the first run's
+// thinking blocks would be refused. They are dropped; its tool calls and results stay.
+function dropThinking(contents) {
+  for (const message of contents) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    message.content = message.content.filter((block) => block.type !== "thinking" && block.type !== "redacted_thinking");
+  }
+}
+
+// Earlier turns reach the model as text, without their tool calls, so it can't see where their
+// prices came from. They all passed the price guard, which is what this says. The rule for this
+// turn's prices is unchanged.
+const EARLIER_REPLIES_NOTE =
+  "Your earlier replies in this chat were checked by the server before they were sent: every price in them came " +
+  "from a tool result at the time. Don't correct, doubt or apologise for them. Any price you state in this reply " +
+  "must still come from a tool result in this turn.";
 
 const PRICE_CORRECTION =
   "Your last draft stated a price that did not come from a tool result in this turn, so it was not sent. Call a menu " +
@@ -1200,11 +1281,17 @@ function unbackedPrices(reply, turn, stage) {
 }
 
 // No reply reaches the customer with a rupee amount that this turn's tool results don't contain.
-async function askGemini(history, message, orderState, turn, buttonNote) {
-  const contents = toGeminiContents(history, message);
+async function askModel(history, message, orderState, turn, buttonNote) {
+  const contents = toClaudeMessages(history, message);
+  // Server facts about the earlier turns, as a system message right after the customer's reply,
+  // where the model weighs them most. Only ever appended, so nothing before it changes.
+  const notes = [history.some((entry) => entry.role === "assistant") ? EARLIER_REPLIES_NOTE : "", formatShownSummary(orderState).trim()];
+  const note = notes.filter(Boolean).join("\n");
+  if (note) contents.push({ role: "system", content: note });
   const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS, correction: buttonNote });
   if (first.fromServer || unbackedPrices(first, turn, "regenerating").length === 0) return first.text;
 
+  dropThinking(contents);
   const second = await runModel(contents, orderState, turn, { tools: LOOKUP_TOOLS, correction: [buttonNote, PRICE_CORRECTION].filter(Boolean).join("\n\n") });
   if (unbackedPrices(second, turn, "sending fallback").length === 0) return second.text;
 
@@ -1349,7 +1436,7 @@ app.post("/api/chat", async (req, res) => {
     return res.status(400).json({ error: validationError });
   }
 
-  if (!gemini) {
+  if (!anthropic) {
     return res.status(503).json({ error: "AI Order Taker isn't configured yet. Please call us to order." });
   }
 
@@ -1380,7 +1467,7 @@ app.post("/api/chat", async (req, res) => {
       });
     }
     const buttonNote = orderItem ? await addFromOrderButton(orderItem, orderState, turn) : null;
-    const reply = await askGemini(conversationHistory, message.trim(), orderState, turn, buttonNote);
+    const reply = await askModel(conversationHistory, message.trim(), orderState, turn, buttonNote);
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
@@ -1409,15 +1496,11 @@ app.post("/api/chat", async (req, res) => {
     }
     res.json({ reply, ...click });
   } catch (error) {
-    // Log only the status and message: never the request, which could hold customer details.
-    console.error("Gemini request failed:", error.status || error.name, String(error.message).slice(0, 200));
+    // One line naming what went wrong. Never the request, which could hold customer details.
+    const failure = classifyModelError(error);
+    logModelError(failure, error);
     // Tools may have changed the cart before the failure; keep those changes.
     const sessionSaved = await saveOrderSession(session);
-
-    if (error.status === 429) {
-      const quotaId = (String(error.message).match(/"quotaId":\s*"([^"]+)"/) || [])[1] || "unknown";
-      console.error(`Gemini quota exhausted (${quotaId}). Check usage and billing in Google AI Studio.`);
-    }
 
     // The item went in and the only thing missing is the model's words, so say so plainly. A customer
     // left with no reply is what leads to a second click on Order.
@@ -1428,15 +1511,12 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
-    if (error.status === 429) {
+    // Rate limit, overload and no credit all mean the bot can't answer for a while: send the
+    // customer to WhatsApp. The log line above says which one it was.
+    if (failure === "rate_limit" || failure === "overloaded" || failure === "no_credit") {
       return res.status(503).json({
-        error: `AI Order Taker has reached its message limit for now. To order, please ${await reachUs()}.`,
+        error: `AI Order Taker can't take orders right now. To order, please ${await reachUs()}.`,
       });
-    }
-    // 503 = Gemini still overloaded after one retry: clears up on its own.
-    if (error.status === 503) {
-      return res.status(503).json({ error: "AI Order Taker is busy right now. Please try again in a minute." });
     }
     res.status(502).json({
       error: `AI Order Taker is having trouble right now. Please try again, or ${await reachUs()}.`,
@@ -1459,7 +1539,7 @@ app.use((error, req, res, next) => {
 // Vercel runs the exported app itself (see /server.js at the project root); locally it listens on PORT.
 if (!process.env.VERCEL) {
   const server = app.listen(PORT, () => {
-    console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${GEMINI_MODEL})`);
+    console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${CHAT_MODEL})`);
   });
 
   server.on("error", (error) => {
