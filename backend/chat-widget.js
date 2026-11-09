@@ -6,6 +6,9 @@ const { formatPrice } = require("./services/menu-service");
 // The one place the "Under Rs ..." chip's limit is set, in paisa.
 const UNDER_PRICE_LIMIT_PAISA = 50000;
 
+// The menu_settings key listing which categories get a chip (see supabase/migrations/0006).
+const QUICK_CATEGORIES_SETTING = "chat_quick_categories";
+
 // Emoji only: picked by words in a category's own name, with a plain plate when nothing matches.
 const CATEGORY_EMOJI = [
   [/pasta/i, "🍝"],
@@ -25,31 +28,34 @@ function categoryEmoji(name) {
   return match ? match[1] : "🍽️";
 }
 
-// Items flagged as featured or popular, if the menu has such a flag. It has none today.
-function popularItems(categories) {
-  return categories.flatMap((category) => category.items).filter((item) => item.isFeatured === true || item.isPopular === true);
+// The setting's slugs, in order. null when it's missing or empty: every category then gets a chip.
+function parseQuickCategories(value) {
+  const slugs = String(value || "")
+    .split(",")
+    .map((slug) => slug.trim())
+    .filter(Boolean);
+  return slugs.length ? slugs : null;
 }
 
 function chip(emoji, label, message) {
   return { emoji, label, message };
 }
 
-// menu is the public menu ({ categories, deals, settings }); hours is the server's opening-hours list.
-function buildQuickReplies(menu, hours) {
-  const categories = menu.categories.filter((category) => category.items.length > 0 && category.slug !== "deals");
-  const chips = [chip("📋", "Browse menu", "Show me the menu")];
+// menu is the public menu ({ categories, deals }); quickCategories is the setting's raw value.
+function buildQuickReplies(menu, quickCategories) {
+  const withItems = menu.categories.filter((category) => category.items.length > 0 && category.slug !== "deals");
+  const chosen = parseQuickCategories(quickCategories);
+  const categories = chosen
+    ? chosen.map((slug) => withItems.find((category) => category.slug === slug)).filter(Boolean)
+    : withItems;
+
+  const chips = [{ ...chip("🍽️", "Browse menu", "Show me the menu"), primary: true }];
   if (menu.deals.length > 0) chips.push(chip("🎁", "Deals", "What deals do you have?"));
-  if (popularItems(menu.categories).length > 0) chips.push(chip("🔥", "Popular", "What are your most popular items?"));
   for (const category of categories) {
     chips.push(chip(categoryEmoji(category.name), category.name, `Show me your ${category.name}`));
   }
   const limit = formatPrice(UNDER_PRICE_LIMIT_PAISA);
   chips.push(chip("💸", `Under ${limit}`, `What can I get for under ${limit}?`));
-  chips.push({ ...chip("🛒", "My cart", null), action: "cart" });
-  const address = menu.settings && menu.settings.address;
-  if (address && Array.isArray(hours) && hours.length > 0) {
-    chips.push(chip("📍", "Location & timings", "Where are you located and what are your timings?"));
-  }
   return chips;
 }
 
@@ -64,4 +70,4 @@ function buildPlaceholder(menu, random = Math.random) {
   return drinks.length > 0 ? `e.g. Two ${item} and a ${pick(drinks).name}` : `e.g. Two ${item}`;
 }
 
-module.exports = { UNDER_PRICE_LIMIT_PAISA, buildQuickReplies, buildPlaceholder, categoryEmoji };
+module.exports = { UNDER_PRICE_LIMIT_PAISA, QUICK_CATEGORIES_SETTING, buildQuickReplies, buildPlaceholder, categoryEmoji };

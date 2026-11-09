@@ -165,7 +165,7 @@ function setupChatWidget() {
   function renderChips(quickReplies) {
     chips.replaceChildren();
     quickReplies.forEach((reply) => {
-      const button = chatElement("button", "cw-chip");
+      const button = chatElement("button", reply.primary ? "cw-chip cw-chip-primary" : "cw-chip");
       button.type = "button";
       button.append(chatElement("span", "cw-chip-emoji", reply.emoji), chatElement("span", "", reply.label));
       button.firstChild.setAttribute("aria-hidden", "true");

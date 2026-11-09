@@ -30,10 +30,9 @@ require.cache[require.resolve("@anthropic-ai/sdk")].exports = {
 
 const menuService = require("./services/menu-service");
 const { useFakeMenu, PRICE, rs } = require("./fake-menu");
-const { UNDER_PRICE_LIMIT_PAISA, buildQuickReplies, buildPlaceholder } = require("./chat-widget");
+const { UNDER_PRICE_LIMIT_PAISA, QUICK_CATEGORIES_SETTING, buildQuickReplies, buildPlaceholder } = require("./chat-widget");
 const app = require("./server");
 
-const HOURS = [{ days: "Every day", open: "10:00", close: "22:00" }];
 const say = (text) => ({
   type: "message",
   role: "assistant",
@@ -77,52 +76,66 @@ test.beforeEach(() => {
 
 /* ---------- Chips ---------- */
 
-test("category chips come from the menu's categories, not from code", async () => {
+// The fake menu's categories, with a second one, so the chip list setting has something to choose from.
+async function twoCategoryMenu() {
   const menu = await menuService.getPublicMenu();
-  const labels = buildQuickReplies(menu, HOURS).map((chip) => chip.label);
-  for (const category of menu.categories) assert.ok(labels.includes(category.name), `${category.name} has a chip`);
-  assert.ok(labels.includes("Deals"), "there are deals, so there's a Deals chip");
+  const first = menu.categories[0];
+  const second = { ...first, id: "cat-b", slug: "beta", name: "Beta" };
+  return { ...menu, categories: [first, second] };
+}
+
+const labels = (chips) => chips.map((chip) => chip.label);
+
+test("with no chip list setting, every category gets a chip, named from the menu", async () => {
+  const menu = await twoCategoryMenu();
+  for (const value of [undefined, "", " , "]) {
+    const chips = labels(buildQuickReplies(menu, value));
+    for (const category of menu.categories) assert.ok(chips.includes(category.name), `${category.name} has a chip`);
+  }
 });
 
-test("the chips follow a menu change: a renamed category gets a renamed chip", async () => {
-  const menu = await menuService.getPublicMenu();
+test("the chip list setting picks categories by slug, in its order, skipping unknown ones", async () => {
+  const menu = await twoCategoryMenu();
+  const [first, second] = menu.categories;
+  const chips = labels(buildQuickReplies(menu, `${second.slug}, no-such-slug ,${first.slug}`));
+  assert.deepEqual(chips.slice(2, 4), [second.name, first.name]);
+  assert.equal(chips.length, 5, "Browse menu, Deals, the two categories and Under");
+  assert.deepEqual(labels(buildQuickReplies(menu, second.slug)).filter((l) => l === first.name), []);
+});
+
+test("the chips are Browse menu first, then Deals, the chosen categories, and Under", async () => {
+  const menu = await twoCategoryMenu();
+  const chips = buildQuickReplies(menu, menu.categories[0].slug);
+  assert.deepEqual(labels(chips), ["Browse menu", "Deals", menu.categories[0].name, `Under ${rs(UNDER_PRICE_LIMIT_PAISA)}`]);
+  assert.equal(chips[0].primary, true);
+  assert.ok(chips.every((chip) => typeof chip.message === "string" && chip.message.length > 0), "every chip is sent as a message");
+});
+
+test("a renamed category gets a renamed chip", async () => {
+  const menu = await twoCategoryMenu();
   const renamed = { ...menu, categories: menu.categories.map((c) => ({ ...c, name: `${c.name} Renamed` })) };
-  const labels = buildQuickReplies(renamed, HOURS).map((chip) => chip.label);
-  assert.ok(labels.includes(`${menu.categories[0].name} Renamed`));
-  assert.ok(!labels.includes(menu.categories[0].name));
+  assert.ok(labels(buildQuickReplies(renamed, menu.categories[0].slug)).includes(`${menu.categories[0].name} Renamed`));
 });
 
-test("Popular only appears when an item is flagged featured or popular", async () => {
-  const menu = await menuService.getPublicMenu();
-  assert.ok(!buildQuickReplies(menu, HOURS).some((chip) => chip.label === "Popular"));
-  const flagged = {
-    ...menu,
-    categories: menu.categories.map((c, i) => (i === 0 ? { ...c, items: [{ ...c.items[0], isFeatured: true }, ...c.items.slice(1)] } : c)),
-  };
-  assert.ok(buildQuickReplies(flagged, HOURS).some((chip) => chip.label === "Popular"));
-});
-
-test("Location & timings needs both the address setting and stored hours", async () => {
-  const menu = await menuService.getPublicMenu();
-  const has = (m, hours) => buildQuickReplies(m, hours).some((chip) => chip.label === "Location & timings");
-  assert.ok(has(menu, HOURS));
-  assert.ok(!has(menu, []));
-  assert.ok(!has({ ...menu, settings: {} }, HOURS));
+test("no Deals chip when there are no deals", async () => {
+  const menu = await twoCategoryMenu();
+  assert.ok(!labels(buildQuickReplies({ ...menu, deals: [] })).includes("Deals"));
 });
 
 test("the Under chip's amount is the one configured limit", async () => {
   const menu = await menuService.getPublicMenu();
-  const chip = buildQuickReplies(menu, HOURS).find((c) => c.label.startsWith("Under "));
+  const chip = buildQuickReplies(menu).find((c) => c.label.startsWith("Under "));
   assert.equal(chip.label, `Under ${rs(UNDER_PRICE_LIMIT_PAISA)}`);
   assert.ok(chip.message.includes(rs(UNDER_PRICE_LIMIT_PAISA)));
 });
 
-test("every message chip is sent as a customer message; My cart opens the drawer instead", async () => {
+test("/api/chat/config uses the chip list setting, and doesn't send the setting itself", async () => {
   const menu = await menuService.getPublicMenu();
-  for (const chip of buildQuickReplies(menu, HOURS)) {
-    if (chip.action === "cart") assert.equal(chip.message, null);
-    else assert.ok(typeof chip.message === "string" && chip.message.length > 0, chip.label);
-  }
+  useFakeMenu({ extra: { address: "Test Address", [QUICK_CATEGORIES_SETTING]: "no-such-slug" } });
+  const res = await request("GET", "/api/chat/config");
+  assert.equal(res.status, 200);
+  assert.ok(!labels(res.body.quickReplies).includes(menu.categories[0].name));
+  assert.ok(!JSON.stringify(res.body).includes(QUICK_CATEGORIES_SETTING));
 });
 
 test("the placeholder names a real item and drink from the live menu", async () => {

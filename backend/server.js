@@ -56,7 +56,7 @@ const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu, setSearchMis
 const { findUnbackedPrices } = require("./price-guard");
 const { suggestItems } = require("./recommendations");
 const menuService = require("./services/menu-service");
-const { buildQuickReplies, buildPlaceholder } = require("./chat-widget");
+const { buildQuickReplies, buildPlaceholder, QUICK_CATEGORIES_SETTING } = require("./chat-widget");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -1449,14 +1449,15 @@ addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDi
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));
 
-// The chat widget's chips and placeholder, built from the live menu. Public settings only.
+// The chat widget's chips and placeholder, built from the live menu. Only the address setting and
+// the finished chips are sent; the chip list setting itself stays on the server.
 app.get(
   "/api/chat/config",
   menuRoute(async () => {
-    const menu = await menuService.getPublicMenu();
+    const [menu, settings] = await Promise.all([menuService.getPublicMenu(), menuService.getSettings()]);
     return {
       address: menu.settings.address || null,
-      quickReplies: buildQuickReplies(menu, OPENING_HOURS),
+      quickReplies: buildQuickReplies(menu, settings[QUICK_CATEGORIES_SETTING]),
       placeholder: buildPlaceholder(menu),
     };
   })
