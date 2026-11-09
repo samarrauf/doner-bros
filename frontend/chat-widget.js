@@ -103,7 +103,9 @@ function setupChatWidget() {
     toggle.setAttribute("aria-expanded", String(isOpen));
     toggle.setAttribute("aria-label", isOpen ? "Close chat" : "Open chat");
     document.documentElement.classList.toggle("cw-open", isOpen);
+    fitSheet();
     if (isOpen) {
+      fitAddress();
       input.focus();
       refreshCart();
     } else {
@@ -179,32 +181,99 @@ function setupChatWidget() {
     refreshSendButton();
   }
 
-  // After the first customer message the chips become one scrolling row above the input, folded
-  // away behind the Quick options toggle.
+  // After the first customer message the chips move above the input as one compact scrolling row;
+  // the Quick options toggle expands them back into the wrapped grid.
   function collapseChips() {
     if (chipsCollapsed) {
       return;
     }
     chipsCollapsed = true;
-    chips.classList.add("cw-chips-row");
     quickBar.appendChild(chips);
     quickBar.hidden = chips.childElementCount === 0;
-    setChipsShown(false);
+    setChipsExpanded(false);
   }
 
-  function setChipsShown(isShown) {
-    chips.hidden = !isShown;
-    quickToggle.setAttribute("aria-expanded", String(isShown));
+  function setChipsExpanded(isExpanded) {
+    chips.classList.toggle("cw-chips-row", !isExpanded);
+    chips.scrollLeft = 0;
+    chips.scrollTop = 0;
+    quickToggle.setAttribute("aria-expanded", String(isExpanded));
   }
 
-  quickToggle.addEventListener("click", () => setChipsShown(chips.hidden));
+  quickToggle.addEventListener("click", () => setChipsExpanded(chips.classList.contains("cw-chips-row")));
+
+  /* ----- Address in the header ----- */
+
+  // Shown in full when it fits; otherwise it scrolls slowly as a marquee (styles in chat-widget.css,
+  // which also turns it into two wrapped lines for reduced motion).
+  const MARQUEE_PIXELS_PER_SECOND = 30;
+
+  function showAddress(address) {
+    const track = chatElement("span", "cw-subtitle-track");
+    const copy = chatElement("span", "cw-subtitle-copy", address);
+    const repeat = chatElement("span", "cw-subtitle-copy", address);
+    repeat.setAttribute("aria-hidden", "true");
+    track.append(copy, repeat);
+    subtitle.replaceChildren(track);
+    subtitle.title = address;
+    subtitle.hidden = false;
+    fitAddress();
+  }
+
+  function fitAddress() {
+    const copy = subtitle.querySelector(".cw-subtitle-copy");
+    if (!copy || panel.hidden) {
+      return;
+    }
+    subtitle.classList.remove("cw-marquee");
+    const overflows = copy.getBoundingClientRect().width > subtitle.clientWidth + 1;
+    subtitle.classList.toggle("cw-marquee", overflows);
+    if (overflows) {
+      const distance = copy.getBoundingClientRect().width;
+      subtitle.style.setProperty("--cw-marquee-duration", `${Math.max(8, distance / MARQUEE_PIXELS_PER_SECOND)}s`);
+    }
+  }
+
+  // Touch pauses the marquee while a finger is on it, as hover does with a mouse.
+  subtitle.addEventListener("touchstart", () => subtitle.classList.add("cw-paused"), { passive: true });
+  ["touchend", "touchcancel"].forEach((type) => {
+    subtitle.addEventListener(type, () => subtitle.classList.remove("cw-paused"), { passive: true });
+  });
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(fitAddress).observe(subtitle);
+  } else {
+    window.addEventListener("resize", fitAddress);
+  }
+
+  /* ----- Phone sheet height ----- */
+
+  // The visual viewport is the part of the screen not covered by the on-screen keyboard. Sizing the
+  // sheet to it keeps the input bar in view while typing, on browsers that don't resize the page.
+  const phoneWidth = window.matchMedia("(max-width: 767.98px)");
+
+  function fitSheet() {
+    const viewport = window.visualViewport;
+    if (!viewport || !phoneWidth.matches || panel.hidden) {
+      panel.style.removeProperty("--cw-vh");
+      panel.style.removeProperty("--cw-top");
+      return;
+    }
+    panel.style.setProperty("--cw-vh", `${viewport.height}px`);
+    panel.style.setProperty("--cw-top", `${viewport.offsetTop}px`);
+    scrollToLatest();
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", fitSheet);
+    window.visualViewport.addEventListener("scroll", fitSheet);
+  }
+  phoneWidth.addEventListener("change", fitSheet);
 
   async function loadConfig() {
     try {
       const config = await requestJson(CHAT_CONFIG_ENDPOINT);
       if (config.address) {
-        subtitle.textContent = config.address;
-        subtitle.hidden = false;
+        showAddress(config.address);
       }
       if (config.placeholder) {
         input.placeholder = config.placeholder;

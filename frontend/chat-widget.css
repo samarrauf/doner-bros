@@ -9,9 +9,10 @@
   z-index: 95;
   display: flex;
   flex-direction: column;
-  width: 380px;
-  height: min(600px, calc(100vh - 120px));
-  height: min(600px, calc(100dvh - 120px));
+  width: min(400px, calc(100vw - 40px));
+  /* 90vh tall at most, and never past the top of the window: the launcher sits below it. */
+  height: min(640px, 90vh, calc(100vh - 120px));
+  height: min(640px, 90dvh, calc(100dvh - 120px));
   border-radius: var(--radius-lg);
   background: var(--white);
   box-shadow: 0 24px 64px rgba(11, 11, 11, 0.28);
@@ -41,6 +42,13 @@
 }
 
 /* ----- Header ----- */
+
+/* Only the message list scrolls: header, quick options and input keep their size. */
+.cw-header,
+.cw-quick,
+.cw-form {
+  flex-shrink: 0;
+}
 
 .cw-header {
   display: flex;
@@ -76,9 +84,42 @@
   margin: 2px 0 0;
   overflow: hidden;
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.8);
   white-space: nowrap;
-  text-overflow: ellipsis;
+}
+
+.cw-subtitle-track {
+  display: inline-flex;
+}
+
+.cw-subtitle-copy + .cw-subtitle-copy {
+  display: none;
+}
+
+/* An address too long for the header scrolls right to left in a loop: two copies of the text
+   move by one copy's width, so the loop has no jump. Hover or touch pauses it. */
+.cw-subtitle.cw-marquee .cw-subtitle-copy {
+  padding-right: 48px;
+}
+
+.cw-subtitle.cw-marquee .cw-subtitle-copy + .cw-subtitle-copy {
+  display: inline;
+}
+
+.cw-subtitle.cw-marquee .cw-subtitle-track {
+  animation: cw-marquee var(--cw-marquee-duration, 20s) linear infinite;
+}
+
+.cw-subtitle.cw-marquee:hover .cw-subtitle-track,
+.cw-subtitle.cw-marquee.cw-paused .cw-subtitle-track {
+  animation-play-state: paused;
+}
+
+@keyframes cw-marquee {
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 .cw-icon-btn {
@@ -126,7 +167,8 @@
 /* ----- Messages ----- */
 
 .cw-messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -224,14 +266,14 @@
 .cw-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-height: 40px;
-  padding: 8px 14px;
+  padding: 6px 12px;
   border: 1.5px solid var(--accent);
   border-radius: 999px;
   background: var(--white);
   color: var(--ink);
-  font: 500 0.85rem/1.2 var(--cw-font, var(--font));
+  font: 500 0.82rem/1.2 var(--cw-font, var(--font));
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s, transform 0.2s var(--ease);
@@ -248,7 +290,16 @@
 }
 
 .cw-chip-emoji {
-  font-size: 1rem;
+  font-size: 0.95rem;
+}
+
+/* Expanded quick options: the same wrapped grid, scrolling if it would crowd out the messages. */
+.cw-quick .cw-chips {
+  max-height: 34vh;
+  max-height: 34dvh;
+  padding: 2px 0 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* After the first message: one scrolling row above the input. */
@@ -290,11 +341,12 @@
 .cw-quick-toggle[aria-expanded="true"] .icon {
   transform: none;
 }
-
-.cw-chips-row {
+.cw-quick .cw-chips.cw-chips-row {
   flex-wrap: nowrap;
-  padding: 4px 0 6px;
+  max-height: none;
+  padding: 2px 0 6px;
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
@@ -534,11 +586,17 @@
 /* ----- Phones and small tablets: a full-screen sheet ----- */
 
 @media (max-width: 767.98px) {
+  /* chat-widget.js sets --cw-vh and --cw-top from the visual viewport, so when the keyboard opens
+     the sheet shrinks to the part of the screen still showing and the input stays above it. */
   .cw-panel {
-    inset: 0;
-    width: 100%;
+    top: var(--cw-top, 0px);
+    right: auto;
+    bottom: auto;
+    left: 0;
+    width: 100vw;
+    max-width: 100%;
     height: 100vh;
-    height: 100dvh;
+    height: var(--cw-vh, 100dvh);
     border-radius: 0;
     padding-bottom: env(safe-area-inset-bottom);
     transform-origin: bottom center;
@@ -564,22 +622,20 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  /* Chips scroll sideways rather than filling the screen. */
+  /* Compact chips, so three or four fit on a row at phone width; still 44px tall to tap. */
   .cw-chips {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    margin: 0 calc(-12px - env(safe-area-inset-right)) 0 calc(-12px - env(safe-area-inset-left));
-    padding: 2px calc(12px + env(safe-area-inset-right)) 4px calc(12px + env(safe-area-inset-left));
-  }
-
-  .cw-chips::-webkit-scrollbar {
-    display: none;
+    gap: 6px;
   }
 
   .cw-chip {
-    flex-shrink: 0;
+    gap: 4px;
     min-height: 44px;
+    padding: 6px 9px;
+    font-size: 0.78rem;
+  }
+
+  .cw-chip-emoji {
+    font-size: 0.85rem;
   }
 
   .cw-quick-toggle {
@@ -603,5 +659,24 @@
   .cw-drawer,
   .cw-typing span {
     animation: none;
+  }
+
+  /* No marquee: a long address wraps onto two lines instead. */
+  .cw-subtitle,
+  .cw-subtitle.cw-marquee {
+    white-space: normal;
+  }
+
+  .cw-subtitle.cw-marquee .cw-subtitle-track {
+    display: inline;
+    animation: none;
+  }
+
+  .cw-subtitle.cw-marquee .cw-subtitle-copy {
+    padding-right: 0;
+  }
+
+  .cw-subtitle.cw-marquee .cw-subtitle-copy + .cw-subtitle-copy {
+    display: none;
   }
 }
