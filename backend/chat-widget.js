@@ -49,7 +49,7 @@ function buildQuickReplies(menu, quickCategories) {
     ? chosen.map((slug) => withItems.find((category) => category.slug === slug)).filter(Boolean)
     : withItems;
 
-  const chips = [{ ...chip("🍽️", "Browse menu", "Show me the menu"), primary: true }];
+  const chips = [chip("🍽️", "Browse menu", "Show me the menu")];
   if (menu.deals.length > 0) chips.push(chip("🎁", "Deals", "What deals do you have?"));
   for (const category of categories) {
     chips.push(chip(categoryEmoji(category.name), category.name, `Show me your ${category.name}`));

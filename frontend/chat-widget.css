@@ -1,8 +1,11 @@
-/* Doner Bros AI Order Assistant panel. Brand colours come from styles.css (:root).
-   Desktop: a 380 x 600 panel above the launcher. Under 768px: a full-screen sheet. */
+/* AI Order Taker chat panel. Brand colours come from styles.css (:root).
+   Desktop: a floating 400px panel above the launcher. Under 768px: a full-screen sheet. */
 
 .cw-panel {
   --cw-font: "Poppins", "Noto Naskh Arabic", "Noto Nastaliq Urdu", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --cw-cream: #faf7f2;
+  --cw-sand: #f2ece3;
+  --cw-sand-line: #e6ddd0;
   position: fixed;
   right: 20px;
   bottom: 100px;
@@ -13,8 +16,9 @@
   /* 90vh tall at most, and never past the top of the window: the launcher sits below it. */
   height: min(640px, 90vh, calc(100vh - 120px));
   height: min(640px, 90dvh, calc(100dvh - 120px));
-  border-radius: var(--radius-lg);
-  background: var(--white);
+  border: 1px solid var(--cw-sand-line);
+  border-radius: 16px;
+  background: var(--cw-cream);
   box-shadow: 0 24px 64px rgba(11, 11, 11, 0.28);
   overflow: hidden;
   font-family: var(--cw-font);
@@ -41,8 +45,6 @@
   outline-offset: 2px;
 }
 
-/* ----- Header ----- */
-
 /* Only the message list scrolls: header, quick options and input keep their size. */
 .cw-header,
 .cw-quick,
@@ -50,14 +52,15 @@
   flex-shrink: 0;
 }
 
+/* ----- Header ----- */
+
 .cw-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 8px 12px 14px;
+  gap: 12px;
+  padding: 14px 12px 14px 16px;
   background: var(--ink);
   color: var(--white);
-  border-bottom: 3px solid var(--accent);
 }
 
 .cw-logo {
@@ -66,6 +69,7 @@
   height: 44px;
   border-radius: 50%;
   background: var(--white);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
 }
 
 .cw-heading {
@@ -75,51 +79,17 @@
 
 .cw-heading h2 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 700;
   line-height: 1.25;
+  letter-spacing: -0.01em;
 }
 
 .cw-subtitle {
   margin: 2px 0 0;
-  overflow: hidden;
   font-size: 0.75rem;
   line-height: 1.35;
-  color: rgba(255, 255, 255, 0.8);
-  white-space: nowrap;
-}
-
-.cw-subtitle-track {
-  display: inline-flex;
-}
-
-.cw-subtitle-copy + .cw-subtitle-copy {
-  display: none;
-}
-
-/* An address too long for the header scrolls right to left in a loop: two copies of the text
-   move by one copy's width, so the loop has no jump. Hover or touch pauses it. */
-.cw-subtitle.cw-marquee .cw-subtitle-copy {
-  padding-right: 48px;
-}
-
-.cw-subtitle.cw-marquee .cw-subtitle-copy + .cw-subtitle-copy {
-  display: inline;
-}
-
-.cw-subtitle.cw-marquee .cw-subtitle-track {
-  animation: cw-marquee var(--cw-marquee-duration, 20s) linear infinite;
-}
-
-.cw-subtitle.cw-marquee:hover .cw-subtitle-track,
-.cw-subtitle.cw-marquee.cw-paused .cw-subtitle-track {
-  animation-play-state: paused;
-}
-
-@keyframes cw-marquee {
-  to {
-    transform: translateX(-50%);
-  }
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .cw-icon-btn {
@@ -131,7 +101,7 @@
   height: 44px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 10px;
   background: transparent;
   color: var(--white);
   cursor: pointer;
@@ -146,10 +116,25 @@
   height: 22px;
 }
 
+/* The cart sits in an outlined rounded square. */
+.cw-cart-btn::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.cw-cart-btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
 .cw-badge {
   position: absolute;
-  top: 4px;
-  right: 2px;
+  top: 0;
+  right: -2px;
   min-width: 20px;
   height: 20px;
   padding: 0 5px;
@@ -175,15 +160,15 @@
   padding: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--surface);
+  background: var(--cw-cream);
 }
 
 .cw-bubble {
-  max-width: 85%;
-  padding: 10px 14px;
-  border-radius: 16px;
-  font-size: 0.9rem;
-  line-height: 1.5;
+  max-width: 88%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 0.92rem;
+  line-height: 1.6;
   overflow-wrap: anywhere;
   /* Keep line breaks and indents in replies (a deal's contents sit indented under it). */
   white-space: pre-wrap;
@@ -199,9 +184,8 @@
 
 .cw-bubble-bot {
   align-self: flex-start;
-  border: 1px solid var(--line);
   border-bottom-left-radius: 4px;
-  background: var(--white);
+  background: var(--cw-sand);
   color: var(--charcoal);
 }
 
@@ -212,14 +196,14 @@
 .cw-bubble-user {
   align-self: flex-end;
   border-bottom-right-radius: 4px;
-  background: var(--accent);
-  color: var(--ink);
+  background: var(--ink);
+  color: var(--white);
 }
 
 .cw-typing {
   display: inline-flex;
   gap: 4px;
-  padding: 14px;
+  padding: 14px 16px;
 }
 
 .cw-typing span {
@@ -251,48 +235,48 @@
   }
 }
 
-/* ----- Quick-reply chips ----- */
+/* ----- Quick options, between the messages and the input ----- */
 
-/* Under the greeting: a tidy two-column grid of tiles, with Browse menu across the top. */
-.cw-chips {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 2px 0 4px;
+.cw-quick {
+  padding: 12px 16px 4px;
+  border-top: 1px solid var(--cw-sand-line);
+  background: var(--cw-cream);
 }
 
-.cw-chips[hidden] {
+.cw-quick[hidden] {
   display: none;
 }
 
-.cw-chip {
+.cw-chips {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 48px;
-  padding: 6px 12px 6px 6px;
-  border: 1.5px solid var(--line);
-  border-radius: 14px;
-  background: var(--white);
-  color: var(--ink);
-  font: 600 0.85rem/1.2 var(--cw-font, var(--font));
-  text-align: left;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(11, 11, 11, 0.04);
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s var(--ease);
+  flex-wrap: wrap;
+  gap: 10px 8px;
+  max-height: 34vh;
+  max-height: 34dvh;
+  padding-bottom: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.cw-chip > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.cw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 1px solid var(--cw-sand-line);
+  border-radius: 999px;
+  background: var(--cw-sand);
+  color: var(--charcoal);
+  font: 500 0.88rem/1.2 var(--cw-font, var(--font));
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s var(--ease);
 }
 
 .cw-chip:hover:not(:disabled) {
   border-color: var(--accent);
-  box-shadow: 0 6px 16px rgba(245, 166, 35, 0.18);
+  background: var(--accent-soft);
   transform: translateY(-1px);
 }
 
@@ -302,46 +286,8 @@
 }
 
 .cw-chip-emoji {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  font-size: 1.05rem;
+  font-size: 1rem;
   line-height: 1;
-}
-
-.cw-chip-primary {
-  grid-column: 1 / -1;
-  justify-content: center;
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.cw-chip-primary .cw-chip-emoji {
-  background: rgba(255, 255, 255, 0.45);
-}
-
-.cw-chip-primary:hover:not(:disabled) {
-  border-color: var(--accent-dark);
-  background: var(--accent-dark);
-}
-
-/* Above the input, after the first message. */
-.cw-quick {
-  padding: 6px 12px 0;
-  border-top: 1px solid var(--line);
-  background: var(--white);
-}
-
-.cw-quick[hidden] {
-  display: none;
-}
-
-.cw-quick .cw-chips {
-  padding: 2px 0 8px;
 }
 
 .cw-quick-toggle {
@@ -349,13 +295,17 @@
   align-items: center;
   gap: 4px;
   min-height: 32px;
-  padding: 4px 6px;
+  margin: -6px 0 4px;
+  padding: 4px 0;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   font: 600 0.78rem/1 var(--font);
   cursor: pointer;
+}
+
+.cw-quick-toggle[hidden] {
+  display: none;
 }
 
 .cw-quick-toggle:hover {
@@ -373,12 +323,12 @@
   transform: none;
 }
 
-/* Collapsed: one compact scrolling row of pills. */
-.cw-quick .cw-chips.cw-chips-row {
-  display: flex;
-  gap: 6px;
-  padding: 2px 0 6px;
+/* Collapsed after the first message: one compact scrolling row. */
+.cw-chips.cw-chips-row {
+  flex-wrap: nowrap;
+  max-height: none;
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
@@ -389,46 +339,28 @@
 
 .cw-chips-row .cw-chip {
   flex-shrink: 0;
-  gap: 6px;
-  min-height: 40px;
-  padding: 4px 12px 4px 4px;
-  border-radius: 999px;
-  font-size: 0.8rem;
-}
-
-.cw-chips-row .cw-chip > span:last-child {
-  overflow: visible;
-}
-
-.cw-chips-row .cw-chip-emoji {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  font-size: 0.95rem;
+  min-height: 38px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
 }
 
 /* ----- Input ----- */
 
 .cw-form {
   display: flex;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--line);
-  background: var(--white);
-}
-
-.cw-quick:not([hidden]) + .cw-form {
-  border-top: 0;
-  padding-top: 6px;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  background: var(--cw-cream);
 }
 
 .cw-form input {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
-  padding: 10px 16px;
-  border: 1px solid #c9cdd2;
-  border-radius: 999px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--accent-dark);
+  border-radius: 10px;
+  background: var(--white);
   /* 16px stops iOS Safari zooming in when the field is focused. */
   font: 400 1rem var(--cw-font, var(--font));
   color: var(--charcoal);
@@ -440,7 +372,7 @@
 
 .cw-form input:focus {
   border-color: var(--accent);
-  outline: 3px solid rgba(245, 166, 35, 0.35);
+  outline: 3px solid rgba(245, 166, 35, 0.3);
   outline-offset: 0;
 }
 
@@ -448,22 +380,22 @@
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   border: 0;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--ink);
   cursor: pointer;
   transition: background 0.2s, opacity 0.2s;
 }
 
 .cw-send:hover:not(:disabled) {
-  background: var(--charcoal-soft);
+  background: var(--accent-dark);
 }
 
 .cw-send:disabled {
-  opacity: 0.35;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -475,7 +407,7 @@
   z-index: 2;
   display: flex;
   flex-direction: column;
-  background: var(--white);
+  background: var(--cw-cream);
   animation: cw-drawer-in 0.25s var(--ease);
 }
 
@@ -493,10 +425,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 8px 10px 18px;
+  padding: 12px 12px 12px 18px;
   background: var(--ink);
   color: var(--white);
-  border-bottom: 3px solid var(--accent);
 }
 
 .cw-drawer-head h3 {
@@ -506,6 +437,7 @@
 
 .cw-drawer-body {
   flex: 1;
+  min-height: 0;
   padding: 8px 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -537,7 +469,7 @@
   align-items: center;
   gap: 6px 12px;
   padding: 14px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--cw-sand-line);
 }
 
 .cw-cart-info p {
@@ -579,8 +511,8 @@
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1.5px solid var(--line);
-  border-radius: 50%;
+  border: 1px solid var(--cw-sand-line);
+  border-radius: 10px;
   background: var(--white);
   color: var(--ink);
   font: 600 1.2rem/1 var(--font);
@@ -617,7 +549,7 @@
 
 .cw-drawer-foot {
   padding: 12px 16px 16px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--cw-sand-line);
 }
 
 .cw-drawer-foot[hidden] {
@@ -645,6 +577,7 @@
     max-width: 100%;
     height: 100vh;
     height: var(--cw-vh, 100dvh);
+    border: 0;
     border-radius: 0;
     padding-bottom: env(safe-area-inset-bottom);
     transform-origin: bottom center;
@@ -670,16 +603,14 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  .cw-chip {
-    min-height: 48px;
-  }
-
-  .cw-chips-row .cw-chip {
-    min-height: 44px;
-  }
-
+  .cw-chip,
+  .cw-chips-row .cw-chip,
   .cw-quick-toggle {
     min-height: 44px;
+  }
+
+  .cw-chip {
+    padding: 8px 14px;
   }
 
   /* The sheet has its own close button, and the page behind it doesn't scroll. */
@@ -699,24 +630,5 @@
   .cw-drawer,
   .cw-typing span {
     animation: none;
-  }
-
-  /* No marquee: a long address wraps onto two lines instead. */
-  .cw-subtitle,
-  .cw-subtitle.cw-marquee {
-    white-space: normal;
-  }
-
-  .cw-subtitle.cw-marquee .cw-subtitle-track {
-    display: inline;
-    animation: none;
-  }
-
-  .cw-subtitle.cw-marquee .cw-subtitle-copy {
-    padding-right: 0;
-  }
-
-  .cw-subtitle.cw-marquee .cw-subtitle-copy + .cw-subtitle-copy {
-    display: none;
   }
 }

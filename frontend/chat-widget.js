@@ -105,7 +105,6 @@ function setupChatWidget() {
     document.documentElement.classList.toggle("cw-open", isOpen);
     fitSheet();
     if (isOpen) {
-      fitAddress();
       input.focus();
       refreshCart();
     } else {
@@ -165,7 +164,7 @@ function setupChatWidget() {
   function renderChips(quickReplies) {
     chips.replaceChildren();
     quickReplies.forEach((reply) => {
-      const button = chatElement("button", reply.primary ? "cw-chip cw-chip-primary" : "cw-chip");
+      const button = chatElement("button", "cw-chip");
       button.type = "button";
       button.append(chatElement("span", "cw-chip-emoji", reply.emoji), chatElement("span", "", reply.label));
       button.firstChild.setAttribute("aria-hidden", "true");
@@ -178,18 +177,18 @@ function setupChatWidget() {
       });
       chips.appendChild(button);
     });
+    quickBar.hidden = chips.childElementCount === 0;
     refreshSendButton();
   }
 
-  // After the first customer message the chips move above the input as one compact scrolling row;
-  // the Quick options toggle expands them back into the wrapped grid.
+  // The chips sit wrapped above the input. After the first customer message they fold into one
+  // compact scrolling row; the Quick options toggle expands them back into the wrapped rows.
   function collapseChips() {
     if (chipsCollapsed) {
       return;
     }
     chipsCollapsed = true;
-    quickBar.appendChild(chips);
-    quickBar.hidden = chips.childElementCount === 0;
+    quickToggle.hidden = false;
     setChipsExpanded(false);
   }
 
@@ -204,45 +203,10 @@ function setupChatWidget() {
 
   /* ----- Address in the header ----- */
 
-  // Shown in full when it fits; otherwise it scrolls slowly as a marquee (styles in chat-widget.css,
-  // which also turns it into two wrapped lines for reduced motion).
-  const MARQUEE_PIXELS_PER_SECOND = 30;
-
+  // Shown as it is, wrapping onto a second line if it needs to.
   function showAddress(address) {
-    const track = chatElement("span", "cw-subtitle-track");
-    const copy = chatElement("span", "cw-subtitle-copy", address);
-    const repeat = chatElement("span", "cw-subtitle-copy", address);
-    repeat.setAttribute("aria-hidden", "true");
-    track.append(copy, repeat);
-    subtitle.replaceChildren(track);
-    subtitle.title = address;
+    subtitle.textContent = address;
     subtitle.hidden = false;
-    fitAddress();
-  }
-
-  function fitAddress() {
-    const copy = subtitle.querySelector(".cw-subtitle-copy");
-    if (!copy || panel.hidden) {
-      return;
-    }
-    subtitle.classList.remove("cw-marquee");
-    const overflows = copy.getBoundingClientRect().width > subtitle.clientWidth + 1;
-    subtitle.classList.toggle("cw-marquee", overflows);
-    if (overflows) {
-      const distance = copy.getBoundingClientRect().width;
-      subtitle.style.setProperty("--cw-marquee-duration", `${Math.max(8, distance / MARQUEE_PIXELS_PER_SECOND)}s`);
-    }
-  }
-
-  // Touch pauses the marquee while a finger is on it, as hover does with a mouse.
-  subtitle.addEventListener("touchstart", () => subtitle.classList.add("cw-paused"), { passive: true });
-  ["touchend", "touchcancel"].forEach((type) => {
-    subtitle.addEventListener(type, () => subtitle.classList.remove("cw-paused"), { passive: true });
-  });
-  if ("ResizeObserver" in window) {
-    new ResizeObserver(fitAddress).observe(subtitle);
-  } else {
-    window.addEventListener("resize", fitAddress);
   }
 
   /* ----- Phone sheet height ----- */
@@ -279,9 +243,6 @@ function setupChatWidget() {
         input.placeholder = config.placeholder;
       }
       renderChips(Array.isArray(config.quickReplies) ? config.quickReplies : []);
-      if (chipsCollapsed) {
-        quickBar.hidden = chips.childElementCount === 0;
-      }
     } catch (error) {
       // Without the menu there are no chips; the customer can still type.
       console.error(error);

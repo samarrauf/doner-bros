@@ -107,7 +107,6 @@ test("the chips are Browse menu first, then Deals, the chosen categories, and Un
   const menu = await twoCategoryMenu();
   const chips = buildQuickReplies(menu, menu.categories[0].slug);
   assert.deepEqual(labels(chips), ["Browse menu", "Deals", menu.categories[0].name, `Under ${rs(UNDER_PRICE_LIMIT_PAISA)}`]);
-  assert.equal(chips[0].primary, true);
   assert.ok(chips.every((chip) => typeof chip.message === "string" && chip.message.length > 0), "every chip is sent as a message");
 });
 
