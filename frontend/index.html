@@ -2,15 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Doner Bros — Doner Kebab Restaurant, Sargodha</title>
   <meta name="description" content="Doner Bros serves fresh, hand-carved doner kebabs, wraps and plates in Shalimar Smart City, Sargodha. See our menu, opening hours and location.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="images/logo.png">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="chat-widget.css">
   <script src="app.js" defer></script>
+  <script src="chat-widget.js" defer></script>
 </head>
 <body>
 
@@ -248,31 +250,60 @@
     </div>
   </footer>
 
-  <!-- AI Order Taker chat widget -->
+  <!-- Doner Bros AI Order Assistant. Chips, placeholder and address come from /api/chat/config;
+       the cart drawer from /api/cart. No menu data belongs in this file. -->
   <div class="chat-widget">
-    <section class="chat-window" id="chat-window" role="dialog" aria-labelledby="chat-title" hidden>
-      <header class="chat-header">
-        <img src="images/logo.png" alt="" width="40" height="40">
-        <div>
-          <h2 id="chat-title">AI Order Taker</h2>
-          <p>Usually replies instantly</p>
+    <section class="cw-panel" id="chat-window" role="dialog" aria-modal="false" aria-labelledby="chat-title" hidden>
+      <header class="cw-header">
+        <img class="cw-logo" src="images/logo.png" alt="" width="44" height="44">
+        <div class="cw-heading">
+          <h2 id="chat-title">Doner Bros AI Order Assistant</h2>
+          <p class="cw-subtitle" id="chat-subtitle" dir="auto" hidden></p>
         </div>
-        <button type="button" class="chat-close" id="chat-close" aria-label="Close chat">
+        <button type="button" class="cw-icon-btn cw-cart-btn" id="chat-cart" aria-label="My cart, 0 items" aria-controls="chat-drawer" aria-expanded="false">
+          <svg class="icon"><use href="#i-bag"/></svg>
+          <span class="cw-badge" id="chat-cart-count" aria-hidden="true" hidden>0</span>
+        </button>
+        <button type="button" class="cw-icon-btn" id="chat-close" aria-label="Close chat">
           <svg class="icon"><use href="#i-close"/></svg>
         </button>
       </header>
 
-      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
-        <div class="chat-bubble chat-bubble-bot">Assalamu Alaikum 👋 Welcome to Doner Bro’s! 🍔😊<br><br>I’m your Ai Agent, here to help you explore our menu, find your favorites, and place your order.<br><br>What are you craving today? 😋</div>
+      <div class="cw-messages" id="chat-messages" role="log" aria-live="polite">
+        <div class="cw-bubble cw-bubble-bot" dir="auto">Assalamu Alaikum! 👋 Welcome to Doner Bros.
+
+I can help you browse the menu, answer your questions, and place a pickup or delivery order. What would you like today?</div>
+        <div class="cw-chips" id="chat-chips" role="group" aria-label="Quick options"></div>
       </div>
 
-      <form class="chat-form" id="chat-form" autocomplete="off">
+      <div class="cw-quick" id="chat-quick" hidden>
+        <button type="button" class="cw-quick-toggle" id="chat-quick-toggle" aria-expanded="false" aria-controls="chat-chips">
+          <span>Quick options</span>
+          <svg class="icon icon-sm"><use href="#i-chevron"/></svg>
+        </button>
+      </div>
+
+      <form class="cw-form" id="chat-form" autocomplete="off">
         <label for="chat-input" class="visually-hidden">Type your message</label>
-        <input type="text" id="chat-input" placeholder="Type your message..." maxlength="500">
-        <button type="submit" class="chat-send" id="chat-send" aria-label="Send message" disabled>
+        <input type="text" id="chat-input" placeholder="Type your message..." maxlength="500" dir="auto" enterkeyhint="send">
+        <button type="submit" class="cw-send" id="chat-send" aria-label="Send message" disabled>
           <svg class="icon"><use href="#i-send"/></svg>
         </button>
       </form>
+
+      <aside class="cw-drawer" id="chat-drawer" aria-labelledby="chat-drawer-title" hidden>
+        <header class="cw-drawer-head">
+          <h3 id="chat-drawer-title">My cart</h3>
+          <button type="button" class="cw-icon-btn" id="chat-drawer-close" aria-label="Close cart">
+            <svg class="icon"><use href="#i-close"/></svg>
+          </button>
+        </header>
+        <div class="cw-drawer-body" id="chat-drawer-body" aria-live="polite"></div>
+        <footer class="cw-drawer-foot" id="chat-drawer-foot" hidden>
+          <div class="cw-total"><span>Total</span><strong id="chat-cart-total"></strong></div>
+          <button type="button" class="btn btn-block" id="chat-checkout">Checkout in chat</button>
+        </footer>
+      </aside>
     </section>
 
     <button type="button" class="chat-toggle" id="chat-toggle" aria-label="Open chat" aria-expanded="false" aria-controls="chat-window">

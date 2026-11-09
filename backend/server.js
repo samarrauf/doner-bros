@@ -56,6 +56,7 @@ const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu, setSearchMis
 const { findUnbackedPrices } = require("./price-guard");
 const { suggestItems } = require("./recommendations");
 const menuService = require("./services/menu-service");
+const { buildQuickReplies, buildPlaceholder } = require("./chat-widget");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -1447,6 +1448,96 @@ addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDi
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));
+
+// The chat widget's chips and placeholder, built from the live menu. Public settings only.
+app.get(
+  "/api/chat/config",
+  menuRoute(async () => {
+    const menu = await menuService.getPublicMenu();
+    return {
+      address: menu.settings.address || null,
+      quickReplies: buildQuickReplies(menu, OPENING_HOURS),
+      placeholder: buildPlaceholder(menu),
+    };
+  })
+);
+
+/* ---------- Cart drawer ---------- */
+
+// The drawer reads and changes this chat's own cart. Every amount is worked out by totals.js,
+// through the same cart tools the model uses, so the drawer and the chat always agree.
+const CART_RATE_LIMIT_MAX_REQUESTS = 60;
+
+async function cartRateLimited(req, res) {
+  try {
+    const hits = await rateLimiter.hit(rateLimitKey("cart", req.ip), RATE_LIMIT_WINDOW_MS, true);
+    if (hits <= CART_RATE_LIMIT_MAX_REQUESTS) return false;
+    res.status(429).json({ error: "Too many requests. Please wait a minute and try again." });
+  } catch (error) {
+    console.error("Cart rate limit check failed:", error.code || error.message);
+    res.status(503).json({ error: "Your cart can't be loaded right now. Please try again in a minute." });
+  }
+  return true;
+}
+
+// An existing chat only: the drawer never starts a session of its own.
+async function existingOrderSession(req) {
+  const id = readSessionId(req.headers.cookie);
+  if (!id) return null;
+  const existing = await sessionStore.load(id);
+  return existing ? { id, state: upgradeOrderState(existing) } : null;
+}
+
+async function cartResponse(orderState) {
+  const editable = orderState.status !== "saved" && orderState.status !== "not_saved";
+  // A submitted order is no longer the cart; the drawer starts empty until the next item goes in.
+  if (!editable) return { lines: [], total: null, itemCount: 0, editable: true };
+  const cart = await cartForCustomer(orderState);
+  if (!cart) return null;
+  return { ...cart, itemCount: cart.lines.reduce((sum, line) => sum + line.quantity, 0), editable };
+}
+
+app.get("/api/cart", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (await cartRateLimited(req, res)) return;
+  try {
+    const session = await existingOrderSession(req);
+    const cart = session ? await cartResponse(session.state) : { lines: [], total: null, itemCount: 0, editable: true };
+    if (!cart) return res.status(503).json({ error: "The menu can't be checked right now. Please try again in a minute." });
+    res.json(cart);
+  } catch (error) {
+    console.error("Cart read failed:", error.code || error.message);
+    res.status(503).json({ error: "Your cart can't be loaded right now. Please try again in a minute." });
+  }
+});
+
+// { lineNumber, quantity }: a quantity of 0 removes the line.
+app.post("/api/cart/line", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (await cartRateLimited(req, res)) return;
+  const { lineNumber, quantity } = req.body || {};
+  if (!Number.isInteger(lineNumber) || !Number.isInteger(quantity) || quantity < 0) {
+    return res.status(400).json({ error: "lineNumber and quantity must be whole numbers." });
+  }
+  try {
+    const session = await existingOrderSession(req);
+    if (!session) return res.status(404).json({ error: "Your cart is empty." });
+    const orderState = session.state;
+    const result =
+      quantity === 0 ? await removeItem({ lineNumber }, orderState) : await modifyItem({ lineNumber, quantity }, orderState);
+    if (!result.modified && !result.removed) return res.status(400).json({ error: result.error });
+    await recheckPromotion(orderState);
+    if (!(await saveOrderSession(session))) {
+      return res.status(503).json({ error: "Your cart can't be saved right now. Please try again in a minute." });
+    }
+    const cart = await cartResponse(orderState);
+    if (!cart) return res.status(503).json({ error: "The menu can't be checked right now. Please try again in a minute." });
+    res.json(cart);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") console.error("Cart change failed:", error.code || error.message);
+    res.status(503).json({ error: "Your cart can't be changed right now. Please try again in a minute." });
+  }
+});
 
 app.post("/api/chat", async (req, res) => {
   try {
