@@ -13,7 +13,7 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_LOGINS = 10;
 const ORDER_FIELDS =
   "order_id, created_at, status, order_type, customer_name, customer_phone, delivery_address, delivery_unit, " +
-  "delivery_instructions, pickup_time, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa";
+  "delivery_instructions, pickup_time, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa, chat_session_id";
 
 // The only move allowed from a status: one step forward. null at the end of the flow.
 function nextStatus(status) {

@@ -18,7 +18,7 @@ const {
   placeOrder,
 } = require("./orders");
 const { checkPickupTime } = require("./pickup-time");
-const { priceCart, calculateTotals, describeCart } = require("./totals");
+const { priceCart, calculateTotals, describeCart, deliveryFeeStatus, deliveryFeeText, isFeeNotDecided } = require("./totals");
 const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
@@ -115,6 +115,19 @@ function formatContact(settings) {
   if (settings.whatsapp) lines.push(`WhatsApp: ${settings.whatsapp}`);
   if (settings.order_types) lines.push(`Order types: ${settings.order_types}`);
   return lines.join("\n");
+}
+
+// What the model may say about the delivery fee. No amount is ever put in the prompt: a set fee is
+// quoted only from get_order_totals or reviewOrder, so the price guard can check it.
+const FEE_NOT_DECIDED_RULE =
+  "The delivery fee has not been decided yet. If a customer asks, say the delivery fee will be confirmed by the restaurant. " +
+  "Never say delivery is free, and never quote, guess or estimate a delivery fee. Totals for delivery orders don't include it.";
+
+function formatDeliveryFee(settings) {
+  const value = settings.delivery_fee_paisa;
+  if (isFeeNotDecided(value) || !/^\d+$/.test(String(value))) return FEE_NOT_DECIDED_RULE;
+  if (Number(value) === 0) return "Delivery is free. You may tell customers there is no delivery fee.";
+  return "Delivery orders have a delivery fee. Quote it only as get_order_totals or reviewOrder returns it; it is already in their total.";
 }
 
 function formatDiscount(discount) {
@@ -254,6 +267,7 @@ async function currentSystemPrompt(orderState, turn, correction) {
   const order = await formatOrderState(orderState);
   const prompt = SYSTEM_PROMPT.replace("{{CATEGORIES}}", () => formatCategories(turn.menu))
     .replace("{{CONTACT}}", () => formatContact(turn.settings))
+    .replace("{{DELIVERY_FEE}}", () => formatDeliveryFee(turn.settings))
     .replace("{{PROMOTIONS}}", () => formatPromotions(PROMOTIONS, turn.menu, new Date()))
     .replace("{{ORDER}}", () => order);
   return correction ? `${prompt}\n\n${correction}` : prompt;
@@ -356,11 +370,13 @@ async function recordForDashboard(label, write) {
 
 // The save function for one checkout: its submission key ties the row to this chat and to how
 // many orders the chat has already saved, so the database refuses a second copy of the same order.
-function saveOrderFor(orderState) {
+// chatSessionId links the order to its chat_sessions row, so a chat can show all of its orders.
+function saveOrderFor(orderState, chatSessionId) {
   if (!orderStore) return null;
   if (!orderState.chatSecret) orderState.chatSecret = crypto.randomUUID();
   return async (row) => {
-    const { orderId, duplicate } = await orderStore.save(row, submissionKey(orderState.chatSecret, orderState.savedOrderCount || 0, row));
+    const key = submissionKey(orderState.chatSecret, orderState.savedOrderCount || 0, row);
+    const { orderId, duplicate } = await orderStore.save(row, key, { chatSessionId });
     if (duplicate) console.warn(`Duplicate submission; returned the existing order ${orderId}.`);
     return orderId;
   };
@@ -574,6 +590,7 @@ async function cartView(orderState) {
     cart: totals.lines.map((line, index) => `${index + 1}. ${describeCartLine(line)}`),
     cartSubtotal: totals.display.subtotal,
     cartTotal: totals.display.total,
+    ...deliveryFeeFields(orderState.orderType, totals.deliveryFeePaisa),
   };
 }
 
@@ -600,9 +617,19 @@ function totalsForTool(totals, orderType) {
     ...(totals.discountPaisa > 0 ? { discount: `-${totals.display.discount}` } : {}),
     ...(totals.taxPaisa > 0 ? { tax: totals.display.tax } : {}),
     ...(totals.taxIncludedPaisa > 0 ? { taxIncludedInPrices: totals.display.taxIncluded } : {}),
-    ...(orderType === "delivery" ? { deliveryFee: totals.display.deliveryFee } : {}),
+    ...deliveryFeeFields(orderType, totals.deliveryFeePaisa),
     total: totals.display.total,
   };
+}
+
+// For tool results on a delivery order: the fee as the customer sees it, and for a fee that isn't
+// decided, what the model must say instead of a number.
+function deliveryFeeFields(orderType, deliveryFeePaisa) {
+  const status = deliveryFeeStatus(orderType, deliveryFeePaisa);
+  if (status === "none") return {};
+  const fields = { deliveryFee: deliveryFeeText(orderType, deliveryFeePaisa) };
+  if (status === "not_decided") fields.deliveryFeeNote = FEE_NOT_DECIDED_RULE;
+  return fields;
 }
 
 // A submitted order answers from its snapshot, not from today's prices.
@@ -1165,7 +1192,7 @@ async function submitCheckedOrder(call, contents, orderState, turn) {
       args: prepared.args,
       promotions: PROMOTIONS,
       today: todayInRestaurant(new Date()),
-      saveOrder: saveOrderFor(orderState),
+      saveOrder: saveOrderFor(orderState, turn.chatSessionId || null),
       phone: turn.settings.whatsapp || "the number on our website",
     });
   } finally {
@@ -1458,6 +1485,7 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     turn = await loadChatTurn();
+    turn.chatSessionId = sessionRowId(session.id);
     // A repeat of a click already in this cart changes nothing and needs no model, so it can't fail.
     if (orderItem && isClickApplied(orderState, orderItem.click_id)) {
       turn.clickStatus = "duplicate";

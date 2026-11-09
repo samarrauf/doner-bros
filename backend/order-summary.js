@@ -1,6 +1,8 @@
 // Doner Bros — the order summary the customer sees before checkout. Built only from this chat's
 // order state and the server's totals (totals.js), never from anything the model wrote.
 
+const { deliveryFeeLine } = require("./totals");
+
 // Everything that, if changed, makes an earlier summary out of date. totals is freshly worked out,
 // so a price that changes after the customer saw the summary means they must see it again.
 function orderFingerprint(state, totals) {
@@ -14,6 +16,8 @@ function orderFingerprint(state, totals) {
     deliveryAddressConfirmed: state.deliveryAddressConfirmed,
     promotionId: state.discount.promotionId,
     discountPaisa: totals.discountPaisa,
+    // A fee going from "to be confirmed" to free or set changes what the customer agreed to.
+    deliveryFeePaisa: totals.deliveryFeePaisa === undefined ? null : totals.deliveryFeePaisa,
     totalPaisa: totals.totalPaisa,
   });
 }
@@ -75,6 +79,8 @@ function buildOrderSummary(state, totals, missing) {
     ? { id: state.discount.promotionId, name: state.discount.promotionName, discount: `-${totals.display.discount}` }
     : null;
   const deliveryFee = state.orderType === "delivery" ? totals.display.deliveryFee : null;
+  const feeLine = deliveryFeeLine(state.orderType, totals.deliveryFeePaisa);
+  const feeNotDecided = state.orderType === "delivery" && totals.deliveryFeeStatus === "not_decided";
   const summary = {
     items,
     fulfillment,
@@ -106,8 +112,9 @@ function buildOrderSummary(state, totals, missing) {
     ...(promotion ? [`Discount: ${promotion.discount}`] : []),
     ...(summary.totals.tax ? [`Tax (${taxRateText(totals.taxRateBps)}%): ${summary.totals.tax}`] : []),
     ...(summary.totals.taxIncluded ? [`Includes tax (${taxRateText(totals.taxRateBps)}%): ${summary.totals.taxIncluded}`] : []),
-    ...(deliveryFee ? [`Delivery fee: ${deliveryFee}`] : []),
-    `Total: ${summary.totals.total}`,
+    ...(feeLine ? [feeLine] : []),
+    // A fee that isn't decided is not in the total, so the total says so.
+    `Total: ${summary.totals.total}${feeNotDecided ? " (delivery fee not included)" : ""}`,
   ].join("\n");
 
   return { summary, text };

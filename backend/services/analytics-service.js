@@ -80,7 +80,8 @@ function summarise(orders) {
     deliveryFeePaisa: sum(sold, (o) => o.delivery_fee_paisa),
     // Whole paisa, rounded down.
     averageOrderValuePaisa: sold.length ? Math.floor(netSalesPaisa / sold.length) : 0,
-    delivery: salesOf(sold.filter((o) => o.order_type === "delivery")),
+    // Delivery orders placed while the fee wasn't decided: their sales don't include a fee.
+    delivery: { ...salesOf(sold.filter((o) => o.order_type === "delivery")), feeTbcCount: sold.filter((o) => o.order_type === "delivery" && o.delivery_fee_paisa === null).length },
     pickup: salesOf(sold.filter((o) => o.order_type === "pickup")),
     cancelled: { orderCount: cancelled.length, valuePaisa: sum(cancelled, (o) => o.total_paisa) },
     ...preparation(sold),
@@ -311,7 +312,7 @@ function createAnalyticsService({ client, now = () => new Date() }) {
   async function getLiveOrders() {
     const { data, error } = await client
       .from("orders")
-      .select("order_number, order_id, created_at, status, status_changed_at, order_type, customer_name, pickup_time, delivery_instructions, items")
+      .select("order_number, order_id, created_at, status, status_changed_at, order_type, customer_name, pickup_time, delivery_instructions, items, delivery_fee_paisa")
       .in("status", OPEN_STATUSES)
       .order("created_at", { ascending: true })
       .limit(100);
@@ -327,6 +328,8 @@ function createAnalyticsService({ client, now = () => new Date() }) {
         customerName: o.customer_name,
         pickupTime: o.pickup_time,
         note: o.delivery_instructions || null,
+        // A flag only, never the amount: the rider needs to know the fee still has to be agreed.
+        deliveryFeeTbc: o.order_type === "delivery" && o.delivery_fee_paisa === null,
         items: kitchenLines(o.items),
         createdAt: o.created_at,
         statusChangedAt: o.status_changed_at || o.created_at,

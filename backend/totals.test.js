@@ -17,7 +17,7 @@ test("one item: paisa integers and display strings", async () => {
   assert.equal(result.taxPaisa, 0);
   assert.equal(result.deliveryFeePaisa, 0);
   assert.equal(result.totalPaisa, PRICE.main);
-  assert.deepEqual(result.display, { subtotal: rs(PRICE.main), discount: "Rs 0", tax: "Rs 0", taxIncluded: "Rs 0", deliveryFee: "Rs 0", total: rs(PRICE.main) });
+  assert.deepEqual(result.display, { subtotal: rs(PRICE.main), discount: "Rs 0", tax: "Rs 0", taxIncluded: "Rs 0", deliveryFee: null, total: rs(PRICE.main) });
   assert.equal(result.lines[0].name, "Test Main");
   assert.equal(result.lines[0].unitPriceDisplay, rs(PRICE.main));
 });
@@ -197,7 +197,7 @@ test("missing or broken settings refuse to price rather than guess", async () =>
   try {
     for (const settings of [
       {},
-      { tax_mode: "none", tax_rate_bps: "0" },
+      { tax_rate_bps: "0", delivery_fee_paisa: "0" },
       { tax_mode: "gst", tax_rate_bps: "0", delivery_fee_paisa: "0" },
       { tax_mode: "none", tax_rate_bps: "16.5", delivery_fee_paisa: "0" },
       { tax_mode: "none", tax_rate_bps: "10001", delivery_fee_paisa: "0" },

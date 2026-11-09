@@ -344,7 +344,7 @@
       return h("article", { class: "card", "data-id": id, "aria-label": `Order ${shortId(id)}` },
         h("div", { class: "card-top" },
           h("span", { class: "num" }, `#${shortId(id)}`),
-          h("span", { class: `badge ${order.orderType}` }, order.orderType === "delivery" ? "🛵 Delivery" : "🛍 Pickup"),
+          h("span", { class: `badge ${order.orderType}` }, order.orderType === "delivery" ? (order.deliveryFeeTbc ? "🛵 Delivery · fee TBC" : "🛵 Delivery") : "🛍 Pickup"),
           h("span", { class: "timer", "data-timer": "" }, "")),
         meta.length ? h("div", { class: "meta" }, meta.join(" · ")) : null,
         h("ul", { class: "items" }, order.items.map(lineItem)),

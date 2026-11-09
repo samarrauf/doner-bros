@@ -715,7 +715,8 @@
       bar.append(tip);
       const caption = cur.deliverySharePercent === null
         ? h("div", { class: "share-caption" }, `No orders ${currentRange().noun} yet.`)
-        : h("div", { class: "share-caption" }, h("b", null, `${cur.deliverySharePercent}%`), " of orders were delivered");
+        : h("div", { class: "share-caption" }, h("b", null, `${cur.deliverySharePercent}%`), " of orders were delivered",
+          d.feeTbcCount ? ` · ${orders(d.feeTbcCount)} with delivery fee TBC (not in sales)` : "");
       fill("split", h("div", { class: "split" }, fig("Delivery", "--accent", d), fig("Pickup", "--pickup", p)), h("div", { class: "share" }, bar, caption));
     }
 
@@ -803,7 +804,11 @@
         h("span", { class: "item-when" }, badge || null, badge ? " " : null, when),
         h("span", { class: "item-last" }, ...lastLine(c.lastMessage)));
     }
-    const outcomeBadge = (ordered) => h("span", { class: "badge" + (ordered ? " ordered" : "") }, ordered ? "✓ Ordered" : "Not ordered");
+    // A chat can place several orders; each one is linked to the chat on the order itself.
+    const outcomeBadge = (orders) => {
+      const n = Array.isArray(orders) ? orders.length : 0;
+      return h("span", { class: "badge" + (n ? " ordered" : "") }, n > 1 ? `✓ ${n} orders` : n ? "✓ Ordered" : "Not ordered");
+    };
 
     let liveCache = null, todayStats = null;
     async function loadLive(showSkeleton) {
@@ -814,18 +819,19 @@
         state.liveIds = new Set(liveCache.map((c) => c.id));
         if (todayStats) renderFigs(todayStats, liveCache.length);
         if (!liveCache.length) fill("live", empty("Nobody is chatting right now", "New chats appear here within 15 seconds.", "chat"));
-        else fill("live", h("div", { class: "list" }, liveCache.map((c) => listItem(c, ago(c.idleMinutes), c.ordered ? outcomeBadge(true) : null))));
+        else fill("live", h("div", { class: "list" }, liveCache.map((c) => listItem(c, ago(c.idleMinutes), c.ordered ? outcomeBadge(c.orders) : null))));
       } catch (e) { fill("live", failed(e.message, () => loadLive(true))); }
     }
 
     function renderPast() {
       const term = $("search").value.trim().toLowerCase();
-      const rows = term ? state.past.filter((c) => (c.phone || "").includes(term) || (c.lastMessage && c.lastMessage.content.toLowerCase().includes(term)) || c.id.startsWith(term)) : state.past;
+      const rows = term ? state.past.filter((c) => (c.phone || "").includes(term) || (c.lastMessage && c.lastMessage.content.toLowerCase().includes(term)) || c.id.startsWith(term)
+        || (c.orders || []).some((o) => o.orderId.toLowerCase().includes(term))) : state.past;
       if (!state.past.length) return fill("past", empty(`No chats ${currentRange().noun}`, "Conversations with the AI Order Taker will be listed here.", "chat"));
       if (!rows.length) return fill("past", empty("No matches", "Try part of a phone number or a word from the chat.", "chat"));
       const shown = rows.slice(0, state.pastShown);
       const multiDay = rangeDates().from !== rangeDates().to;
-      fill("past", h("div", { class: "list" }, shown.map((c) => listItem(c, multiDay ? fmtDayTime(c.startedAt) : fmtTime.format(new Date(c.startedAt)), outcomeBadge(c.outcome === "ordered")))),
+      fill("past", h("div", { class: "list" }, shown.map((c) => listItem(c, multiDay ? fmtDayTime(c.startedAt) : fmtTime.format(new Date(c.startedAt)), outcomeBadge(c.orders)))),
         rows.length > shown.length ? h("button", { class: "btn more", type: "button", onclick: () => { state.pastShown += 60; renderPast(); } }, `Show more (${count(rows.length - shown.length)} left)`) : null);
     }
 
@@ -870,10 +876,11 @@
       const head = $("reader-head");
       head.replaceChildren(...[
         h("span", { class: "reader-title" }, chat.phone || `Guest · ${chat.id.slice(0, 6)}`),
-        outcomeBadge(chat.outcome === "ordered"),
+        outcomeBadge(chat.orders),
         live ? h("span", { class: "card-note" }, h("span", { class: "live-dot", "aria-hidden": "true" }), "Live · following") : null,
         h("button", { class: "btn reader-close", type: "button", onclick: closeChat }, "Back"),
-        h("span", { class: "reader-meta" }, `Started ${fmtDayTime(chat.startedAt)} · last active ${fmtTime.format(new Date(chat.lastSeen))}${chat.orderId ? ` · Order ${chat.orderId}` : ""}`)].filter(Boolean));
+        h("span", { class: "reader-meta" }, `Started ${fmtDayTime(chat.startedAt)} · last active ${fmtTime.format(new Date(chat.lastSeen))}`
+          + ((chat.orders || []).length ? ` · ${chat.orders.length > 1 ? "Orders" : "Order"} ${chat.orders.map((o) => `${o.orderId} (${fmtTime.format(new Date(o.createdAt))}, ${o.status.toLowerCase()})`).join(", ")}` : ""))].filter(Boolean));
       const box = $("transcript");
       const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
       if (!chat.messages.length) { box.replaceChildren(empty("No messages in this chat", "The customer opened the chat but hasn't typed yet.", "chat")); return; }
@@ -1001,7 +1008,10 @@
     buildRanges();
     let saved = "overview";
     try { saved = localStorage.getItem("db-dash-view") === "convos" ? "convos" : "overview"; } catch { /* storage blocked */ }
-    setView(saved);
+    // /admin/dashboard#chat=<id> opens that chat, so an order on the order list can link to it.
+    const linkedChat = /^#chat=([0-9a-f]{64})$/.exec(location.hash);
+    setView(linkedChat ? "convos" : saved);
+    if (linkedChat) openChat(linkedChat[1]);
   })();
   </script>
 </body>

@@ -1,7 +1,7 @@
 // Doner Bros — order checks and saving. Everything the AI Order Taker submits is re-checked here;
 // totals.js recalculates every amount before saving, and no submitted amount is ever trusted.
 
-const { calculateTotals } = require("./totals");
+const { calculateTotals, deliveryFeeLine, deliveryFeeStatus } = require("./totals");
 const { formatPrice: formatRupees } = require("./services/menu-service");
 
 const RESTAURANT_TIMEZONE = "Asia/Karachi";
@@ -268,6 +268,7 @@ function toOrderRow(order) {
     subtotal_paisa: order.subtotalPaisa,
     discount_paisa: order.discountPaisa,
     tax_paisa: order.taxPaisa,
+    // null on a delivery order: the fee wasn't decided, so it isn't in the total.
     delivery_fee_paisa: order.deliveryFeePaisa,
     total_paisa: order.totalPaisa,
     promotion_id: order.promotion ? order.promotion.id : null,
@@ -285,8 +286,10 @@ function formatSavedOrder(orderNumber, order, phone) {
   const totals = [`Subtotal: ${formatRupees(order.subtotalPaisa)}`];
   if (order.discountPaisa > 0) totals.push(`Discount (${order.promotion.name}): -${formatRupees(order.discountPaisa)}`);
   if (order.taxPaisa > 0) totals.push(`Tax: ${formatRupees(order.taxPaisa)}`);
-  if (order.orderType === "delivery") totals.push(`Delivery fee: ${formatRupees(order.deliveryFeePaisa)}`);
-  totals.push(`Total: ${formatRupees(order.totalPaisa)} for ${order.orderType}`);
+  const feeLine = deliveryFeeLine(order.orderType, order.deliveryFeePaisa);
+  if (feeLine) totals.push(feeLine);
+  const feeNotDecided = deliveryFeeStatus(order.orderType, order.deliveryFeePaisa) === "not_decided";
+  totals.push(`Total: ${formatRupees(order.totalPaisa)} for ${order.orderType}${feeNotDecided ? " (delivery fee not included)" : ""}`);
   if (order.orderType === "pickup") totals.push(`Pickup time requested: ${order.pickupTime || "as soon as possible"}`);
   if (order.orderType === "delivery") {
     totals.push(`Deliver to: ${order.deliveryAddress}${order.deliveryUnit ? `, ${order.deliveryUnit}` : ""}`);

@@ -26,10 +26,27 @@ function percent(part, whole) {
 
 const minutesSince = (iso, at) => Math.max(0, Math.floor((at - Date.parse(iso)) / 60000));
 
-// Chat sessions hold no phone number; a chat that ended in an order has it on the linked order
-// (chat_sessions.order_id -> orders.order_id), embedded in the same select.
-const SESSION_COLUMNS = "id, started_at, last_seen, ended_in_order, order_id, orders(customer_phone)";
-const phoneOf = (session) => (session.orders && session.orders.customer_phone) || null;
+// A chat can place many orders. Each order names its chat (orders.chat_session_id, from
+// 0005_order_chat_link.sql), and they are embedded in the same select. The foreign key is named
+// because the legacy chat_sessions.order_id links the same two tables the other way; that column
+// only ever held the latest order and is no longer read.
+const ORDERS_EMBED = "orders!orders_chat_session_id_fkey(order_id, order_number, created_at, status, order_type, customer_phone)";
+const SESSION_COLUMNS = `id, started_at, last_seen, ${ORDERS_EMBED}`;
+
+// Oldest first, as the dashboard needs them. No amounts and no customer details.
+function ordersOf(session) {
+  return (Array.isArray(session.orders) ? session.orders : [])
+    .slice()
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+    .map((o) => ({ orderId: o.order_id, orderNumber: o.order_number, createdAt: o.created_at, status: o.status, orderType: o.order_type }));
+}
+
+// Chat sessions hold no phone number; a chat that placed an order has it on its latest order.
+function phoneOf(session) {
+  const orders = Array.isArray(session.orders) ? session.orders : [];
+  const latest = orders.reduce((a, b) => (!a || Date.parse(b.created_at) > Date.parse(a.created_at) ? b : a), null);
+  return (latest && latest.customer_phone) || null;
+}
 
 // [{ query }] -> the n most common, as [{ query, count }].
 function topQueries(rows, n = 10) {
@@ -86,6 +103,8 @@ function createConversationService({ client, now = () => new Date() }) {
     if (error) throw error;
   }
 
+  // Legacy: keeps chat_sessions.ended_in_order/order_id written for old reports. Nothing reads them;
+  // the order itself carries the link (orders.chat_session_id).
   async function markOrdered(sessionId, orderId) {
     if (!ORDER_ID_PATTERN.test(String(orderId))) return;
     const { error } = await client.from("chat_sessions").update({ ended_in_order: true, order_id: orderId }).eq("id", sessionId);
@@ -129,8 +148,8 @@ function createConversationService({ client, now = () => new Date() }) {
         idleMinutes: minutesSince(s.last_seen, at),
         messageCount: summaries.get(s.id).count,
         lastMessage: preview(summaries.get(s.id).last),
-        ordered: s.ended_in_order,
-        orderId: s.order_id,
+        ordered: ordersOf(s).length > 0,
+        orders: ordersOf(s),
         phone: phoneOf(s),
       })),
     };
@@ -157,8 +176,8 @@ function createConversationService({ client, now = () => new Date() }) {
         lastSeen: s.last_seen,
         messageCount: summaries.get(s.id).count,
         lastMessage: preview(summaries.get(s.id).last),
-        outcome: s.ended_in_order ? "ordered" : "not_ordered",
-        orderId: s.order_id,
+        outcome: ordersOf(s).length ? "ordered" : "not_ordered",
+        orders: ordersOf(s),
         phone: phoneOf(s),
       })),
     };
@@ -181,8 +200,8 @@ function createConversationService({ client, now = () => new Date() }) {
       id: session.id,
       startedAt: session.started_at,
       lastSeen: session.last_seen,
-      outcome: session.ended_in_order ? "ordered" : "not_ordered",
-      orderId: session.order_id,
+      outcome: ordersOf(session).length ? "ordered" : "not_ordered",
+      orders: ordersOf(session),
       phone: phoneOf(session),
       messages: messages.map((m) => ({ role: m.role, content: m.content, at: m.created_at })),
     };
@@ -192,15 +211,17 @@ function createConversationService({ client, now = () => new Date() }) {
     const range = normaliseRange(from, to, today());
     const { startIso, endIso } = time.dayRangeToUtc(range.from, range.to);
     const [sessions, misses] = await Promise.all([
-      pages(() => client.from("chat_sessions").select("id, ended_in_order").gte("started_at", startIso).lt("started_at", endIso).order("id")),
+      pages(() => client.from("chat_sessions").select("id, orders!orders_chat_session_id_fkey(order_id)").gte("started_at", startIso).lt("started_at", endIso).order("id")),
       pages(() => client.from("menu_search_misses").select("query").gte("created_at", startIso).lt("created_at", endIso).order("id")),
     ]);
-    const ordered = sessions.filter((s) => s.ended_in_order).length;
+    const orderCounts = sessions.map((s) => (Array.isArray(s.orders) ? s.orders.length : 0));
+    const ordered = orderCounts.filter((n) => n > 0).length;
     return {
       from: range.from,
       to: range.to,
       totalChats: sessions.length,
       endedInOrder: ordered,
+      ordersFromChats: orderCounts.reduce((a, b) => a + b, 0),
       conversionPercent: percent(ordered, sessions.length),
       searchMisses: misses.length,
       topUnmatchedRequests: topQueries(misses, 10),

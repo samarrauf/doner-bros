@@ -159,7 +159,8 @@ values
   -- Provisional until the restaurant confirms tax.
   ('tax_mode',           'none'),
   ('tax_rate_bps',       '0'),
-  ('delivery_fee_paisa', '0'),
+  -- '' = not decided yet (customers are told the restaurant will confirm it); '0' = free delivery.
+  ('delivery_fee_paisa', ''),
   ('currency',           'PKR'),
   ('order_types',        'pickup,delivery'),
   ('whatsapp',           '03103994111'),

@@ -61,7 +61,7 @@ test("a day with no orders is all zeros, not missing fields", async () => {
   assert.equal(today.uniqueCustomers, 0);
   assert.equal(today.netSalesPaisa, 0);
   assert.equal(today.averageOrderValuePaisa, 0);
-  assert.deepEqual(today.delivery, { orderCount: 0, netSalesPaisa: 0 });
+  assert.deepEqual(today.delivery, { orderCount: 0, netSalesPaisa: 0, feeTbcCount: 0 });
   assert.deepEqual(today.pickup, { orderCount: 0, netSalesPaisa: 0 });
   assert.deepEqual(today.cancelled, { orderCount: 0, valuePaisa: 0 });
 });
@@ -84,7 +84,7 @@ test("delivery and pickup are split, and add up to the day", () => {
     order({ at: NOON_KARACHI, type: "delivery", subtotal: 30000, phone: "03000000002" }),
     order({ at: NOON_KARACHI, type: "pickup", subtotal: 25000, phone: "03000000001" }),
   ]);
-  assert.deepEqual(s.delivery, { orderCount: 2, netSalesPaisa: 100000 });
+  assert.deepEqual(s.delivery, { orderCount: 2, netSalesPaisa: 100000, feeTbcCount: 0 });
   assert.deepEqual(s.pickup, { orderCount: 1, netSalesPaisa: 25000 });
   assert.equal(s.orderCount, s.delivery.orderCount + s.pickup.orderCount);
   assert.equal(s.netSalesPaisa, s.delivery.netSalesPaisa + s.pickup.netSalesPaisa);
@@ -100,7 +100,7 @@ test("a cancelled order is left out of sales and counted apart", () => {
   assert.equal(s.orderCount, 1);
   assert.equal(s.netSalesPaisa, 60000);
   assert.equal(s.uniqueCustomers, 1);
-  assert.deepEqual(s.delivery, { orderCount: 0, netSalesPaisa: 0 });
+  assert.deepEqual(s.delivery, { orderCount: 0, netSalesPaisa: 0, feeTbcCount: 0 });
   assert.deepEqual(s.cancelled, { orderCount: 1, valuePaisa: 90000 });
 });
 

@@ -23,13 +23,49 @@ function wholeNumber(value) {
   return Number.isSafeInteger(number) ? number : null;
 }
 
+// A missing, null or empty delivery_fee_paisa means the restaurant hasn't decided the fee yet. It
+// is never read as 0: "0" is the restaurant saying delivery is free.
+function isFeeNotDecided(value) {
+  return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+}
+
 // Returns the pricing settings, or null if any is missing or broken, so nothing is mispriced.
+// deliveryFeePaisa is null when the fee is not decided.
 function readPricingSettings(settings) {
   const taxMode = settings.tax_mode;
   const taxRateBps = wholeNumber(settings.tax_rate_bps);
-  const deliveryFeePaisa = wholeNumber(settings.delivery_fee_paisa);
-  if (!TAX_MODES.includes(taxMode) || taxRateBps === null || taxRateBps > 10000 || deliveryFeePaisa === null) return null;
+  const notDecided = isFeeNotDecided(settings.delivery_fee_paisa);
+  const deliveryFeePaisa = notDecided ? null : wholeNumber(settings.delivery_fee_paisa);
+  if (!TAX_MODES.includes(taxMode) || taxRateBps === null || taxRateBps > 10000 || (!notDecided && deliveryFeePaisa === null)) return null;
   return { taxMode, taxRateBps, deliveryFeePaisa };
+}
+
+// "none" (not a delivery), "not_decided", "free" or "set". Worked out from a saved fee too, where
+// null on a delivery order means the fee wasn't decided when it was placed.
+function deliveryFeeStatus(orderType, deliveryFeePaisa) {
+  if (orderType !== "delivery") return "none";
+  if (deliveryFeePaisa === null || deliveryFeePaisa === undefined) return "not_decided";
+  return deliveryFeePaisa === 0 ? "free" : "set";
+}
+
+const FEE_TO_BE_CONFIRMED = "to be confirmed by the restaurant";
+
+// The delivery fee as the customer sees it, or null for pickup.
+function deliveryFeeText(orderType, deliveryFeePaisa) {
+  const status = deliveryFeeStatus(orderType, deliveryFeePaisa);
+  if (status === "none") return null;
+  if (status === "not_decided") return FEE_TO_BE_CONFIRMED;
+  if (status === "free") return "free";
+  return formatPrice(deliveryFeePaisa);
+}
+
+// The summary line: "Delivery fee: to be confirmed by the restaurant", "Free delivery",
+// "Delivery fee: Rs 150", or null for pickup.
+function deliveryFeeLine(orderType, deliveryFeePaisa) {
+  const status = deliveryFeeStatus(orderType, deliveryFeePaisa);
+  if (status === "none") return null;
+  if (status === "free") return "Free delivery";
+  return `Delivery fee: ${deliveryFeeText(orderType, deliveryFeePaisa)}`;
 }
 
 // Tax is rounded to the nearest whole rupee, so totals are always in whole rupees.
@@ -118,7 +154,8 @@ async function priceCart(cart) {
 
 // cart: [{ item_id, quantity, option_ids }]; anything else on a line, such as a price, is ignored.
 // orderType: "pickup", "delivery" or null. getDiscount({ lines, subtotalPaisa }) returns whole paisa.
-// Tax applies to the food after the discount; the delivery fee is added after tax.
+// Tax applies to the food after the discount; the delivery fee is added after tax. A fee that is
+// not decided is left out of the total and comes back as deliveryFeePaisa null.
 // Returns paisa integers and display strings, or { error, code, ... }.
 async function calculateTotals({ cart, orderType = null, getDiscount = null }) {
   const priced = await priceCart(cart);
@@ -137,7 +174,7 @@ async function calculateTotals({ cart, orderType = null, getDiscount = null }) {
   const afterDiscountPaisa = subtotalPaisa - discountPaisa;
   const { taxPaisa, taxIncludedPaisa } = taxOn(afterDiscountPaisa, pricing);
   const deliveryFeePaisa = orderType === "delivery" ? pricing.deliveryFeePaisa : 0;
-  const totalPaisa = afterDiscountPaisa + taxPaisa + deliveryFeePaisa;
+  const totalPaisa = afterDiscountPaisa + taxPaisa + (deliveryFeePaisa || 0);
   if (totalPaisa > MAX_ORDER_PAISA) return { error: "the order is too large to be placed.", code: "order_too_large" };
 
   return {
@@ -147,6 +184,7 @@ async function calculateTotals({ cart, orderType = null, getDiscount = null }) {
     taxPaisa,
     taxIncludedPaisa,
     deliveryFeePaisa,
+    deliveryFeeStatus: deliveryFeeStatus(orderType, deliveryFeePaisa),
     totalPaisa,
     taxMode: pricing.taxMode,
     taxRateBps: pricing.taxRateBps,
@@ -155,7 +193,8 @@ async function calculateTotals({ cart, orderType = null, getDiscount = null }) {
       discount: formatPrice(discountPaisa),
       tax: formatPrice(taxPaisa),
       taxIncluded: formatPrice(taxIncludedPaisa),
-      deliveryFee: formatPrice(deliveryFeePaisa),
+      // null for pickup; "to be confirmed by the restaurant", "free" or "Rs 150" for delivery.
+      deliveryFee: deliveryFeeText(orderType, deliveryFeePaisa),
       total: formatPrice(totalPaisa),
     },
   };
@@ -177,4 +216,15 @@ async function describeCart(cart) {
   });
 }
 
-module.exports = { MAX_CART_LINES, MAX_QUANTITY, priceCart, calculateTotals, describeCart };
+module.exports = {
+  MAX_CART_LINES,
+  MAX_QUANTITY,
+  FEE_TO_BE_CONFIRMED,
+  priceCart,
+  calculateTotals,
+  describeCart,
+  deliveryFeeStatus,
+  deliveryFeeText,
+  deliveryFeeLine,
+  isFeeNotDecided,
+};

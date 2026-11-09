@@ -85,11 +85,13 @@ test("a delivery summary shows the address, unit, instructions and the fee from 
   assert.ok(text.endsWith(`Delivery fee: ${rs(FEE)}\nTotal: ${rs(CART_SUBTOTAL + FEE)}`));
 });
 
-test("a fee of zero is shown, not treated as missing", async () => {
+test("a fee of zero is shown as free delivery, not treated as missing", async () => {
   const state = cart();
   setDeliveryDetails(state, { customerName: "Sara" });
-  const { summary } = await summarise(state);
-  assert.equal(summary.totals.deliveryFee, "Rs 0");
+  const { summary, text } = await summarise(state);
+  assert.equal(summary.totals.deliveryFee, "free");
+  assert.ok(text.includes("\nFree delivery\n"));
+  assert.ok(!text.includes("Rs 0"));
 });
 
 test("inclusive tax is shown as already in the prices", async () => {
