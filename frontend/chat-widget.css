@@ -2,7 +2,7 @@
    Desktop: a floating 400px panel above the launcher. Under 768px: a full-screen sheet. */
 
 .cw-panel {
-  --cw-font: "Poppins", "Noto Naskh Arabic", "Noto Nastaliq Urdu", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --cw-font: var(--font-body); /* type tokens live in styles.css :root */
   --cw-cream: #faf7f2;
   --cw-sand: #f2ece3;
   --cw-sand-line: #e6ddd0;
@@ -79,15 +79,13 @@
 
 .cw-heading h2 {
   margin: 0;
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
 }
 
 .cw-subtitle {
   margin: 2px 0 0;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   line-height: 1.35;
   color: rgba(255, 255, 255, 0.72);
 }
@@ -141,7 +139,7 @@
   border-radius: 999px;
   background: var(--accent);
   color: var(--ink);
-  font: 700 0.7rem/20px var(--font);
+  font: var(--weight-bold) var(--text-xs)/20px var(--font-body);
   text-align: center;
 }
 
@@ -167,8 +165,8 @@
   max-width: 88%;
   padding: 12px 16px;
   border-radius: 14px;
-  font-size: 0.92rem;
-  line-height: 1.6;
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
   overflow-wrap: anywhere;
   /* Keep line breaks and indents in replies (a deal's contents sit indented under it). */
   white-space: pre-wrap;
@@ -268,7 +266,7 @@
   border-radius: 999px;
   background: var(--cw-sand);
   color: var(--charcoal);
-  font: 500 0.88rem/1.2 var(--cw-font, var(--font));
+  font: var(--weight-medium) var(--text-sm)/1.2 var(--cw-font, var(--font));
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s, transform 0.2s var(--ease);
@@ -286,7 +284,7 @@
 }
 
 .cw-chip-emoji {
-  font-size: 1rem;
+  font-size: var(--text-base);
   line-height: 1;
 }
 
@@ -300,7 +298,7 @@
   border: 0;
   background: transparent;
   color: var(--muted);
-  font: 600 0.78rem/1 var(--font);
+  font: var(--weight-semibold) var(--text-xs)/1 var(--font-body);
   cursor: pointer;
 }
 
@@ -341,7 +339,7 @@
   flex-shrink: 0;
   min-height: 38px;
   padding: 6px 14px;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 /* ----- Input ----- */
@@ -362,7 +360,7 @@
   border-radius: 10px;
   background: var(--white);
   /* 16px stops iOS Safari zooming in when the field is focused. */
-  font: 400 1rem var(--cw-font, var(--font));
+  font: var(--weight-regular) var(--text-base) var(--cw-font, var(--font));
   color: var(--charcoal);
 }
 
@@ -432,7 +430,7 @@
 
 .cw-drawer-head h3 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--text-lg);
 }
 
 .cw-drawer-body {
@@ -446,7 +444,7 @@
 .cw-drawer-empty,
 .cw-drawer-error {
   margin: 16px 0;
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 
@@ -477,25 +475,25 @@
 }
 
 .cw-cart-name {
-  font-weight: 600;
-  font-size: 0.92rem;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
   color: var(--ink);
 }
 
 .cw-cart-contains {
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
 .cw-cart-warning {
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: #a12828;
 }
 
 .cw-cart-price {
   margin: 0;
-  font-weight: 700;
-  font-size: 0.92rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -515,7 +513,7 @@
   border-radius: 10px;
   background: var(--white);
   color: var(--ink);
-  font: 600 1.2rem/1 var(--font);
+  font: var(--weight-semibold) var(--text-lg)/1 var(--font-body);
   cursor: pointer;
 }
 
@@ -525,7 +523,7 @@
 
 .cw-qty {
   min-width: 28px;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   text-align: center;
 }
 
@@ -536,7 +534,7 @@
   border: 0;
   background: transparent;
   color: #a12828;
-  font: 600 0.82rem var(--font);
+  font: var(--weight-semibold) var(--text-sm) var(--font-body);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -560,7 +558,7 @@
   display: flex;
   justify-content: space-between;
   margin-bottom: 12px;
-  font-size: 1rem;
+  font-size: var(--text-base);
 }
 
 /* ----- Phones and small tablets: a full-screen sheet ----- */
