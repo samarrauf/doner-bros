@@ -4,7 +4,8 @@
 Doner Bros, Food Court, Shalimar Smart City, in front of Shinwari Khas, Sargodha. WhatsApp 0310-3994111.
 Order types: pickup and delivery. Delivery fee is configurable (menu_settings.delivery_fee_paisa):
 empty/missing = not decided (shown as "to be confirmed by the restaurant", left out of totals),
-"0" = free delivery, a positive number = fee in paisa added to the total. Currently not decided.
+"0" = free delivery, a positive number = fee in paisa added to the total. The current value lives
+in Supabase only; never copy it into code, prompts or tests.
 
 ## Money
 All prices are stored and calculated in PAISA as integers. Rs 290 = 29000.
