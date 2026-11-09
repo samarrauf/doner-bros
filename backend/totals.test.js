@@ -1,111 +1,233 @@
 // Tests for order totals. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
-const { checkPricing, calculateOrderTotals, NO_TAX_NO_FEE } = require("./totals");
-const { validateOrder, toOrderRow, placeOrder, priceCartItem } = require("./orders");
+const { priceCart, calculateTotals, describeCart, MAX_QUANTITY } = require("./totals");
+const { useFakeMenu, PRICE, FEE, TAXED, DISCOUNT, TAX_ROUNDING, rs, wholeRupees } = require("./fake-menu");
+const menuService = require("./services/menu-service");
 
-const menu = require(path.join(__dirname, "..", "data", "menu.json"));
-const realPricing = require(path.join(__dirname, "..", "data", "pricing.json"));
-const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
+const line = (item_id, quantity = 1) => ({ item_id, quantity, option_ids: [] });
+const total = (cart, options = {}) => calculateTotals({ cart, ...options });
 
-const lines = (...paisa) => paisa.map((lineTotalPaisa) => ({ lineTotalPaisa }));
-const TAXED = { taxPercent: 16, deliveryFeePaisa: 15000 };
+test.beforeEach(() => useFakeMenu());
 
-test("the real pricing file is valid: no tax, delivery fee not set", () => {
-  assert.deepEqual(checkPricing(realPricing), { pricing: { taxPercent: 0, deliveryFeePaisa: null } });
+test("one item: paisa integers and display strings", async () => {
+  const result = await total([line("i-main")]);
+  assert.equal(result.subtotalPaisa, PRICE.main);
+  assert.equal(result.discountPaisa, 0);
+  assert.equal(result.taxPaisa, 0);
+  assert.equal(result.deliveryFeePaisa, 0);
+  assert.equal(result.totalPaisa, PRICE.main);
+  assert.deepEqual(result.display, { subtotal: rs(PRICE.main), discount: "Rs 0", tax: "Rs 0", taxIncluded: "Rs 0", deliveryFee: null, total: rs(PRICE.main) });
+  assert.equal(result.lines[0].name, "Test Main");
+  assert.equal(result.lines[0].unitPriceDisplay, rs(PRICE.main));
 });
 
-test("broken pricing config is refused rather than guessed", () => {
-  for (const bad of [null, {}, { taxPercent: -1, deliveryFeePaisa: null }, { taxPercent: "16", deliveryFeePaisa: null },
-    { taxPercent: 101, deliveryFeePaisa: 0 }, { taxPercent: 0, deliveryFeePaisa: 150.5 }, { taxPercent: 0, deliveryFeePaisa: -1 },
-    { taxPercent: 0 }]) {
-    assert.ok(checkPricing(bad).error, JSON.stringify(bad));
+test("several items, with quantities", async () => {
+  const result = await total([line("i-main", 2), line("i-side"), line("i-drink", 3)]);
+  assert.deepEqual(result.lines.map((l) => l.lineTotalPaisa), [2 * PRICE.main, PRICE.side, 3 * PRICE.drink]);
+  const subtotal = 2 * PRICE.main + PRICE.side + 3 * PRICE.drink;
+  assert.equal(result.subtotalPaisa, subtotal);
+  assert.equal(result.totalPaisa, subtotal);
+  assert.equal(result.display.total, rs(subtotal));
+});
+
+test("the same item on two lines is priced on both", async () => {
+  assert.equal((await total([line("i-drink"), line("i-drink", 2)])).subtotalPaisa, 3 * PRICE.drink);
+});
+
+test("an unknown id is rejected, naming that id", async () => {
+  const result = await total([line("i-main"), line("no-such-id")]);
+  assert.equal(result.totalPaisa, undefined);
+  assert.equal(result.code, "items_not_orderable");
+  assert.deepEqual(result.missingIds, ["no-such-id"]);
+  assert.deepEqual(result.unavailableItems, []);
+  assert.match(result.error, /not on the menu: no-such-id/);
+});
+
+test("a finished item is rejected by name, told apart from one that doesn't exist", async () => {
+  const result = await total([line("i-main"), line("i-finished")]);
+  assert.equal(result.totalPaisa, undefined);
+  assert.deepEqual(result.missingIds, []);
+  assert.deepEqual(result.unavailableItems, [{ id: "i-finished", name: "Test Finished" }]);
+  assert.match(result.error, /finished for now: Test Finished/);
+  assert.doesNotMatch(result.error, /not on the menu/);
+});
+
+test("both checks run: unknown and finished are reported together", async () => {
+  const result = await total([line("no-such-id"), line("i-finished")]);
+  assert.deepEqual(result.missingIds, ["no-such-id"]);
+  assert.deepEqual(result.unavailableItems, [{ id: "i-finished", name: "Test Finished" }]);
+});
+
+test("deals are priced from the service, and an unavailable one counts as finished", async () => {
+  const combo = await total([line("d-combo", 2), line("i-drink")]);
+  assert.equal(combo.subtotalPaisa, 2 * PRICE.combo + PRICE.drink);
+  assert.equal(combo.lines[0].name, "Test Combo");
+  assert.deepEqual((await total([line("d-gone")])).unavailableItems, [{ id: "d-gone", name: "Test Gone" }]);
+});
+
+test("a cart mixing deals and single items: each deal is one line at the deal price", async () => {
+  useFakeMenu({ settings: TAXED });
+  const result = await total([line("d-combo", 2), line("i-main"), line("d-combo"), line("i-drink", 3)], { orderType: "delivery" });
+
+  assert.deepEqual(
+    result.lines.map((l) => [l.name, l.quantity, l.unitPricePaisa, l.lineTotalPaisa]),
+    [
+      ["Test Combo", 2, PRICE.combo, 2 * PRICE.combo],
+      ["Test Main", 1, PRICE.main, PRICE.main],
+      ["Test Combo", 1, PRICE.combo, PRICE.combo],
+      ["Test Drink", 3, PRICE.drink, 3 * PRICE.drink],
+    ]
+  );
+  // Priced by its parts, one deal would be PRICE.main + PRICE.side.
+  const subtotal = 3 * PRICE.combo + PRICE.main + 3 * PRICE.drink;
+  const tax = wholeRupees((subtotal * 16) / 100);
+  assert.equal(result.subtotalPaisa, subtotal);
+  assert.equal(result.taxPaisa, tax);
+  assert.equal(result.deliveryFeePaisa, FEE);
+  assert.equal(result.totalPaisa, subtotal + tax + FEE);
+  assert.equal(result.display.total, rs(subtotal + tax + FEE));
+
+  assert.deepEqual(result.lines[0].contains, ["1 Test Main", "1 Test Side", "1 Test Extra"]);
+  assert.equal("contains" in result.lines[1], false, "a plain item has no contents");
+});
+
+test("a mixed cart with one unavailable deal is refused as a whole", async () => {
+  const result = await total([line("i-main"), line("d-combo"), line("d-gone")]);
+  assert.equal(result.code, "items_not_orderable");
+  assert.deepEqual(result.unavailableItems, [{ id: "d-gone", name: "Test Gone" }]);
+});
+
+test("a quantity of zero is rejected, naming the item", async () => {
+  const result = await total([line("i-main", 0)]);
+  assert.equal(result.code, "invalid_quantity");
+  assert.match(result.error, /Test Main: quantity must be a whole number from 1 to 20/);
+});
+
+test("negative, fractional and non-number quantities are rejected", async () => {
+  for (const quantity of [-1, 1.5, "2", null, NaN]) {
+    assert.equal((await total([line("i-main", quantity)])).code, "invalid_quantity", String(quantity));
+  }
+  assert.equal((await total([{ item_id: "i-main" }])).code, "invalid_quantity", "no quantity at all");
+});
+
+test("a very large quantity is rejected, and the limit itself is allowed", async () => {
+  for (const quantity of [MAX_QUANTITY + 1, 1000000, Number.MAX_SAFE_INTEGER, 1e308, Infinity]) {
+    assert.equal((await total([line("i-main", quantity)])).code, "invalid_quantity", String(quantity));
+  }
+  assert.equal((await total([line("i-main", MAX_QUANTITY)])).totalPaisa, PRICE.main * MAX_QUANTITY);
+});
+
+test("a total too big for the orders table is refused rather than overflowing", async () => {
+  useFakeMenu({ prices: { "i-main": PRICE.tooBig } });
+  assert.equal((await total([line("i-main", 2)])).code, "order_too_large");
+});
+
+test("empty, oversized and malformed carts are rejected", async () => {
+  for (const cart of [[], null, "i-main", [null], [{ quantity: 1 }], [{ item_id: "", quantity: 1 }], Array(21).fill(line("i-drink"))]) {
+    assert.equal((await total(cart)).code, "invalid_cart");
   }
 });
 
-test("pickup: subtotal minus discount, plus tax on the discounted amount, no delivery fee", () => {
-  assert.deepEqual(calculateOrderTotals({ lines: lines(145000, 35000), discountPaisa: 18000, orderType: "pickup" }, TAXED), {
-    subtotalPaisa: 180000,
-    discountPaisa: 18000,
-    taxPaisa: 25900, // 16% of Rs 1,620 = Rs 259.20, rounded to Rs 259
-    deliveryFeePaisa: 0,
-    totalPaisa: 162000 + 25900,
-  });
+test("a price on a cart line is ignored: only the ids and quantity are read", async () => {
+  const cart = [{ item_id: "i-main", quantity: 1, pricePaisa: 1, unitPricePaisa: 1, lineTotalPaisa: 1, totalPaisa: 1 }];
+  assert.equal((await total(cart)).totalPaisa, PRICE.main);
 });
 
-test("delivery adds the fee after tax; an unset fee is null and left out of the total", () => {
-  const set = calculateOrderTotals({ lines: lines(100000), orderType: "delivery" }, TAXED);
-  assert.equal(set.deliveryFeePaisa, 15000);
-  assert.equal(set.totalPaisa, 100000 + 16000 + 15000);
-
-  const unset = calculateOrderTotals({ lines: lines(100000), orderType: "delivery" }, NO_TAX_NO_FEE);
-  assert.equal(unset.deliveryFeePaisa, null);
-  assert.equal(unset.totalPaisa, 100000);
+test("prices are the menu's at the moment of calculating", async () => {
+  assert.equal((await total([line("i-main")])).totalPaisa, PRICE.main);
+  useFakeMenu({ prices: { "i-main": PRICE.changed } });
+  assert.equal((await total([line("i-main")])).totalPaisa, PRICE.changed);
 });
 
-test("tax rounds to the nearest whole rupee, and totals are whole paisa", () => {
-  assert.equal(calculateOrderTotals({ lines: lines(15000) }, { taxPercent: 16, deliveryFeePaisa: null }).taxPaisa, 2400);
-  assert.equal(calculateOrderTotals({ lines: lines(10300) }, { taxPercent: 5, deliveryFeePaisa: null }).taxPaisa, 500); // Rs 5.15
-  assert.equal(calculateOrderTotals({ lines: lines(11000) }, { taxPercent: 5, deliveryFeePaisa: null }).taxPaisa, 600); // Rs 5.50
-  const { totalPaisa } = calculateOrderTotals({ lines: lines(33333) }, { taxPercent: 7.5, deliveryFeePaisa: null });
-  assert.ok(Number.isInteger(totalPaisa));
+test("an option id can't be priced while the menu has no options", async () => {
+  const result = await total([{ item_id: "i-main", quantity: 1, option_ids: ["opt-1"] }]);
+  assert.equal(result.code, "unknown_option");
+  assert.equal((await total([{ item_id: "i-main", quantity: 1 }])).totalPaisa, PRICE.main, "no option_ids at all is fine");
 });
 
-test("a discount can't exceed the subtotal or go negative", () => {
-  assert.equal(calculateOrderTotals({ lines: lines(10000), discountPaisa: 50000 }).totalPaisa, 0);
-  assert.equal(calculateOrderTotals({ lines: lines(10000), discountPaisa: -500 }).totalPaisa, 10000);
-  assert.equal(calculateOrderTotals({ lines: [] }).totalPaisa, 0);
+test("exclusive tax is added on the discounted amount, then the delivery fee after tax", async () => {
+  useFakeMenu({ settings: TAXED });
+  const result = await total([line("i-box"), line("i-side")], { orderType: "pickup", getDiscount: () => DISCOUNT });
+  const subtotal = PRICE.box + PRICE.side;
+  const tax = wholeRupees(((subtotal - DISCOUNT) * 16) / 100);
+  assert.equal(result.subtotalPaisa, subtotal);
+  assert.equal(result.discountPaisa, DISCOUNT);
+  assert.equal(result.taxPaisa, tax);
+  assert.equal(result.deliveryFeePaisa, 0, "pickup pays no delivery fee");
+  assert.equal(result.totalPaisa, subtotal - DISCOUNT + tax);
+
+  const delivery = await total([line("i-main")], { orderType: "delivery" });
+  assert.equal(delivery.deliveryFeePaisa, FEE);
+  assert.equal(delivery.totalPaisa, PRICE.main + wholeRupees((PRICE.main * 16) / 100) + FEE);
+  assert.equal(delivery.display.deliveryFee, rs(FEE));
 });
 
-test("the cart's server prices give the same total as a fresh order check", () => {
-  const items = [
-    { itemId: "mixed-doner-plate", quantity: 2, options: [{ name: "Base", choice: "Chips" }] },
-    { itemId: "seasoned-chips", quantity: 1, options: [{ name: "Extras", choice: "Add cheese" }] },
-  ];
-  const cartLines = items.map((item) => priceCartItem(item, menu).line);
-  const fromCart = calculateOrderTotals({ lines: cartLines, orderType: "pickup" }, TAXED);
-
-  const args = { customerConfirmed: true, orderType: "pickup", customerName: "Ali", customerPhone: "0300 1234567", items };
-  const order = validateOrder(args, menu, [], FRIDAY, TAXED).order;
-  assert.equal(order.totalPaisa, fromCart.totalPaisa);
-  assert.equal(order.subtotalPaisa, 2 * 145000 + 45000);
-});
-
-test("prices the model sends are ignored, and the saved row carries tax and fee", async () => {
-  const args = {
-    customerConfirmed: true,
-    orderType: "delivery",
-    customerName: "Sara",
-    customerPhone: "0300 1234567",
-    deliveryAddress: "House 12, Street 4, Satellite Town",
-    items: [{ itemId: "ayran", quantity: 2, pricePaisa: 1, lineTotalPaisa: 1 }],
-    subtotalPaisa: 1,
-    taxPaisa: 0,
-    totalPaisa: 1,
+test("tax rounds to the nearest whole rupee in whole-number arithmetic", async () => {
+  const rounds = async (price, bps) => {
+    useFakeMenu({ settings: { tax_mode: "exclusive", tax_rate_bps: String(bps), delivery_fee_paisa: "0" }, prices: { "i-main": price } });
+    return (await total([line("i-main")])).taxPaisa;
   };
-  let row;
-  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: TAXED, phone: "0301 8474036",
-    saveOrder: async (r) => { row = r; return 9; } });
-  assert.equal(result.status, "saved");
-  assert.equal(row.subtotal_paisa, 30000);
-  assert.equal(row.tax_paisa, 4800);
-  assert.equal(row.delivery_fee_paisa, 15000);
-  assert.equal(row.total_paisa, 30000 + 4800 + 15000);
-  assert.match(result.reply, /Tax: Rs 48\nDelivery fee: Rs 150\nTotal: Rs 498 for delivery/);
+  for (const { price, bps, tax } of TAX_ROUNDING) assert.equal(await rounds(price, bps), tax);
+  assert.ok(Number.isInteger(await rounds(PRICE.main + 33, 750)));
 });
 
-test("an unset delivery fee is saved as null and the customer is told", async () => {
-  const args = {
-    customerConfirmed: true,
-    orderType: "delivery",
-    customerName: "Sara",
-    customerPhone: "0300 1234567",
-    deliveryAddress: "House 12, Street 4, Satellite Town",
-    items: [{ itemId: "ayran", quantity: 1 }],
-  };
-  const order = validateOrder(args, menu, [], FRIDAY, NO_TAX_NO_FEE).order;
-  assert.equal(toOrderRow(order).delivery_fee_paisa, null);
-  const result = await placeOrder({ args, menu, promotions: [], today: FRIDAY, pricing: NO_TAX_NO_FEE, phone: "0301 8474036", saveOrder: async () => 10 });
-  assert.match(result.reply, /Delivery fee: not included; the restaurant will confirm it/);
+test("inclusive tax is reported but not added to the total", async () => {
+  useFakeMenu({ settings: { tax_mode: "inclusive", tax_rate_bps: "2500", delivery_fee_paisa: "0" } });
+  const result = await total([line("i-main")]);
+  assert.equal(result.taxPaisa, 0, "the orders table requires total = subtotal - discount + tax + fee");
+  assert.equal(result.taxIncludedPaisa, PRICE.main / 5); // 25% inclusive is a fifth of the price
+  assert.equal(result.totalPaisa, PRICE.main);
+});
+
+test("tax mode none ignores any rate", async () => {
+  useFakeMenu({ settings: { tax_mode: "none", tax_rate_bps: "1600", delivery_fee_paisa: "0" } });
+  assert.equal((await total([line("i-main")])).taxPaisa, 0);
+});
+
+test("a discount can't exceed the subtotal or go negative, and must be whole paisa", async () => {
+  assert.equal((await total([line("i-main")], { getDiscount: () => 999999 })).totalPaisa, 0);
+  assert.equal((await total([line("i-main")], { getDiscount: () => -500 })).totalPaisa, PRICE.main);
+  await assert.rejects(total([line("i-main")], { getDiscount: () => 0.5 }), TypeError);
+});
+
+test("missing or broken settings refuse to price rather than guess", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    for (const settings of [
+      {},
+      { tax_rate_bps: "0", delivery_fee_paisa: "0" },
+      { tax_mode: "gst", tax_rate_bps: "0", delivery_fee_paisa: "0" },
+      { tax_mode: "none", tax_rate_bps: "16.5", delivery_fee_paisa: "0" },
+      { tax_mode: "none", tax_rate_bps: "10001", delivery_fee_paisa: "0" },
+      { tax_mode: "none", tax_rate_bps: "0", delivery_fee_paisa: "-1" },
+      { tax_mode: "none", tax_rate_bps: "0", delivery_fee_paisa: "free" },
+    ]) {
+      useFakeMenu({ settings });
+      assert.equal((await total([line("i-main")])).code, "bad_settings", JSON.stringify(settings));
+    }
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("a menu outage is thrown, never turned into a price", async () => {
+  menuService.setClient(null);
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(total([line("i-main")]), { code: "MENU_UNAVAILABLE" });
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("priceCart needs no settings, and describeCart never refuses", async () => {
+  assert.equal((await priceCart([line("i-side", 2)])).subtotalPaisa, 2 * PRICE.side);
+  assert.deepEqual(await describeCart([line("i-main"), line("i-finished"), line("no-such-id", 2)]), [
+    { itemId: "i-main", quantity: 1, name: "Test Main", orderable: true },
+    { itemId: "i-finished", quantity: 1, name: "Test Finished", orderable: false },
+    { itemId: "no-such-id", quantity: 2, name: "an item no longer on the menu", orderable: false },
+  ]);
 });

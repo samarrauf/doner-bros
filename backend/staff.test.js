@@ -5,6 +5,7 @@ const path = require("path");
 const express = require("express");
 const { nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes } = require("./staff");
 const { createMemoryRateLimiter } = require("./rate-limit");
+const { PRICE } = require("./fake-menu");
 
 const PASSWORD = "correct horse battery staple";
 const basic = (password) => `Basic ${Buffer.from(`staff:${password}`).toString("base64")}`;
@@ -22,6 +23,7 @@ function fakeSupabase(rows) {
         update: (values) => { update = values; return builder; },
         eq: (column, value) => { filters.push((r) => r[column] === value); return builder; },
         neq: (column, value) => { filters.push((r) => r[column] !== value); return builder; },
+        in: (column, values) => { filters.push((r) => values.includes(r[column])); return builder; },
         order: (column, { ascending }) => { order = { column, ascending }; return builder; },
         limit: async () => {
           let result = rows.filter((r) => filters.every((f) => f(r)));
@@ -48,7 +50,7 @@ async function startApp(options) {
   return { base, close: () => server.close() };
 }
 
-const order = (id, status, createdAt) => ({ order_id: id, status, created_at: createdAt, order_type: "pickup", customer_name: "Ali", items: [], total_paisa: 15000 });
+const order = (id, status, createdAt) => ({ order_id: id, status, created_at: createdAt, order_type: "pickup", customer_name: "Ali", items: [], total_paisa: PRICE.drink });
 
 test("statuses only move one step forward", () => {
   assert.equal(nextStatus("NEW"), "PREPARING");

@@ -13,7 +13,7 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_LOGINS = 10;
 const ORDER_FIELDS =
   "order_id, created_at, status, order_type, customer_name, customer_phone, delivery_address, delivery_unit, " +
-  "delivery_instructions, pickup_time, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa";
+  "delivery_instructions, pickup_time, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa, chat_session_id";
 
 // The only move allowed from a status: one step forward. null at the end of the flow.
 function nextStatus(status) {
@@ -76,7 +76,7 @@ function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createM
     let query = client.from("orders").select(ORDER_FIELDS);
     query = completed
       ? query.eq("status", "COMPLETED").order("created_at", { ascending: false })
-      : query.neq("status", "COMPLETED").order("created_at", { ascending: true });
+      : query.in("status", ["NEW", "PREPARING", "READY"]).order("created_at", { ascending: true });
     const { data, error } = await query.limit(MAX_ORDERS);
     if (error) {
       console.error("Staff order list failed:", error.code || error.name);
@@ -109,6 +109,8 @@ function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createM
     console.log(`Order ${orderId}: ${from} -> ${to}.`);
     res.json({ order: data });
   });
+
+  return { requireStaff, requireDatabase };
 }
 
 module.exports = { STATUS_FLOW, nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes };

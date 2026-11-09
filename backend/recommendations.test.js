@@ -1,69 +1,140 @@
+// Tests for add-on suggestions. Run with: npm test
+// The menu goes through the real menu service and getOrderableMenu, the same path as the chat, so a
+// mismatch between what suggestions expect and what the service gives can't hide here again.
+// Fixtures are made-up placeholders, not the real menu. Only the two slugs suggestions look for are real.
 const test = require("node:test");
-const assert = require("node:assert");
-const fs = require("fs");
-const path = require("path");
+const assert = require("node:assert/strict");
 const { suggestItems } = require("./recommendations");
 const { createOrderState, addToCart } = require("./order-session");
+const { getOrderableMenu } = require("./menu-tool");
+const menuService = require("./services/menu-service");
+const { PRICE } = require("./fake-menu");
 
-const MENU = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "data", "menu.json"), "utf8"));
-const menuIds = new Set(MENU.categories.flatMap((c) => c.items.map((item) => item.id)));
+const item = (id, category_id, name, is_available = true, sort_order = 1) => ({
+  id, category_id, slug: id, name, description: null, price_paisa: PRICE.item, sort_order, image_url: null, is_available,
+});
+
+const TABLES = {
+  menu_categories: [
+    { id: "c-main", slug: "mains", name: "Mains", sort_order: 1, image_url: null },
+    { id: "c-drinks", slug: "drinks", name: "Drinks", sort_order: 2, image_url: null },
+    { id: "c-fries", slug: "fries", name: "Fries", sort_order: 3, image_url: null },
+  ],
+  menu_items: [
+    item("main", "c-main", "Test Main"),
+    item("main-with-fries", "c-main", "Test Box with Fries"),
+    item("drink-off", "c-drinks", "Test Soda Finished", false),
+    item("cola", "c-drinks", "Test Cola", true, 2),
+    item("juice", "c-drinks", "Test Juice", true, 3),
+    item("chips", "c-fries", "Test Chips"),
+  ],
+  menu_deals: [
+    { id: "deal-linked", slug: "deal-linked", name: "Deal Linked", price_paisa: PRICE.combo, sort_order: 1 },
+    { id: "deal-labels", slug: "deal-labels", name: "Deal Labels", price_paisa: PRICE.combo, sort_order: 2 },
+    { id: "deal-food", slug: "deal-food", name: "Deal Food", price_paisa: PRICE.combo, sort_order: 3 },
+  ],
+  menu_deal_items: [
+    { deal_id: "deal-linked", label: "1 Test Main", item_id: "main", quantity: 1, sort_order: 1 },
+    { deal_id: "deal-linked", label: "1 Bottle", item_id: "cola", quantity: 1, sort_order: 2 },
+    { deal_id: "deal-labels", label: "1 Fries", item_id: null, quantity: 1, sort_order: 1 },
+    { deal_id: "deal-labels", label: "500ml Drink", item_id: null, quantity: 1, sort_order: 2 },
+    { deal_id: "deal-food", label: "1 Test Main", item_id: "main", quantity: 1, sort_order: 1 },
+  ],
+  menu_settings: [],
+};
+
+function useTables(tables) {
+  menuService.setClient({
+    from(table) {
+      const query = { select: () => query, eq: () => query, order: () => query, then: (resolve) => resolve({ data: tables[table] || [], error: null }) };
+      return query;
+    },
+  });
+}
 
 function cartWith(...itemIds) {
   const state = createOrderState();
-  state.items = itemIds.map((itemId) => ({ itemId, quantity: 1, options: [] }));
+  state.items = itemIds.map((item_id) => ({ item_id, quantity: 1, option_ids: [] }));
   return state;
 }
 
 const ids = (suggestions) => suggestions.map((s) => s.itemId);
 
-test("an empty cart gets no suggestions", () => {
-  assert.deepStrictEqual(suggestItems(createOrderState(), MENU), []);
+test.beforeEach(() => useTables(TABLES));
+
+test("an empty cart gets no suggestions", async () => {
+  assert.deepEqual(suggestItems(createOrderState(), await getOrderableMenu()), []);
 });
 
-test("a main gets a drink and a side from the real menu, at its menu price", () => {
-  const suggestions = suggestItems(cartWith("mixed-doner-plate"), MENU);
-  assert.deepStrictEqual(ids(suggestions), ["ayran", "seasoned-chips"]);
-  assert.strictEqual(suggestions[0].pricePaisa, 15000);
-  assert.ok(suggestions.every((s) => menuIds.has(s.itemId)));
+test("a cart with neither gets a drink and fries from the live menu, at their menu prices", async () => {
+  const suggestions = suggestItems(cartWith("main"), await getOrderableMenu());
+  assert.deepEqual(ids(suggestions), ["cola", "chips"]);
+  assert.equal(suggestions[0].name, "Test Cola");
+  assert.equal(suggestions[0].pricePaisa, PRICE.item);
 });
 
-test("each kind of suggestion is offered only once per chat", () => {
-  const state = cartWith("mixed-doner-plate");
-  assert.strictEqual(suggestItems(state, MENU).length, 2);
-  assert.deepStrictEqual(suggestItems(state, MENU), []);
-  state.items.push({ itemId: "doner-box", quantity: 1, options: [] });
-  assert.deepStrictEqual(suggestItems(state, MENU), [], "a declined drink isn't swapped for a different drink");
+test("a drink or fries already in the cart means no suggestion", async () => {
+  const menu = await getOrderableMenu();
+  assert.deepEqual(suggestItems(cartWith("main", "juice"), menu), []);
+  assert.deepEqual(suggestItems(cartWith("main", "chips"), menu), []);
 });
 
-test("kinds already in the cart aren't suggested", () => {
-  assert.deepStrictEqual(ids(suggestItems(cartWith("doner-box", "ayran"), MENU)), ["seasoned-chips"]);
-  assert.deepStrictEqual(suggestItems(cartWith("doner-box", "ayran", "halloumi-fries"), MENU), []);
+test("an item that comes with fries counts as having fries", async () => {
+  assert.deepEqual(suggestItems(cartWith("main-with-fries"), await getOrderableMenu()), []);
 });
 
-test("a cart with no main gets one main, a bestseller", () => {
-  assert.deepStrictEqual(ids(suggestItems(cartWith("seasoned-chips", "ayran"), MENU)), ["classic-doner-kebab"]);
+test("a deal holding a drink counts, whether it's linked to the item or only named in a label", async () => {
+  const menu = await getOrderableMenu();
+  assert.deepEqual(suggestItems(cartWith("deal-linked"), menu), [], "linked to a drinks item");
+  assert.deepEqual(suggestItems(cartWith("deal-labels"), menu), [], "unlinked labels");
+  assert.deepEqual(ids(suggestItems(cartWith("deal-food"), menu)), ["cola", "chips"], "a deal with neither gets both");
 });
 
-test("an all-vegetarian cart gets a vegetarian side", () => {
-  assert.deepStrictEqual(ids(suggestItems(cartWith("falafel-wrap"), MENU)), ["ayran", "halloumi-fries"]);
+test("each kind is offered only once per chat", async () => {
+  const menu = await getOrderableMenu();
+  const state = cartWith("main");
+  assert.equal(suggestItems(state, menu).length, 2);
+  assert.deepEqual(suggestItems(state, menu), []);
 });
 
-test("unavailable, malformed and unknown items are never suggested", () => {
-  const menu = JSON.parse(JSON.stringify(MENU));
-  const drinks = menu.categories.find((c) => c.name === "Drinks").items;
-  drinks[0].availability = "unavailable";
-  const sides = menu.categories.find((c) => c.name === "Sides").items;
-  sides.forEach((item) => { item.pricePaisa = "350"; });
-  assert.deepStrictEqual(ids(suggestItems(cartWith("doner-box"), menu)), ["soft-drinks"]);
-  assert.deepStrictEqual(ids(suggestItems(cartWith("made-up-item"), menu)), ["classic-doner-kebab"], "unknown lines count as no main");
-  assert.deepStrictEqual(suggestItems(cartWith("doner-box"), { categories: "broken" }), []);
+test("an unavailable item is never suggested", async () => {
+  const menu = await getOrderableMenu();
+  assert.ok(!ids(suggestItems(cartWith("main"), menu)).includes("drink-off"));
+
+  useTables({ ...TABLES, menu_items: TABLES.menu_items.map((row) => (row.category_id === "c-drinks" ? { ...row, is_available: false } : row)) });
+  assert.deepEqual(ids(suggestItems(cartWith("main"), await getOrderableMenu())), ["chips"], "no drink left, and none invented");
 });
 
-test("a new cart after a saved order keeps what was already offered", () => {
-  const state = cartWith("mixed-doner-plate");
-  suggestItems(state, MENU);
+test("a missing category suggests nothing from it and says so in the log", async () => {
+  useTables({ ...TABLES, menu_categories: TABLES.menu_categories.filter((c) => c.slug !== "fries") });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (text) => warnings.push(text);
+  try {
+    assert.deepEqual(ids(suggestItems(cartWith("main"), await getOrderableMenu())), ["cola"]);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(warnings, ['Suggestions: the menu has no "fries" category.']);
+});
+
+test("unknown ids and a broken menu suggest nothing invented", async () => {
+  assert.deepEqual(ids(suggestItems(cartWith("made-up-item"), await getOrderableMenu())), ["cola", "chips"]);
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.deepEqual(suggestItems(cartWith("main"), { categories: "broken" }), []);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("a new cart after a saved order keeps what was already offered", async () => {
+  const menu = await getOrderableMenu();
+  const state = cartWith("main");
+  suggestItems(state, menu);
   state.status = "saved";
-  addToCart(state, { itemId: "doner-box", quantity: 1, options: [], lineTotalPaisa: 85000 });
-  assert.strictEqual(state.items.length, 1);
-  assert.deepStrictEqual(suggestItems(state, MENU), []);
+  addToCart(state, { item_id: "main", quantity: 1, option_ids: [] });
+  assert.equal(state.items.length, 1);
+  assert.deepEqual(suggestItems(state, menu), []);
 });

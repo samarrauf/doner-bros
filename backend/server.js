@@ -1,18 +1,16 @@
 // Doner Bros — Express server: loads .env, serves the static frontend, and answers
-// AI Order Taker chat messages through Google Gemini.
+// AI Order Taker chat messages through Claude.
 
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 const express = require("express");
-const { GoogleGenAI } = require("@google/genai");
+const { Anthropic, APIError, RateLimitError, AuthenticationError, BadRequestError } = require("@anthropic-ai/sdk");
 const { createClient } = require("@supabase/supabase-js");
 const {
   todayInRestaurant,
   isPromotionLive,
-  priceCartItem,
-  priceModifiedLine,
   checkCartPromotion,
   eligibleCartPromotions,
   validatePickupDetails,
@@ -20,18 +18,26 @@ const {
   placeOrder,
 } = require("./orders");
 const { checkPickupTime } = require("./pickup-time");
-const { checkPricing, calculateOrderTotals } = require("./totals");
+const { priceCart, calculateTotals, describeCart, deliveryFeeStatus, deliveryFeeText, isFeeNotDecided } = require("./totals");
 const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
 const { addStaffRoutes } = require("./staff");
-const { createSupabaseSessionStore } = require("./supabase-sessions");
+const { createSupabaseSessionStore, sessionRowId } = require("./supabase-sessions");
+const { addAdminStatsRoutes } = require("./admin-stats");
+const { addKitchenRoutes } = require("./kitchen");
+const { createAnalyticsService } = require("./services/analytics-service");
+const { createConversationService } = require("./services/conversation-service");
 const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = require("./rate-limit");
+const { addMenuImageRoutes } = require("./menu-images");
 const {
   createMemorySessionStore,
+  upgradeOrderState,
   recordOrderAttempt,
   addToCart,
-  replaceCartLine,
+  isClickApplied,
+  recordClick,
+  setLineQuantity,
   findCartLine,
   removeFromCart,
   applyDiscount,
@@ -46,8 +52,10 @@ const {
   readSessionId,
   sessionCookie,
 } = require("./order-session");
-const { GET_MENU_TOOL, getMenu } = require("./menu-tool");
+const { MENU_TOOLS, MENU_TOOL_NAMES, runMenuTool, getOrderableMenu, setSearchMissLogger } = require("./menu-tool");
+const { findUnbackedPrices } = require("./price-guard");
 const { suggestItems } = require("./recommendations");
+const menuService = require("./services/menu-service");
 
 // .env lives in the project root, one level above /backend.
 const envResult = dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -63,14 +71,17 @@ const FRONTEND_DIR = path.join(ROOT_DIR, "frontend");
 // Matches the chat input's maxlength in index.html.
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_HISTORY_ENTRIES = 20;
-const MAX_HISTORY_ENTRY_LENGTH = 2000;
+// Room for a full order confirmation: 20 deal lines, each with its contents listed.
+const MAX_HISTORY_ENTRY_LENGTH = 4000;
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-const GEMINI_TIMEOUT_MS = 20000;
-const RESTAURANT_PHONE_FALLBACK = "0301 8474036";
+// The only place the chat model is named. Change it with CHAT_MODEL, no code change needed.
+const CHAT_MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
+const MODEL_TIMEOUT_MS = 20000;
+// Room for the model's thinking plus a full order summary.
+const MODEL_MAX_TOKENS = 4096;
 const SUPABASE_TIMEOUT_MS = 10000;
 
-// Per-visitor limit so the paid Gemini API can't be spammed.
+// Per-visitor limit so the paid model API can't be spammed.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 
@@ -83,48 +94,40 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function formatRupees(paisa) {
-  return `Rs ${(paisa / 100).toLocaleString("en-PK")}`;
-}
+const formatRupees = menuService.formatPrice;
 
-function formatOption(option) {
-  const choices = option.choices
-    .map((choice) => (typeof choice === "string" ? choice : `${choice.name} (+${formatRupees(choice.pricePaisa)})`))
-    .join(" / ");
-  return `${option.name}${option.required ? " (required)" : " (optional)"}: ${choices}`;
-}
-
-function formatMenu(menu) {
+// Only slugs and names go up front; the model fetches the one category it needs with list_items.
+function formatCategories(menu) {
+  if (!menu) return "The menu can't be checked right now.";
   return menu.categories
-    .map((category) => {
-      const items = category.items.map((item) => {
-        // The id is what submit_order needs; the server prices the order from it.
-        const lines = [`- ${item.name} [id: ${item.id}]: ${formatRupees(item.pricePaisa)}. ${item.description}`];
-        if (item.tags && item.tags.length) lines.push(`  Tags: ${item.tags.join(", ")}`);
-        if (item.options) item.options.forEach((option) => lines.push(`  Option ${formatOption(option)}`));
-        if (item.notes) lines.push(`  Note: ${item.notes}`);
-        // "unknown" means the website doesn't say; the prompt's rules send those questions to staff.
-        lines.push(`  Allergens: ${item.allergens}`);
-        if (item.availability === "unavailable") lines.push("  Currently UNAVAILABLE.");
-        else if (item.availability === "unknown") lines.push("  Availability: unknown, confirm with staff.");
-        return lines.join("\n");
-      });
-      return `${category.name}:\n${items.join("\n")}`;
-    })
-    .join("\n\n");
+    .filter((category) => category.items.length > 0 && category.slug !== "deals")
+    .map((category) => `- ${category.slug}: ${category.name}`)
+    .join("\n");
 }
 
 function formatHours(hours) {
   return hours.map((row) => `- ${row.days}: ${row.open} – ${row.close}`).join("\n");
 }
 
-function formatContact(contact) {
-  return [
-    `Address: ${contact.address}`,
-    `Phone: ${contact.phone}`,
-    `Email: ${contact.email}`,
-    `How to order: ${contact.orderMethods}`,
-  ].join("\n");
+function formatContact(settings) {
+  const lines = [];
+  if (settings.address) lines.push(`Address: ${settings.address}`);
+  if (settings.whatsapp) lines.push(`WhatsApp: ${settings.whatsapp}`);
+  if (settings.order_types) lines.push(`Order types: ${settings.order_types}`);
+  return lines.join("\n");
+}
+
+// What the model may say about the delivery fee. No amount is ever put in the prompt: a set fee is
+// quoted only from get_order_totals or reviewOrder, so the price guard can check it.
+const FEE_NOT_DECIDED_RULE =
+  "The delivery fee has not been decided yet. If a customer asks, say the delivery fee will be confirmed by the restaurant. " +
+  "Never say delivery is free, and never quote, guess or estimate a delivery fee. Totals for delivery orders don't include it.";
+
+function formatDeliveryFee(settings) {
+  const value = settings.delivery_fee_paisa;
+  if (isFeeNotDecided(value) || !/^\d+$/.test(String(value))) return FEE_NOT_DECIDED_RULE;
+  if (Number(value) === 0) return "Delivery is free. You may tell customers there is no delivery fee.";
+  return "Delivery orders have a delivery fee. Quote it only as get_order_totals or reviewOrder returns it; it is already in their total.";
 }
 
 function formatDiscount(discount) {
@@ -150,68 +153,48 @@ function formatPromotions(promotions, menu, now) {
   const today = todayInRestaurant(now);
   // Only live offers reach the model, so it can't apply inactive, sample or expired ones.
   const live = promotions.filter((promotion) => isPromotionLive(promotion, today));
-  if (live.length === 0) return "No promotions are running right now.";
+  if (live.length === 0) return "No discount codes or promotions are running right now. Deals are separate: see list_deals.";
 
-  const itemNames = new Map(menu.categories.flatMap((category) => category.items).map((item) => [item.id, item.name]));
+  const items = menu ? menu.categories.flatMap((category) => category.items) : [];
+  const itemNames = new Map(items.map((item) => [item.id, item.name]));
   return [`Today is ${today.weekday}, ${today.date}.`, ...live.map((p) => formatPromotion(p, itemNames))].join("\n");
 }
 
-function buildSystemPrompt() {
-  const template = fs.readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8");
-  const restaurant = readJson(path.join(ROOT_DIR, "data", "restaurant.json"));
-
-  return template
-    .replace("{{MENU}}", formatMenu(MENU))
-    .replace("{{HOURS}}", formatHours(restaurant.hours))
-    .replace("{{CONTACT}}", formatContact(restaurant.contact));
-}
-
+// No discount codes or offers exist. Deals are not promotions: they come from menu_deals, through
+// the menu service.
+const PROMOTIONS = [];
 // Read once at startup; a missing or broken data file stops the server with a clear error.
-const MENU = readJson(path.join(ROOT_DIR, "data", "menu.json"));
-const PROMOTIONS = readJson(path.join(ROOT_DIR, "data", "promotions.json")).promotions;
-const OPENING_HOURS = readJson(path.join(ROOT_DIR, "data", "restaurant.json")).hours;
-const PRICING = (() => {
-  const checked = checkPricing(readJson(path.join(ROOT_DIR, "data", "pricing.json")));
-  if (checked.error) throw new Error(checked.error);
-  return checked.pricing;
-})();
-const SYSTEM_PROMPT = buildSystemPrompt();
+const OPENING_HOURS = readJson(path.join(ROOT_DIR, "data", "hours.json")).hours;
+const SYSTEM_PROMPT = fs
+  .readFileSync(path.join(ROOT_DIR, "prompts", "system-prompt.md"), "utf8")
+  .replace("{{HOURS}}", formatHours(OPENING_HOURS));
 
-// The cart's totals, worked out from server prices only; also keeps state.totalPaisa in step.
+// The cart's totals, always worked out fresh by totals.js from ids and quantities. Returns { error } if
+// an item can't be ordered, and throws MENU_UNAVAILABLE if the menu can't be read.
 function cartTotals(state) {
-  const totals = calculateOrderTotals(
-    { lines: state.items, discountPaisa: state.discount.amountPaisa, orderType: state.orderType },
-    PRICING
-  );
-  state.totalPaisa = totals.totalPaisa;
-  return totals;
+  return calculateTotals({
+    cart: state.items,
+    orderType: state.orderType,
+    getDiscount: (pricedCart) => {
+      if (!state.discount.promotionId) return 0;
+      const request = { promotionId: state.discount.promotionId, promotionCode: state.discount.code, orderType: state.orderType };
+      return checkCartPromotion(pricedCart, request, PROMOTIONS, todayInRestaurant(new Date())).discountPaisa || 0;
+    },
+  });
 }
 
-function formatCartTotals(state) {
-  const totals = cartTotals(state);
-  const lines = [`Cart subtotal: ${formatRupees(totals.subtotalPaisa)}`];
-  if (state.discount.promotionId) {
-    lines.push(
-      `Promotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}], -${formatRupees(totals.discountPaisa)}`
-    );
-  }
-  if (PRICING.taxPercent > 0) lines.push(`Tax (${PRICING.taxPercent}%): ${formatRupees(totals.taxPaisa)}`);
-  if (state.orderType === "delivery") {
-    lines.push(
-      totals.deliveryFeePaisa === null
-        ? "Delivery fee: not set; not included in the total. Say the restaurant will confirm it; never estimate it."
-        : `Delivery fee: ${formatRupees(totals.deliveryFeePaisa)}`
-    );
-  }
-  lines.push(`Cart total: ${formatRupees(totals.totalPaisa)} (worked out by the server; quote it exactly, never add prices up yourself)`);
-  return lines.join("\n");
-}
-
-function formatCart(state) {
+// The prompt carries no amounts, so every price the model states comes from a tool result in that
+// turn and the price guard can check it.
+async function formatCart(state) {
   if (state.items.length === 0) return "The cart is empty.";
   // Numbered so modifyItem can name a line.
-  const lines = state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
-  return `Cart (added with addItemToCart):\n${lines.join("\n")}\n${formatCartTotals(state)}`;
+  const lines = (await describeCart(state.items)).map((line, index) => {
+    return `${index + 1}. ${describeCartLineItems(line)}${line.orderable ? "" : " (can't be ordered right now)"}`;
+  });
+  const promotion = state.discount.promotionId
+    ? `\nPromotion applied with applyPromotion: ${state.discount.promotionName} [id: ${state.discount.promotionId}]`
+    : "";
+  return `Cart (added with addItemToCart):\n${lines.join("\n")}${promotion}\nFor prices and the total, call get_order_totals.`;
 }
 
 // What the customer has already given for checkout, and what is still missing, so the bot asks only for that.
@@ -236,22 +219,41 @@ function formatCheckoutDetails(state) {
   ].join("\n");
 }
 
-function formatOrderState(state) {
-  if (state.status === "open") return `No order has been submitted in this chat yet.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
+async function formatOpenOrderState(state, opening) {
+  let cart;
+  try {
+    cart = await formatCart(state);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    cart = "The cart can't be shown because the menu can't be checked right now.";
+  }
+  return `${opening}\n${cart}\n${formatCheckoutDetails(state)}${formatShownSummary(state)}`;
+}
+
+// Earlier turns reach the model as text only, so it can't see that its last summary came from
+// reviewOrder. The server checked that itself (recordShownSummary), so it says so here.
+// submit_order still re-checks everything, including the customer's yes.
+function formatShownSummary(state) {
+  if (!state.shownFingerprint || state.shownFingerprint !== state.reviewedFingerprint) return "";
+  return (
+    "\nYour last message showed the customer the reviewOrder summary of this order, as the server checked. " +
+    "If their latest message is a plain yes, call submit_order now; don't call reviewOrder again."
+  );
+}
+
+async function formatOrderState(state) {
+  if (state.status === "open") return formatOpenOrderState(state, "No order has been submitted in this chat yet.");
   if (state.status === "needs_changes") {
-    return `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.\n${formatCart(state)}\n${formatCheckoutDetails(state)}`;
+    return formatOpenOrderState(state, `The last submit_order was rejected: ${state.problem} Sort this out with the customer before submitting again.`);
   }
 
-  const lines = state.items.map((line) => {
-    const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-    return `- ${line.quantity} x ${line.name}${options}`;
-  });
+  const lines = state.placedOrder.lines.map((line) => `- ${describeCartLineItems(line)}`);
   const { deliveryAddress, deliveryUnit } = state.customer;
   const when =
     state.orderType === "pickup"
       ? `, pickup ${state.pickupTime ? `at ${state.pickupTime}` : "as soon as possible"}`
       : `, to ${deliveryAddress}${deliveryUnit ? `, ${deliveryUnit}` : ""}`;
-  const summary = [...lines, `Total ${formatRupees(state.totalPaisa)} for ${state.orderType}${when}.`].join("\n");
+  const summary = [...lines, `For ${state.orderType}${when}. For its total, call get_order_totals.`].join("\n");
   if (state.status === "saved") {
     return `Order ${state.orderNumber} was saved in this chat:\n${summary}\nDon't submit it again. For changes, the customer must call. Only submit a new order if they clearly ask for a separate one.`;
   }
@@ -260,18 +262,80 @@ function formatOrderState(state) {
 
 // Promotions and this chat's order are filled in per request, so an offer stops the day it
 // ends and the bot always sees the order's latest state.
-function currentSystemPrompt(orderState) {
-  return SYSTEM_PROMPT.replace("{{PROMOTIONS}}", formatPromotions(PROMOTIONS, MENU, new Date())).replace(
-    "{{ORDER}}",
-    formatOrderState(orderState)
-  );
+// The categories and contact details are read through the menu service for each turn too.
+async function currentSystemPrompt(orderState, turn, correction) {
+  const order = await formatOrderState(orderState);
+  const prompt = SYSTEM_PROMPT.replace("{{CATEGORIES}}", () => formatCategories(turn.menu))
+    .replace("{{CONTACT}}", () => formatContact(turn.settings))
+    .replace("{{DELIVERY_FEE}}", () => formatDeliveryFee(turn.settings))
+    .replace("{{PROMOTIONS}}", () => formatPromotions(PROMOTIONS, turn.menu, new Date()))
+    .replace("{{ORDER}}", () => order);
+  return correction ? `${prompt}\n\n${correction}` : prompt;
 }
 
-/* ---------- Gemini client ---------- */
+/* ---------- Menu and contact details for one chat turn ---------- */
 
-const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-if (!gemini) {
-  console.warn("GEMINI_API_KEY is not set; /api/chat will return 503 until it is added to .env.");
+// Kept only for messages sent while Supabase is down. It is the last value read from the settings.
+let lastWhatsapp = null;
+
+// A failed read leaves menu null: the chat carries on and the model says it can't check the menu.
+async function loadChatTurn() {
+  const turn = { menu: null, settings: lastWhatsapp ? { whatsapp: lastWhatsapp } : {}, toolResults: [] };
+  try {
+    const [menu, settings] = await Promise.all([getOrderableMenu(), menuService.getPublicSettings()]);
+    turn.menu = menu;
+    turn.settings = settings;
+    if (settings.whatsapp) lastWhatsapp = settings.whatsapp;
+  } catch (error) {
+    console.error("Chat could not load the menu:", error.code || error.message);
+  }
+  return turn;
+}
+
+async function whatsappNumber() {
+  if (lastWhatsapp) return lastWhatsapp;
+  await loadChatTurn();
+  return lastWhatsapp;
+}
+
+// How to reach the restaurant, for fixed messages. No number is ever typed here.
+async function reachUs() {
+  const whatsapp = await whatsappNumber();
+  return whatsapp ? `message us on WhatsApp on ${whatsapp}` : "try again in a few minutes";
+}
+
+/* ---------- Claude client ---------- */
+
+// One SDK retry covers a brief 429 or overload (it waits as the API asks); after that the
+// customer gets the fallback message rather than a long wait.
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: MODEL_TIMEOUT_MS, maxRetries: 1 })
+  : null;
+if (!anthropic) {
+  console.warn("ANTHROPIC_API_KEY is not set; /api/chat will return 503 until it is added to .env.");
+}
+
+// Which kind of model failure this is, so each gets its own log line.
+function classifyModelError(error) {
+  if (error instanceof RateLimitError) return "rate_limit";
+  if (!(error instanceof APIError)) return "other";
+  if (error.status === 529 || error.type === "overloaded_error") return "overloaded";
+  if (error.status === 402 || error.type === "billing_error") return "no_credit";
+  // The API has also reported an empty balance as a 400 whose message says so.
+  if (error instanceof BadRequestError && /credit balance/i.test(String(error.message))) return "no_credit";
+  if (error instanceof AuthenticationError) return "auth";
+  return "other";
+}
+
+// Status, error type and request id only: never the request, which could hold customer details.
+function logModelError(failure, error) {
+  const detail = `status=${error.status || "-"} type=${error.type || error.name} request_id=${error.requestID || "-"}`;
+  if (failure === "rate_limit") console.error(`Claude rate limit hit (429) after retry; customer sent to WhatsApp. ${detail}`);
+  else if (failure === "overloaded") console.error(`Claude overloaded (529) after retry; customer sent to WhatsApp. ${detail}`);
+  else if (failure === "no_credit") {
+    console.error(`CLAUDE CREDIT EXHAUSTED: the Anthropic account is out of credit, so the chat is DOWN for every customer until it is topped up in the Claude Console (Billing). ${detail}`);
+  } else if (failure === "auth") console.error(`Claude rejected ANTHROPIC_API_KEY (401); check the key. ${detail}`);
+  else console.error(`Claude request failed. ${detail} message=${String(error.message).slice(0, 200)}`);
 }
 
 /* ---------- Supabase (orders) ---------- */
@@ -289,37 +353,71 @@ if (!supabase) {
   console.warn("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set; chat orders can't be saved until both are in .env.");
 }
 const orderStore = supabase ? createSupabaseOrderStore(supabase) : null;
+menuService.setClient(supabase);
+const analytics = supabase ? createAnalyticsService({ client: supabase }) : null;
+const conversations = supabase ? createConversationService({ client: supabase }) : null;
+if (conversations) setSearchMissLogger(conversations.logSearchMiss);
+
+// Dashboard records are best effort: a failure is logged and never stops the customer's chat.
+async function recordForDashboard(label, write) {
+  if (!conversations) return;
+  try {
+    await write(conversations);
+  } catch (error) {
+    console.error(`Dashboard ${label} failed:`, error.code || error.message);
+  }
+}
 
 // The save function for one checkout: its submission key ties the row to this chat and to how
 // many orders the chat has already saved, so the database refuses a second copy of the same order.
-function saveOrderFor(orderState) {
+// chatSessionId links the order to its chat_sessions row, so a chat can show all of its orders.
+function saveOrderFor(orderState, chatSessionId) {
   if (!orderStore) return null;
   if (!orderState.chatSecret) orderState.chatSecret = crypto.randomUUID();
   return async (row) => {
-    const { orderId, duplicate } = await orderStore.save(row, submissionKey(orderState.chatSecret, orderState.savedOrderCount || 0, row));
+    const key = submissionKey(orderState.chatSecret, orderState.savedOrderCount || 0, row);
+    const { orderId, duplicate } = await orderStore.save(row, key, { chatSessionId });
     if (duplicate) console.warn(`Duplicate submission; returned the existing order ${orderId}.`);
     return orderId;
   };
 }
 
-// conversationHistory uses { role: "user" | "assistant", content } entries; Gemini calls the
-// assistant role "model".
-function toGeminiContents(history, message) {
-  const contents = history.slice(-MAX_HISTORY_ENTRIES).map((entry) => ({
-    role: entry.role === "assistant" ? "model" : "user",
-    parts: [{ text: entry.content }],
+// conversationHistory uses { role: "user" | "assistant", content } entries, the same roles Claude
+// uses. Each message's content is kept as a list of blocks so tool turns and text turns look alike.
+function toClaudeMessages(history, message) {
+  const messages = history.slice(-MAX_HISTORY_ENTRIES).map((entry) => ({
+    role: entry.role === "assistant" ? "assistant" : "user",
+    content: [{ type: "text", text: entry.content }],
   }));
 
-  // Gemini expects the conversation to start with the customer, so drop leading bot greetings.
-  while (contents.length && contents[0].role === "model") {
-    contents.shift();
+  // Claude expects the conversation to start with the customer, so drop leading bot greetings.
+  while (messages.length && messages[0].role === "assistant") {
+    messages.shift();
   }
 
-  contents.push({ role: "user", parts: [{ text: message }] });
-  return contents;
+  messages.push({ role: "user", content: [{ type: "text", text: message }] });
+  return messages;
 }
 
-const OVERLOAD_RETRY_DELAY_MS = 1500;
+// The customer's own words in a message: its text blocks. Tool results carry none.
+function messageText(message) {
+  if (typeof message.content === "string") return message.content;
+  return (message.content || []).filter((block) => block.type === "text").map((block) => block.text).join("\n");
+}
+
+// The model's reply text, with thinking and tool calls left out.
+function replyText(response) {
+  return response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+}
+
+// Tool calls in the shape the tool code takes: { id, name, args }.
+function toolCalls(response) {
+  return response.content.filter((block) => block.type === "tool_use").map((block) => ({ id: block.id, name: block.name, args: block.input }));
+}
+
+function toolResult(call, result, isError = false) {
+  return { type: "tool_result", tool_use_id: call.id, content: JSON.stringify(result), ...(isError ? { is_error: true } : {}) };
+}
 
 // The model fills these in from the conversation; orders.js re-checks every field.
 const SUBMIT_ORDER_TOOL = {
@@ -327,7 +425,7 @@ const SUBMIT_ORDER_TOOL = {
   description:
     "Save the customer's order. Call only after showing the reviewOrder summary and getting a clear yes. The items, " +
     "promotion and customer details saved are the reviewed cart's, not anything passed here.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerConfirmed: { type: "boolean", description: "True only if the customer clearly said yes to the read-back." },
@@ -335,25 +433,6 @@ const SUBMIT_ORDER_TOOL = {
       customerName: { type: "string" },
       customerPhone: { type: "string" },
       deliveryAddress: { type: "string", description: "Leave out: delivery details are taken from setDeliveryDetails." },
-      items: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            itemId: { type: "string", description: "The [id: ...] shown for the item in the menu." },
-            quantity: { type: "integer" },
-            options: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { name: { type: "string" }, choice: { type: "string" } },
-                required: ["name", "choice"],
-              },
-            },
-          },
-          required: ["itemId", "quantity"],
-        },
-      },
       promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>, if one applies." },
       promotionCode: { type: "string", description: "The code the customer gave, if the promotion needs one." },
     },
@@ -362,55 +441,47 @@ const SUBMIT_ORDER_TOOL = {
   },
 };
 
-// Only the item, quantity and the options the customer named come from the model; the server
-// checks them against menu.json and sets the price.
+// Only the item id and quantity come from the model; totals.js looks up the price from the menu service.
 const ADD_ITEM_TO_CART_TOOL = {
   name: "addItemToCart",
-  description:
-    "Add one menu item to this customer's cart. Include only options the customer actually chose; never pick one for them. " +
-    "If the result lists missingOptions, nothing was added: ask the customer to choose.",
-  parametersJsonSchema: {
+  description: "Add one menu item or deal to this customer's cart, by its id. The server looks up its name and price.",
+  input_schema: {
     type: "object",
     properties: {
-      itemId: { type: "string", description: "The [id: ...] shown for the item in the menu." },
+      itemId: { type: "string", description: "The id of the item or deal from a menu tool result." },
       quantity: { type: "integer" },
-      options: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { name: { type: "string" }, choice: { type: "string" } },
-          required: ["name", "choice"],
-        },
-      },
     },
     required: ["itemId", "quantity"],
   },
 };
 
-function describeCartLine(line) {
-  const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-  return `${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`;
+function describeCartLineItems(line) {
+  return `${line.quantity} x ${line.name}`;
 }
 
-function addItemToCart(args, orderState) {
-  const priced = priceCartItem(args, MENU);
-  if (priced.missingOptions) {
-    return {
-      added: false,
-      missingOptions: priced.missingOptions,
-      instruction: "Nothing was added. Ask the customer which choice they want for each missing option; don't choose for them.",
-    };
-  }
-  if (priced.error) return { added: false, error: priced.error };
+function describeCartLine(line) {
+  return `${describeCartLineItems(line)}: ${line.lineTotalDisplay}`;
+}
 
-  const result = addToCart(orderState, priced.line);
+const MENU_CHECK_FAILED = "the menu can't be checked right now.";
+// An id means nothing to a customer, and "finished" is a different answer from "not on the menu".
+const NOT_ORDERABLE_INSTRUCTION =
+  "Never read an id out to the customer. If an item is finished, say it's finished for now. If it isn't on the menu, say " +
+  "it isn't available. Then offer the closest real alternative from a menu tool.";
+
+// Nothing goes in the cart until totals.js has found the item, seen it's available and checked the quantity.
+async function addItemToCart(args, orderState, menu) {
+  const line = { item_id: args.itemId, quantity: args.quantity, option_ids: args.optionIds };
+  const priced = await priceCart([line]);
+  if (priced.error) return { added: false, error: priced.error, instruction: `Nothing was added. ${NOT_ORDERABLE_INSTRUCTION}` };
+
+  const result = addToCart(orderState, line);
   if (result.error) return { added: false, error: result.error };
-  const suggestions = suggestItems(orderState, MENU);
+  const suggestions = menu ? suggestItems(orderState, menu) : [];
   return {
     added: true,
-    item: describeCartLine(priced.line),
-    cart: orderState.items.map(describeCartLine),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    item: describeCartLine(priced.lines[0]),
+    ...(priced.lines[0].contains ? { dealContains: priced.lines[0].contains } : {}),
     ...(suggestions.length
       ? {
           suggestions: suggestions.map((s) => ({ itemId: s.itemId, name: s.name, price: formatRupees(s.pricePaisa), reason: s.reason })),
@@ -422,37 +493,27 @@ function addItemToCart(args, orderState) {
   };
 }
 
-// The line keeps its item; only quantity and option choices change, and the server re-prices it.
+// The line keeps its item; only the quantity changes.
 const MODIFY_ITEM_TOOL = {
   name: "modifyItem",
   description:
-    "Change the quantity or option choices of one item already in this customer's cart. Use the line number shown in " +
-    "<current_order>. Include only changes the customer actually asked for. If the result has an error or missingOptions, " +
-    "nothing was changed: ask the customer to clarify.",
-  parametersJsonSchema: {
+    "Change the quantity of one item already in this customer's cart. Use the line number shown in <current_order>. " +
+    "If the result has an error, nothing was changed: ask the customer to clarify.",
+  input_schema: {
     type: "object",
     properties: {
       lineNumber: { type: "integer", description: "The cart line to change, numbered as in <current_order>." },
-      quantity: { type: "integer", description: "The new quantity, if the customer changed it." },
-      options: {
-        type: "array",
-        description: "Only the options being changed, with the customer's new choice.",
-        items: {
-          type: "object",
-          properties: { name: { type: "string" }, choice: { type: "string" } },
-          required: ["name", "choice"],
-        },
-      },
+      quantity: { type: "integer", description: "The new quantity." },
     },
-    required: ["lineNumber"],
+    required: ["lineNumber", "quantity"],
   },
 };
 
 function notModified(error) {
-  return { modified: false, error, instruction: "Nothing was changed. Explain this simply and ask the customer to clarify; don't guess." };
+  return { modified: false, error, instruction: `Nothing was changed. Explain this simply and ask the customer to clarify; don't guess. ${NOT_ORDERABLE_INSTRUCTION}` };
 }
 
-function modifyItem(args, orderState) {
+async function modifyItem(args, orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return notModified("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
   }
@@ -461,20 +522,13 @@ function modifyItem(args, orderState) {
     const count = orderState.items.length;
     return notModified(count ? `there is no line ${args.lineNumber}; the cart has ${count} line(s).` : "the cart is empty.");
   }
+  if (args.quantity === undefined) return notModified("no change was given.");
 
-  const priced = priceModifiedLine(orderState.items[index], args, MENU);
-  if (priced.missingOptions) {
-    return { modified: false, missingOptions: priced.missingOptions, instruction: "Nothing was changed. Ask the customer to choose." };
-  }
+  const priced = await priceCart([{ ...orderState.items[index], quantity: args.quantity }]);
   if (priced.error) return notModified(priced.error);
 
-  replaceCartLine(orderState, index, priced.line);
-  return {
-    modified: true,
-    item: describeCartLine(priced.line),
-    cart: orderState.items.map(describeCartLine),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
-  };
+  setLineQuantity(orderState, index, args.quantity);
+  return { modified: true, item: describeCartLine(priced.lines[0]) };
 }
 
 const REMOVE_ITEM_TOOL = {
@@ -483,7 +537,7 @@ const REMOVE_ITEM_TOOL = {
     "Remove an item from this customer's cart, or reduce how many of it there are. Name the item by its line number in " +
     "<current_order>, or by its menu id. Leave out quantity to remove the whole line. If the result has an error or " +
     "lists ambiguous lines, nothing was removed: ask the customer which item and how many.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       lineNumber: { type: "integer", description: "The cart line, numbered as in <current_order>." },
@@ -493,37 +547,50 @@ const REMOVE_ITEM_TOOL = {
   },
 };
 
-function numberedCart(state) {
-  return state.items.map((line, index) => `${index + 1}. ${describeCartLine(line)}`);
-}
-
 function notRemoved(error) {
   return { removed: false, error, instruction: "Nothing was removed. Explain this simply and ask the customer to clarify; don't guess." };
 }
 
-function removeItem(args, orderState) {
+// Names only, so an item that has since finished can still be seen and taken out of the cart.
+async function removeItem(args, orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return notRemoved("that order was already submitted, so it can't be changed in chat. The customer should call the restaurant.");
   }
 
   const found = findCartLine(orderState, { lineNumber: args.lineNumber, itemId: args.itemId });
+  if (found.error) return notRemoved(found.error);
+  const lines = await describeCart(orderState.items);
   if (found.ambiguous) {
     return {
       removed: false,
-      ambiguous: found.ambiguous.map((index) => `${index + 1}. ${describeCartLine(orderState.items[index])}`),
+      ambiguous: found.ambiguous.map((index) => `${index + 1}. ${describeCartLineItems(lines[index])}`),
       instruction: "That item is on more than one line. Nothing was removed. Ask the customer which line they mean.",
     };
   }
-  if (found.error) return notRemoved(found.error);
 
   const quantity = args.quantity === null ? undefined : args.quantity;
   const result = removeFromCart(orderState, found.index, quantity);
   if (result.error) return notRemoved(result.error);
+  return { removed: true, removedItem: describeCartLineItems({ quantity: result.removed.quantity, name: lines[found.index].name }) };
+}
+
+// What a cart-changing tool reports back: the cart at today's prices, or what stops it being priced.
+async function cartView(orderState) {
+  if (orderState.items.length === 0) return { cart: [], cartSubtotal: formatRupees(0), cartTotal: formatRupees(0) };
+  const totals = await cartTotals(orderState);
+  if (totals.error) {
+    const lines = await describeCart(orderState.items);
+    return {
+      cart: lines.map((line, index) => `${index + 1}. ${describeCartLineItems(line)}`),
+      cartProblem: totals.error,
+      instruction: NOT_ORDERABLE_INSTRUCTION,
+    };
+  }
   return {
-    removed: true,
-    removedItem: describeCartLine(result.removed),
-    cart: numberedCart(orderState),
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
+    cart: totals.lines.map((line, index) => `${index + 1}. ${describeCartLine(line)}`),
+    cartSubtotal: totals.display.subtotal,
+    cartTotal: totals.display.total,
+    ...deliveryFeeFields(orderState.orderType, totals.deliveryFeePaisa),
   };
 }
 
@@ -535,6 +602,50 @@ const VIEW_CART_TOOL = {
     "Call this when the customer asks what's in their cart or order.",
 };
 
+// No parameters: always this chat's own cart. Every amount is worked out by totals.js.
+const GET_ORDER_TOTALS_TOOL = {
+  name: "get_order_totals",
+  description:
+    "Get the prices and totals for this customer's cart, worked out by the server: each line's price, subtotal, discount, " +
+    "tax, delivery fee and total. Call this whenever the customer asks what their order costs, and read back the result exactly.",
+};
+
+function totalsForTool(totals, orderType) {
+  return {
+    items: totals.lines.map((line, index) => `${index + 1}. ${describeCartLine(line)}`),
+    subtotal: totals.display.subtotal,
+    ...(totals.discountPaisa > 0 ? { discount: `-${totals.display.discount}` } : {}),
+    ...(totals.taxPaisa > 0 ? { tax: totals.display.tax } : {}),
+    ...(totals.taxIncludedPaisa > 0 ? { taxIncludedInPrices: totals.display.taxIncluded } : {}),
+    ...deliveryFeeFields(orderType, totals.deliveryFeePaisa),
+    total: totals.display.total,
+  };
+}
+
+// For tool results on a delivery order: the fee as the customer sees it, and for a fee that isn't
+// decided, what the model must say instead of a number.
+function deliveryFeeFields(orderType, deliveryFeePaisa) {
+  const status = deliveryFeeStatus(orderType, deliveryFeePaisa);
+  if (status === "none") return {};
+  const fields = { deliveryFee: deliveryFeeText(orderType, deliveryFeePaisa) };
+  if (status === "not_decided") fields.deliveryFeeNote = FEE_NOT_DECIDED_RULE;
+  return fields;
+}
+
+// A submitted order answers from its snapshot, not from today's prices.
+async function getOrderTotals(orderState) {
+  if (orderState.placedOrder) return totalsForTool(orderState.placedOrder, orderState.orderType);
+  if (orderState.items.length === 0) return { empty: true };
+  const totals = await cartTotals(orderState);
+  if (totals.error) return { error: totals.error, instruction: NOT_ORDERABLE_INSTRUCTION };
+  return totalsForTool(totals, orderState.orderType);
+}
+
+async function viewCart(orderState) {
+  const lines = orderState.placedOrder ? orderState.placedOrder.lines : await describeCart(orderState.items);
+  return cartSummary(orderState, lines);
+}
+
 // Only codes and promotion ids go in; the server finds the offer, checks it and works out the discount.
 const APPLY_PROMOTION_TOOL = {
   name: "applyPromotion",
@@ -543,7 +654,7 @@ const APPLY_PROMOTION_TOOL = {
     "gave it; never guess, complete or suggest a code. Pass promotionId for an offer from <promotions> that needs no code. " +
     "With neither, lists the running offers this cart already qualifies for. If the result has an error, nothing was " +
     "applied: tell the customer, and don't try other codes or ids.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       promotionId: { type: "string", description: "The [id: ...] of a promotion from <promotions>." },
@@ -559,13 +670,15 @@ function customerGaveCode(contents, code) {
   if (!wanted) return false;
   const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const asWord = new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`);
-  return contents
-    .filter((turn) => turn.role === "user")
-    .flatMap((turn) => turn.parts || [])
-    .some((part) => typeof part.text === "string" && asWord.test(part.text.toLowerCase()));
+  return contents.filter((turn) => turn.role === "user").some((turn) => asWord.test(messageText(turn).toLowerCase()));
 }
 
-function applyPromotion(args, orderState, contents) {
+// The cart as priced right now, in the shape the promotion checks take. May hold { error }.
+function pricedCartFor(orderState) {
+  return orderState.items.length === 0 ? { lines: [], subtotalPaisa: 0 } : priceCart(orderState.items);
+}
+
+async function applyPromotion(args, orderState, contents) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return { applied: false, error: "that order was already submitted, so a promotion can't be added in chat." };
   }
@@ -575,9 +688,11 @@ function applyPromotion(args, orderState, contents) {
   const today = todayInRestaurant(new Date());
   const givenType = ["pickup", "delivery"].includes(args.orderType) ? args.orderType : null;
   const orderType = givenType || orderState.orderType;
+  const pricedCart = await pricedCartFor(orderState);
+  if (pricedCart.error) return { applied: false, error: pricedCart.error, instruction: NOT_ORDERABLE_INSTRUCTION };
 
   if (!args.promotionId && !args.promotionCode) {
-    const eligible = eligibleCartPromotions(orderState, PROMOTIONS, today, orderType);
+    const eligible = eligibleCartPromotions(pricedCart, PROMOTIONS, today, orderType);
     if (eligible.length === 0) {
       return { eligible: [], instruction: "No promotion applies to this cart right now. Don't offer one." };
     }
@@ -592,7 +707,7 @@ function applyPromotion(args, orderState, contents) {
     };
   }
 
-  const check = checkCartPromotion(orderState, { ...args, orderType }, PROMOTIONS, today);
+  const check = checkCartPromotion(pricedCart, { ...args, orderType }, PROMOTIONS, today);
   if (check.needsOrderType) {
     return { applied: false, needsOrderType: check.needsOrderType, instruction: "Ask whether this is for pickup or delivery, then try again." };
   }
@@ -601,22 +716,26 @@ function applyPromotion(args, orderState, contents) {
   }
 
   applyDiscount(orderState, check, { promotionCode: args.promotionCode, orderType: givenType });
+  const totals = await cartTotals(orderState);
   return {
     applied: true,
     promotion: check.promotion.name,
     discount: `-${formatRupees(check.discountPaisa)}`,
-    cartSubtotal: formatRupees(orderState.subtotalPaisa),
-    cartTotal: formatRupees(cartTotals(orderState).totalPaisa),
+    cartSubtotal: formatRupees(pricedCart.subtotalPaisa),
+    ...(totals.error ? {} : { cartTotal: totals.display.total }),
     instruction: "The final total is confirmed when the order is saved.",
   };
 }
 
-// After any cart change an applied promotion is checked again, so the discount always matches the cart.
-function recheckPromotion(orderState) {
+// After any cart change an applied promotion is checked again, so it always fits the cart. A cart that
+// can't be priced is reported on its own, and keeps its promotion until that's sorted out.
+async function recheckPromotion(orderState) {
   const discount = orderState.discount;
   if (!discount.promotionId) return null;
+  const pricedCart = await pricedCartFor(orderState);
+  if (pricedCart.error) return null;
   const check = checkCartPromotion(
-    orderState,
+    pricedCart,
     { promotionId: discount.promotionId, promotionCode: discount.code, orderType: orderState.orderType },
     PROMOTIONS,
     todayInRestaurant(new Date())
@@ -636,7 +755,7 @@ const SET_PICKUP_DETAILS_TOOL = {
     "Record that this order is for pickup, with the details the customer has given. Include only fields the customer " +
     "actually said; leave out anything already shown in <current_order>. pickupTime is optional: include it only if the " +
     "customer asked for a specific time. The result lists what is still missing: ask only for that.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerName: { type: "string" },
@@ -687,7 +806,7 @@ const SET_DELIVERY_DETAILS_TOOL = {
     "Record that this order is for delivery, with the details the customer has given. Include only what the customer " +
     "actually said, in their words; never guess, complete or tidy up an address, and leave out anything already shown in " +
     "<current_order>. The result lists what is still missing: ask only for that.",
-  parametersJsonSchema: {
+  input_schema: {
     type: "object",
     properties: {
       customerName: { type: "string" },
@@ -786,7 +905,7 @@ const REVIEW_ORDER_TOOL = {
     "the order as it stands.",
 };
 
-function reviewOrder(orderState) {
+async function reviewOrder(orderState) {
   if (orderState.status === "saved" || orderState.status === "not_saved") {
     return { ready: false, error: "that order was already submitted." };
   }
@@ -794,9 +913,10 @@ function reviewOrder(orderState) {
   if (orderState.items.length === 0) return { ready: false, error: "the cart is empty.", instruction: "Help the customer add items first." };
 
   // Promotions are re-checked here, so only one that is still valid appears in the summary.
-  const promotionUpdate = recheckPromotion(orderState);
-  const totals = cartTotals(orderState);
-  const { summary, text } = buildOrderSummary(orderState, totals, missingCheckoutDetails(orderState), PRICING);
+  const promotionUpdate = await recheckPromotion(orderState);
+  const totals = await cartTotals(orderState);
+  if (totals.error) return { ready: false, error: totals.error, instruction: NOT_ORDERABLE_INSTRUCTION };
+  const { summary, text } = buildOrderSummary(orderState, totals, missingCheckoutDetails(orderState));
   if (!summary.readyForCheckout) {
     return {
       ready: false,
@@ -806,7 +926,7 @@ function reviewOrder(orderState) {
     };
   }
 
-  orderState.reviewedFingerprint = orderFingerprint(orderState);
+  orderState.reviewedFingerprint = orderFingerprint(orderState, totals);
   return {
     ready: true,
     summary,
@@ -819,11 +939,19 @@ function reviewOrder(orderState) {
   };
 }
 
-// True if the bot's reply showed the reviewed order's summary: its items and total.
-function summaryShownIn(orderState, reply) {
-  if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== orderFingerprint(orderState)) return false;
+// True if the bot's reply showed the reviewed order's summary, at today's prices: its items and total.
+async function summaryShownIn(orderState, reply) {
+  if (!orderState.reviewedFingerprint || orderState.items.length === 0) return false;
+  let totals;
+  try {
+    totals = await cartTotals(orderState);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return false;
+  }
+  if (totals.error || orderState.reviewedFingerprint !== orderFingerprint(orderState, totals)) return false;
   const shown = normaliseForReadBack(reply);
-  const { summary } = buildOrderSummary(orderState, cartTotals(orderState), [], PRICING);
+  const { summary } = buildOrderSummary(orderState, totals, []);
   const required = [
     ...summary.items.map((item) => `${item.quantity} x ${item.name}`),
     `total: ${summary.totals.total}`,
@@ -832,18 +960,19 @@ function summaryShownIn(orderState, reply) {
 }
 
 // After each reply: which version of the order, if any, the customer has now seen summarised.
-function recordShownSummary(orderState, reply) {
-  orderState.shownFingerprint = summaryShownIn(orderState, reply) ? orderState.reviewedFingerprint : null;
+async function recordShownSummary(orderState, reply) {
+  orderState.shownFingerprint = (await summaryShownIn(orderState, reply)) ? orderState.reviewedFingerprint : null;
 }
 
 // The order must have been reviewed as it stands now, and that summary shown in the bot's last
 // message (kept by the server), so the customer confirms exactly what will be saved. A change
 // made in the same message as the yes (a new option, time or instruction) means the customer
 // hasn't seen it yet.
-function checkReviewedOrder(orderState) {
+async function checkReviewedOrder(orderState) {
   if (orderState.items.length === 0) return "the cart is empty. Add the items with addItemToCart first.";
-  cartTotals(orderState);
-  const current = orderFingerprint(orderState);
+  const totals = await cartTotals(orderState);
+  if (totals.error) return totals.error;
+  const current = orderFingerprint(orderState, totals);
   if (!orderState.reviewedFingerprint || orderState.reviewedFingerprint !== current) {
     return "the order hasn't been reviewed as it stands now. Call reviewOrder, show the customer the summary, and ask them to confirm.";
   }
@@ -853,15 +982,9 @@ function checkReviewedOrder(orderState) {
   return null;
 }
 
-const CART_CHANGING_TOOLS = ["addItemToCart", "modifyItem", "removeItem"];
-
-// Tools that only read or update this chat's data; the model sees the result and carries on.
-function runDataTool(call, orderState, contents) {
-  if (call.name === GET_MENU_TOOL.name) {
-    console.log("Gemini called getMenu.");
-    return getMenu();
-  }
-  if (call.name === VIEW_CART_TOOL.name) return cartSummary(orderState);
+async function runCartTool(call, orderState, contents, turn) {
+  if (call.name === GET_ORDER_TOTALS_TOOL.name) return getOrderTotals(orderState);
+  if (call.name === VIEW_CART_TOOL.name) return viewCart(orderState);
   if (call.name === APPLY_PROMOTION_TOOL.name) return applyPromotion(call.args || {}, orderState, contents);
   if (call.name === SET_PICKUP_DETAILS_TOOL.name) return setPickup(call.args || {}, orderState);
   if (call.name === SET_DELIVERY_DETAILS_TOOL.name) return setDelivery(call.args || {}, orderState);
@@ -869,57 +992,104 @@ function runDataTool(call, orderState, contents) {
   if (call.name === REVIEW_ORDER_TOOL.name) return reviewOrder(orderState);
 
   let result;
-  if (call.name === MODIFY_ITEM_TOOL.name) result = modifyItem(call.args || {}, orderState);
-  else if (call.name === REMOVE_ITEM_TOOL.name) result = removeItem(call.args || {}, orderState);
-  else result = addItemToCart(call.args || {}, orderState);
+  if (call.name === MODIFY_ITEM_TOOL.name) result = await modifyItem(call.args || {}, orderState);
+  else if (call.name === REMOVE_ITEM_TOOL.name) result = await removeItem(call.args || {}, orderState);
+  else result = await addItemToCart(call.args || {}, orderState, turn.menu);
+  if (!result.added && !result.modified && !result.removed) return result;
 
-  const promotion = CART_CHANGING_TOOLS.includes(call.name) ? recheckPromotion(orderState) : null;
   // The total is always the server's, worked out after the cart and any promotion settle.
-  const withTotal = result.cartSubtotal ? { ...result, cartTotal: formatRupees(cartTotals(orderState).totalPaisa) } : result;
-  return promotion ? { ...withTotal, promotion } : withTotal;
+  const promotion = await recheckPromotion(orderState);
+  return { ...result, ...(await cartView(orderState)), ...(promotion ? { promotion } : {}) };
 }
 
-const DATA_TOOL_NAMES = [
-  GET_MENU_TOOL.name,
-  ADD_ITEM_TO_CART_TOOL.name,
-  MODIFY_ITEM_TOOL.name,
-  REMOVE_ITEM_TOOL.name,
-  VIEW_CART_TOOL.name,
-  APPLY_PROMOTION_TOOL.name,
-  SET_PICKUP_DETAILS_TOOL.name,
-  SET_DELIVERY_DETAILS_TOOL.name,
-  CONFIRM_DELIVERY_ADDRESS_TOOL.name,
-  REVIEW_ORDER_TOOL.name,
+// Tools that only read or update this chat's data; the model sees the result and carries on.
+async function runDataTool(call, orderState, contents, turn) {
+  // Tool name only: arguments can hold the customer's name, phone or address.
+  console.log(`Model called ${call.name}.`);
+  if (MENU_TOOL_NAMES.includes(call.name)) return runMenuTool(call.name, call.args);
+  try {
+    return await runCartTool(call, orderState, contents, turn);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return { error: MENU_CHECK_FAILED, instruction: "Say you can't check the menu right now. Don't name any price." };
+  }
+}
+
+// An Order button on the menu sends the item's id, so it goes straight into the cart without the
+// model having to work out which item was meant. The model is told the result, so it can reply.
+async function addFromOrderButton(orderItem, orderState, turn) {
+  const args = { itemId: orderItem.item_id, quantity: orderItem.quantity, optionIds: orderItem.option_ids };
+  const result = await runDataTool({ name: ADD_ITEM_TO_CART_TOOL.name, args }, orderState, [], turn);
+  turn.toolResults.push(result);
+  if (result.added) recordClick(orderState, orderItem.click_id);
+  turn.clickStatus = result.added ? "applied" : "not_added";
+  return (
+    "The customer's message came from an Order button on the menu. The server has already handled it, so don't call " +
+    `addItemToCart for it. Reply to the customer using this result: ${JSON.stringify(result)}`
+  );
+}
+
+// The cart as the customer sees it after an Order click, built by the server with no model involved.
+// null if the menu can't be read right now.
+async function cartForCustomer(orderState) {
+  try {
+    const lines = await describeCart(orderState.items);
+    const totals = orderState.items.length > 0 ? await cartTotals(orderState) : null;
+    const priced = totals && !totals.error ? totals : null;
+    return {
+      lines: lines.map((line, index) => ({
+        name: line.name,
+        quantity: line.quantity,
+        orderable: line.orderable,
+        contains: line.contains || [],
+        lineTotal: priced ? priced.lines[index].lineTotalDisplay : null,
+      })),
+      total: priced ? priced.display.total : null,
+    };
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return null;
+  }
+}
+
+// A regenerated reply can only look things up, so a cart change or an order is never made twice.
+const LOOKUP_TOOLS = [...MENU_TOOLS, GET_ORDER_TOTALS_TOOL, VIEW_CART_TOOL];
+const ALL_TOOLS = [
+  ...LOOKUP_TOOLS,
+  ADD_ITEM_TO_CART_TOOL,
+  MODIFY_ITEM_TOOL,
+  REMOVE_ITEM_TOOL,
+  APPLY_PROMOTION_TOOL,
+  SET_PICKUP_DETAILS_TOOL,
+  SET_DELIVERY_DETAILS_TOOL,
+  CONFIRM_DELIVERY_ADDRESS_TOOL,
+  REVIEW_ORDER_TOOL,
+  SUBMIT_ORDER_TOOL,
 ];
+const DATA_TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name).filter((name) => name !== SUBMIT_ORDER_TOOL.name);
 
 // Caps tool rounds per customer message (e.g. look up the menu, add items) before the model must answer.
 const MAX_TOOL_ROUNDS = 3;
 
-function generateReply(contents, { useTools, orderState }) {
-  return gemini.models.generateContent({
-    model: GEMINI_MODEL,
-    contents,
-    config: {
-      systemInstruction: currentSystemPrompt(orderState),
-      temperature: 0.4,
-      maxOutputTokens: 1024,
-      abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
-      ...(useTools
-        ? { tools: [{ functionDeclarations: [GET_MENU_TOOL, ADD_ITEM_TO_CART_TOOL, MODIFY_ITEM_TOOL, REMOVE_ITEM_TOOL, VIEW_CART_TOOL, APPLY_PROMOTION_TOOL, SET_PICKUP_DETAILS_TOOL, SET_DELIVERY_DETAILS_TOOL, CONFIRM_DELIVERY_ADDRESS_TOOL, REVIEW_ORDER_TOOL, SUBMIT_ORDER_TOOL] }] }
-        : {}),
-    },
-  });
+// A tool with no arguments still needs an (empty) input schema.
+function toClaudeTool(tool) {
+  return { name: tool.name, description: tool.description, input_schema: tool.input_schema || { type: "object", properties: {} } };
 }
 
-async function generateWithRetry(contents, options) {
-  try {
-    return await generateReply(contents, options);
-  } catch (error) {
-    // 503 = Gemini briefly overloaded; one retry usually gets through. Other errors aren't retried.
-    if (error.status !== 503) throw error;
-    await new Promise((resolve) => setTimeout(resolve, OVERLOAD_RETRY_DELAY_MS));
-    return generateReply(contents, options);
-  }
+// The system prompt is a top-level parameter, not a message. Once the history holds tool calls the
+// tools stay declared, so allowTools: false switches them off with tool_choice "none" instead.
+// Retries for 429 and overload are done by the SDK (maxRetries on the client).
+async function generateWithRetry(contents, { system, tools, allowTools = true }) {
+  return anthropic.messages.create({
+    model: CHAT_MODEL,
+    max_tokens: MODEL_MAX_TOKENS,
+    system,
+    messages: contents,
+    // A chat reply needs little thinking; low effort keeps it fast and cheap.
+    output_config: { effort: "low" },
+    tools: tools.map(toClaudeTool),
+    ...(allowTools ? {} : { tool_choice: { type: "none" } }),
+  });
 }
 
 // Saved and failed orders get a fixed reply from the server, so the customer is told exactly
@@ -955,17 +1125,13 @@ function withCheckoutDetails(args, orderState) {
 }
 
 // Items and promotion come from the reviewed cart, not from the model's arguments.
-function withReviewedCart(args, orderState) {
-  const problem = checkReviewedOrder(orderState);
+async function withReviewedCart(args, orderState) {
+  const problem = await checkReviewedOrder(orderState);
   if (problem) return { error: problem };
   return {
     args: {
       ...(args || {}),
-      items: orderState.items.map((line) => ({
-        itemId: line.itemId,
-        quantity: line.quantity,
-        options: line.options.map((o) => ({ name: o.name, choice: o.choice })),
-      })),
+      items: orderState.items,
       promotionId: orderState.discount.promotionId || undefined,
       promotionCode: orderState.discount.code || undefined,
     },
@@ -976,8 +1142,8 @@ function withReviewedCart(args, orderState) {
 function latestCustomerMessage(contents) {
   for (let i = contents.length - 1; i >= 0; i--) {
     if (contents[i].role !== "user") continue;
-    const part = (contents[i].parts || []).find((p) => typeof p.text === "string");
-    if (part) return part.text;
+    const text = messageText(contents[i]);
+    if (text) return text;
   }
   return "";
 }
@@ -1003,10 +1169,17 @@ function duplicateSubmission(orderState) {
   return null;
 }
 
-async function submitCheckedOrder(call, contents, orderState) {
+async function submitCheckedOrder(call, contents, orderState, turn) {
+  if (!turn.menu) return { status: "invalid", error: MENU_CHECK_FAILED };
   // Missing details are reported first, since the customer has to supply them before any review.
   const details = withCheckoutDetails(call.args, orderState);
-  let prepared = details.error ? details : withReviewedCart(details.args, orderState);
+  let prepared;
+  try {
+    prepared = details.error ? details : await withReviewedCart(details.args, orderState);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return { status: "invalid", error: MENU_CHECK_FAILED };
+  }
   if (!prepared.error) {
     const notConfirmed = checkCustomerConfirmed(contents);
     if (notConfirmed) prepared = { error: notConfirmed };
@@ -1017,65 +1190,139 @@ async function submitCheckedOrder(call, contents, orderState) {
   try {
     return await placeOrder({
       args: prepared.args,
-      menu: MENU,
       promotions: PROMOTIONS,
       today: todayInRestaurant(new Date()),
-      saveOrder: saveOrderFor(orderState),
-      phone: RESTAURANT_PHONE_FALLBACK,
-      pricing: PRICING,
+      saveOrder: saveOrderFor(orderState, turn.chatSessionId || null),
+      phone: turn.settings.whatsapp || "the number on our website",
     });
   } finally {
     orderState.checkoutInProgress = false;
   }
 }
 
-async function handleOrderCall(call, contents, response, orderState) {
+// For the submit_order log line: item ids, quantities and the server's total only. Ids are cut to
+// id characters because a cart line's id comes from the model; nothing personal is ever included.
+function orderLogDetails(result, cartItems) {
+  const lines = result.order
+    ? result.order.lines.map((line) => [line.itemId, line.quantity])
+    : cartItems.map((line) => [line.item_id, line.quantity]);
+  const items = lines.map(([id, qty]) => `${String(id).replace(/[^\w-]/g, "").slice(0, 64)}x${Number.isInteger(qty) ? qty : "?"}`);
+  const total = result.order && Number.isInteger(result.order.totalPaisa) ? result.order.totalPaisa : "-";
+  return `items=[${items.join(",")}] total_paisa=${total}`;
+}
+
+// fromServer marks the server's own fixed order messages, which the price guard doesn't check.
+async function handleOrderCall(call, contents, response, orderState, turn, { system, tools }) {
+  const cartItems = [...(orderState.items || [])];
   const duplicate = duplicateSubmission(orderState);
-  const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState);
+  const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState, turn);
+  // The rejection reason can quote customer input, so it stays in the chat state (state.problem), not the log.
+  console.log(`Model called ${call.name}: ${result.status} ${orderLogDetails(result, cartItems)}`);
   // A refused duplicate leaves the saved order's state exactly as it was.
   if (result.status !== "duplicate") recordOrderAttempt(orderState, result);
 
   if (result.status === "saved") {
     orderState.savedOrderCount = (orderState.savedOrderCount || 0) + 1;
     console.log(`Order ${result.orderNumber} saved.`);
-    return result.reply;
+    return { text: result.reply, fromServer: true };
   }
   if (result.status === "failed") {
     console.error(`Order not saved (${result.reason}).`);
-    return result.reply;
+    return { text: result.reply, fromServer: true };
   }
 
-  contents.push(response.candidates[0].content, {
-    role: "user",
-    parts: [{ functionResponse: { id: call.id, name: call.name, response: { error: result.error } } }],
-  });
-  const followUp = await generateWithRetry(contents, { useTools: false, orderState });
-  return (followUp.text || "").trim();
+  // Claude needs an answer to every tool call in its message. Calls made beside submit_order are
+  // not run, as before; they are only answered as skipped.
+  const results = toolCalls(response).map((other) =>
+    other.id === call.id
+      ? toolResult(call, { error: result.error, instruction: NOT_ORDERABLE_INSTRUCTION })
+      : toolResult(other, { error: "not run: submit_order was called in the same reply." }, true)
+  );
+  contents.push({ role: "assistant", content: response.content }, { role: "user", content: results });
+  const followUp = await generateWithRetry(contents, { system, tools, allowTools: false });
+  return { text: replyText(followUp), fromServer: false };
 }
 
-// Gemini may call getMenu or addItemToCart, get the results back as functionResponses, then
-// answer or submit an order.
-async function askGemini(history, message, orderState) {
-  const contents = toGeminiContents(history, message);
-  let response = await generateWithRetry(contents, { useTools: true, orderState });
+// Claude may call menu or cart tools, get the results back as tool_result blocks, then answer or
+// submit an order. Every result is kept in turn.toolResults for the price guard.
+// The system prompt is built once per run: Claude only accepts its thinking blocks back while the
+// system prompt and tools are unchanged, so a cart change mid-run reaches the model through the
+// tool results instead of a rebuilt <current_order>.
+async function runModel(contents, orderState, turn, { tools, correction }) {
+  const system = await currentSystemPrompt(orderState, turn, correction);
+  let response = await generateWithRetry(contents, { system, tools });
 
   for (let rounds = 1; ; rounds++) {
-    const calls = response.functionCalls || [];
+    const calls = toolCalls(response);
     const orderCall = calls.find((call) => call.name === SUBMIT_ORDER_TOOL.name);
-    if (orderCall) return handleOrderCall(orderCall, contents, response, orderState);
+    if (orderCall) return handleOrderCall(orderCall, contents, response, orderState, turn, { system, tools });
 
     const dataCalls = calls.filter((call) => DATA_TOOL_NAMES.includes(call.name));
-    if (dataCalls.length === 0) return (response.text || "").trim();
+    if (dataCalls.length === 0) return { text: replyText(response), fromServer: false };
 
-    contents.push(response.candidates[0].content, {
-      role: "user",
-      parts: dataCalls.map((call) => ({
-        functionResponse: { id: call.id, name: call.name, response: runDataTool(call, orderState, contents) },
-      })),
-    });
+    // Every call gets a result block; one for a tool that isn't offered is answered as an error.
+    const results = [];
+    for (const call of calls) {
+      if (!dataCalls.includes(call)) {
+        results.push(toolResult(call, { error: `unknown tool ${call.name}` }, true));
+        continue;
+      }
+      const result = await runDataTool(call, orderState, contents, turn);
+      turn.toolResults.push(result);
+      results.push(toolResult(call, result));
+    }
+    // The whole reply goes back unchanged, thinking blocks included.
+    contents.push({ role: "assistant", content: response.content }, { role: "user", content: results });
     // Past the cap, tools are switched off so the model has to reply in text.
-    response = await generateWithRetry(contents, { useTools: rounds < MAX_TOOL_ROUNDS, orderState });
+    response = await generateWithRetry(contents, { system, tools, allowTools: rounds < MAX_TOOL_ROUNDS });
   }
+}
+
+// The regenerated reply runs with a new system prompt and only the lookup tools, so the first run's
+// thinking blocks would be refused. They are dropped; its tool calls and results stay.
+function dropThinking(contents) {
+  for (const message of contents) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    message.content = message.content.filter((block) => block.type !== "thinking" && block.type !== "redacted_thinking");
+  }
+}
+
+// Earlier turns reach the model as text, without their tool calls, so it can't see where their
+// prices came from. They all passed the price guard, which is what this says. The rule for this
+// turn's prices is unchanged.
+const EARLIER_REPLIES_NOTE =
+  "Your earlier replies in this chat were checked by the server before they were sent: every price in them came " +
+  "from a tool result at the time. Don't correct, doubt or apologise for them. Any price you state in this reply " +
+  "must still come from a tool result in this turn.";
+
+const PRICE_CORRECTION =
+  "Your last draft stated a price that did not come from a tool result in this turn, so it was not sent. Call a menu " +
+  "tool or get_order_totals for any price you need, then answer. State only amounts from those results. Don't repeat a " +
+  "price the customer suggested.";
+
+// Amounts are logged as paisa with no customer text, so the log holds no customer details.
+function unbackedPrices(reply, turn, stage) {
+  const prices = findUnbackedPrices(reply.text, turn.toolResults);
+  if (prices.length) console.warn(`Price guard fired (${stage}): unbacked paisa amounts ${prices.join(", ")}.`);
+  return prices;
+}
+
+// No reply reaches the customer with a rupee amount that this turn's tool results don't contain.
+async function askModel(history, message, orderState, turn, buttonNote) {
+  const contents = toClaudeMessages(history, message);
+  // Server facts about the earlier turns, as a system message right after the customer's reply,
+  // where the model weighs them most. Only ever appended, so nothing before it changes.
+  const notes = [history.some((entry) => entry.role === "assistant") ? EARLIER_REPLIES_NOTE : "", formatShownSummary(orderState).trim()];
+  const note = notes.filter(Boolean).join("\n");
+  if (note) contents.push({ role: "system", content: note });
+  const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS, correction: buttonNote });
+  if (first.fromServer || unbackedPrices(first, turn, "regenerating").length === 0) return first.text;
+
+  dropThinking(contents);
+  const second = await runModel(contents, orderState, turn, { tools: LOOKUP_TOOLS, correction: [buttonNote, PRICE_CORRECTION].filter(Boolean).join("\n\n") });
+  if (unbackedPrices(second, turn, "sending fallback").length === 0) return second.text;
+
+  return `Sorry, I can't confirm that price right now. Please ${await reachUs()}.`;
 }
 
 /* ---------- Request checks ---------- */
@@ -1096,8 +1343,22 @@ function validateHistoryEntry(entry) {
   return null;
 }
 
+const MAX_ID_LENGTH = 100;
+
+// Only the shape is checked here; totals.js decides whether the item and quantity can be ordered.
+function validateOrderItem(orderItem) {
+  if (!orderItem || typeof orderItem !== "object" || Array.isArray(orderItem)) return "orderItem must be an object.";
+  const isId = (id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH;
+  if (!isId(orderItem.item_id)) return "orderItem needs an item_id.";
+  if (orderItem.click_id !== undefined && !isId(orderItem.click_id)) return "orderItem.click_id must be an id.";
+  if (orderItem.option_ids !== undefined && (!Array.isArray(orderItem.option_ids) || orderItem.option_ids.length > MAX_HISTORY_ENTRIES || !orderItem.option_ids.every(isId))) {
+    return "orderItem.option_ids must be a list of ids.";
+  }
+  return null;
+}
+
 function validateChatRequest(body) {
-  const { message, conversationHistory } = body || {};
+  const { message, conversationHistory, orderItem } = body || {};
 
   if (typeof message !== "string" || message.trim() === "") {
     return "message is required and must be a non-empty string.";
@@ -1112,14 +1373,16 @@ function validateChatRequest(body) {
     const entryError = validateHistoryEntry(entry);
     if (entryError) return entryError;
   }
-  return null;
+  return orderItem === undefined ? null : validateOrderItem(orderItem);
 }
 
 // With Supabase set up, chats and rate limits are kept there, so they hold across every copy of
 // the server on Vercel. Without it (local use), they're kept in memory.
 const sessionStore = supabase ? createSupabaseSessionStore(supabase) : createMemorySessionStore();
 const rateLimiter = supabase ? createSupabaseRateLimiter(supabase) : createMemoryRateLimiter();
-const CHAT_UNAVAILABLE = `AI Order Taker can't load your chat right now. Please try again in a minute, or call us on ${RESTAURANT_PHONE_FALLBACK}.`;
+async function chatUnavailable() {
+  return `AI Order Taker can't load your chat right now. Please try again in a minute, or ${await reachUs()}.`;
+}
 
 async function isRateLimited(ip) {
   const hits = await rateLimiter.hit(rateLimitKey("chat", ip), RATE_LIMIT_WINDOW_MS, true);
@@ -1130,9 +1393,10 @@ async function isRateLimited(ip) {
 async function loadOrderSession(req, res) {
   const id = readSessionId(req.headers.cookie);
   const existing = await sessionStore.load(id);
-  if (existing) return { id, state: existing };
+  if (existing) return { id, state: upgradeOrderState(existing) };
 
   const created = await sessionStore.create();
+  recordForDashboard("purge", (c) => c.purgeOld()); // not awaited: old rows can go in the background
   res.setHeader("Set-Cookie", sessionCookie(created.id, req.secure));
   return created;
 }
@@ -1162,7 +1426,27 @@ app.use(express.json({ limit: "100kb" }));
 
 // Staff dashboard at /staff, behind STAFF_PASSWORD. Uses the same server-only Supabase client.
 if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
-addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
+const { requireStaff, requireDatabase } = addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
+addMenuImageRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin"), getPhotoChecklist: menuService.getPhotoChecklist });
+
+// Public and read-only. Not cached by browsers: the service's own cache already sets how fresh it is.
+function menuRoute(read) {
+  return async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      res.json(await read());
+    } catch (error) {
+      if (error.code !== "MENU_UNAVAILABLE") console.error("Menu route failed:", error.message);
+      res.status(503).json({ error: "The menu is unavailable right now. Please try again in a minute." });
+    }
+  };
+}
+// Owner dashboard data, all behind the staff password.
+addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings });
+addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
+
+app.get("/api/menu", menuRoute(menuService.getPublicMenu));
+app.get("/api/menu/health", menuRoute(menuService.getHealth));
 
 app.post("/api/chat", async (req, res) => {
   try {
@@ -1171,7 +1455,7 @@ app.post("/api/chat", async (req, res) => {
     }
   } catch (error) {
     console.error("Chat rate limit check failed:", error.code || error.message);
-    return res.status(503).json({ error: CHAT_UNAVAILABLE });
+    return res.status(503).json({ error: await chatUnavailable() });
   }
 
   const validationError = validateChatRequest(req.body);
@@ -1179,59 +1463,91 @@ app.post("/api/chat", async (req, res) => {
     return res.status(400).json({ error: validationError });
   }
 
-  if (!gemini) {
+  if (!anthropic) {
     return res.status(503).json({ error: "AI Order Taker isn't configured yet. Please call us to order." });
   }
 
-  const { message, conversationHistory = [] } = req.body;
+  const { message, conversationHistory = [], orderItem } = req.body;
   let session;
   try {
     session = await loadOrderSession(req, res);
   } catch (error) {
     console.error("Chat session load failed:", error.code || error.message);
-    return res.status(503).json({ error: CHAT_UNAVAILABLE });
+    return res.status(503).json({ error: await chatUnavailable() });
   }
   const orderState = session.state;
   const ordersSavedBefore = orderState.savedOrderCount || 0;
+  let turn = null;
+  // What an Order click's response adds. Sent only once the state is saved, so a browser that sees
+  // clickStatus knows the server has finished with that click id.
+  const clickFields = async () =>
+    turn && turn.clickStatus ? { clickStatus: turn.clickStatus, cart: await cartForCustomer(orderState) } : {};
 
   try {
-    const reply = await askGemini(conversationHistory, message.trim(), orderState);
+    turn = await loadChatTurn();
+    turn.chatSessionId = sessionRowId(session.id);
+    // A repeat of a click already in this cart changes nothing and needs no model, so it can't fail.
+    if (orderItem && isClickApplied(orderState, orderItem.click_id)) {
+      turn.clickStatus = "duplicate";
+      return res.json({
+        reply: "That one is already in your cart, so I haven't added it again. If you'd like another, just tell me how many.",
+        ...(await clickFields()),
+      });
+    }
+    const buttonNote = orderItem ? await addFromOrderButton(orderItem, orderState, turn) : null;
+    const reply = await askModel(conversationHistory, message.trim(), orderState, turn, buttonNote);
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
-    recordShownSummary(orderState, orderState.lastReply);
+    await recordShownSummary(orderState, orderState.lastReply);
     // If the chat can't be saved, the customer is asked to resend rather than lose a change
     // silently, except when an order was just placed: its number must still reach them.
     const sessionSaved = await saveOrderSession(session);
     if (!sessionSaved && (orderState.savedOrderCount || 0) === ordersSavedBefore) {
-      return res.status(503).json({ error: CHAT_UNAVAILABLE });
+      return res.status(503).json({ error: await chatUnavailable() });
     }
+    if (sessionSaved) {
+      const rowId = sessionRowId(session.id);
+      await recordForDashboard("message log", (c) =>
+        c.logMessages(rowId, [{ role: "customer", content: message.trim() }, { role: "assistant", content: reply || "" }])
+      );
+      if ((orderState.savedOrderCount || 0) > ordersSavedBefore) {
+        await recordForDashboard("order link", (c) => c.markOrdered(rowId, orderState.orderNumber));
+      }
+    }
+    const click = sessionSaved ? await clickFields() : {};
     if (!reply) {
       return res.json({
-        reply: `Sorry, I couldn't answer that. Please try rephrasing, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
+        reply: `Sorry, I couldn't answer that. Please try rephrasing, or ${await reachUs()}.`,
+        ...click,
       });
     }
-    res.json({ reply });
+    res.json({ reply, ...click });
   } catch (error) {
-    // Log only the status and message: never the request, which could hold customer details.
-    console.error("Gemini request failed:", error.status || error.name, String(error.message).slice(0, 200));
+    // One line naming what went wrong. Never the request, which could hold customer details.
+    const failure = classifyModelError(error);
+    logModelError(failure, error);
     // Tools may have changed the cart before the failure; keep those changes.
-    await saveOrderSession(session);
+    const sessionSaved = await saveOrderSession(session);
 
-    // 429 = Gemini quota used up. The quota can be per minute or per day, so don't promise a quick retry.
-    if (error.status === 429) {
-      const quotaId = (String(error.message).match(/"quotaId":\s*"([^"]+)"/) || [])[1] || "unknown";
-      console.error(`Gemini quota exhausted (${quotaId}). Check usage and billing in Google AI Studio.`);
-      return res.status(503).json({
-        error: `AI Order Taker has reached its message limit for now. Please call us on ${RESTAURANT_PHONE_FALLBACK} to order.`,
+    // The item went in and the only thing missing is the model's words, so say so plainly. A customer
+    // left with no reply is what leads to a second click on Order.
+    if (sessionSaved && turn && turn.clickStatus === "applied") {
+      return res.json({
+        reply: `That's in your cart, but I couldn't finish my reply just now. Send me a message to carry on, or ${await reachUs()}.`,
+        ...(await clickFields()),
       });
     }
-    // 503 = Gemini still overloaded after one retry: clears up on its own.
-    if (error.status === 503) {
-      return res.status(503).json({ error: "AI Order Taker is busy right now. Please try again in a minute." });
+
+    // Rate limit, overload and no credit all mean the bot can't answer for a while: send the
+    // customer to WhatsApp. The log line above says which one it was.
+    if (failure === "rate_limit" || failure === "overloaded" || failure === "no_credit") {
+      return res.status(503).json({
+        error: `AI Order Taker can't take orders right now. To order, please ${await reachUs()}.`,
+      });
     }
     res.status(502).json({
-      error: `AI Order Taker is having trouble right now. Please try again, or call us on ${RESTAURANT_PHONE_FALLBACK}.`,
+      error: `AI Order Taker is having trouble right now. Please try again, or ${await reachUs()}.`,
     });
   }
 });
@@ -1251,7 +1567,7 @@ app.use((error, req, res, next) => {
 // Vercel runs the exported app itself (see /server.js at the project root); locally it listens on PORT.
 if (!process.env.VERCEL) {
   const server = app.listen(PORT, () => {
-    console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${GEMINI_MODEL})`);
+    console.log(`Doner Bros server running at http://localhost:${PORT} (AI Order Taker model: ${CHAT_MODEL})`);
   });
 
   server.on("error", (error) => {

@@ -1,12 +1,11 @@
-// Doner Bros — order checks, pricing and saving. Everything the AI Order Taker submits is
-// re-checked here against menu.json and promotions.json; nothing it calculates is trusted.
+// Doner Bros — order checks and saving. Everything the AI Order Taker submits is re-checked here;
+// totals.js recalculates every amount before saving, and no submitted amount is ever trusted.
 
-const { NO_TAX_NO_FEE, calculateOrderTotals } = require("./totals");
+const { calculateTotals, deliveryFeeLine, deliveryFeeStatus } = require("./totals");
+const { formatPrice: formatRupees } = require("./services/menu-service");
 
 const RESTAURANT_TIMEZONE = "Asia/Karachi";
 const ORDER_TYPES = ["pickup", "delivery"];
-const MAX_ORDER_LINES = 20;
-const MAX_QUANTITY = 20;
 
 function todayInRestaurant(now) {
   return {
@@ -25,10 +24,6 @@ function isPromotionLive(promotion, today) {
     (!conditions.endDate || today.date <= conditions.endDate) &&
     (!conditions.daysOfWeek || conditions.daysOfWeek.includes(today.weekday))
   );
-}
-
-function formatRupees(paisa) {
-  return `Rs ${(paisa / 100).toLocaleString("en-PK")}`;
 }
 
 function sameText(a, b) {
@@ -128,108 +123,6 @@ function validatePickupDetails(args) {
   return { details };
 }
 
-// Returns the chosen options and their extra cost, or an error naming what's wrong.
-function priceOptions(item, requestedOptions) {
-  const requested = Array.isArray(requestedOptions) ? requestedOptions : [];
-  const chosen = [];
-  let extraPaisa = 0;
-
-  for (const request of requested) {
-    const option = (item.options || []).find((o) => sameText(o.name, request && request.name));
-    if (!option) return { error: `${item.name} has no option called "${request && request.name}".` };
-    if (chosen.some((c) => c.name === option.name)) return { error: `${item.name}: "${option.name}" was chosen twice.` };
-
-    const choice = option.choices.find((c) => sameText(typeof c === "string" ? c : c.name, request.choice));
-    if (!choice) return { error: `${item.name}: "${request.choice}" isn't a choice for ${option.name}.` };
-
-    const choiceName = typeof choice === "string" ? choice : choice.name;
-    extraPaisa += typeof choice === "string" ? 0 : choice.pricePaisa;
-    chosen.push({ name: option.name, choice: choiceName });
-  }
-
-  const missing = (item.options || []).find((o) => o.required && !chosen.some((c) => c.name === o.name));
-  if (missing) return { error: `${item.name} needs a ${missing.name} choice before it can be ordered.` };
-
-  return { chosen, extraPaisa };
-}
-
-function priceOrderLines(requestedItems, menu) {
-  if (!Array.isArray(requestedItems) || requestedItems.length === 0) return { error: "the order has no items." };
-  if (requestedItems.length > MAX_ORDER_LINES) return { error: `orders are limited to ${MAX_ORDER_LINES} lines.` };
-
-  const menuItems = new Map(menu.categories.flatMap((category) => category.items).map((item) => [item.id, item]));
-  const lines = [];
-
-  for (const request of requestedItems) {
-    const item = menuItems.get(request && request.itemId);
-    if (!item) return { error: `"${request && request.itemId}" isn't on the menu.` };
-    if (item.availability === "unavailable") return { error: `${item.name} is currently unavailable.` };
-
-    const quantity = request.quantity;
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
-      return { error: `${item.name}: quantity must be a whole number from 1 to ${MAX_QUANTITY}.` };
-    }
-
-    const options = priceOptions(item, request.options);
-    if (options.error) return { error: options.error };
-
-    const unitPricePaisa = item.pricePaisa + options.extraPaisa;
-    lines.push({
-      itemId: item.id,
-      name: item.name,
-      quantity,
-      options: options.chosen,
-      unitPricePaisa,
-      lineTotalPaisa: unitPricePaisa * quantity,
-    });
-  }
-
-  return { lines };
-}
-
-// Required options the customer hasn't chosen yet, with their real choices, so the bot can ask.
-function missingRequiredOptions(item, requestedOptions) {
-  const requested = Array.isArray(requestedOptions) ? requestedOptions : [];
-  return (item.options || [])
-    .filter((option) => option.required && !requested.some((r) => r && sameText(r.name, option.name)))
-    .map((option) => ({ name: option.name, choices: option.choices.map((c) => (typeof c === "string" ? c : c.name)) }));
-}
-
-// Checks and prices one cart item: { line }, { missingOptions } or { error }.
-function priceCartItem(request, menu) {
-  const item = menu.categories.flatMap((category) => category.items).find((i) => i.id === (request && request.itemId));
-  if (item && item.availability !== "unavailable") {
-    const missingOptions = missingRequiredOptions(item, request.options);
-    if (missingOptions.length) return { missingOptions };
-  }
-  const priced = priceOrderLines([request], menu);
-  return priced.error ? { error: priced.error } : { line: priced.lines[0] };
-}
-
-// Applies the customer's changes (new quantity and/or option choices) to one cart line, then
-// re-checks the whole line against the menu: { line }, { missingOptions } or { error }.
-function priceModifiedLine(line, changes, menu) {
-  const hasQuantity = changes.quantity !== undefined;
-  const requested = changes.options === undefined ? [] : changes.options;
-  if (!Array.isArray(requested)) return { error: "options must be a list of { name, choice }." };
-  if (!hasQuantity && requested.length === 0) return { error: "no change was given." };
-
-  const options = line.options.map((o) => ({ ...o }));
-  for (const change of requested) {
-    if (!change || typeof change.name !== "string" || typeof change.choice !== "string") {
-      return { error: "each option change needs an option name and a choice." };
-    }
-    if (requested.filter((c) => c && sameText(c.name, change.name)).length > 1) {
-      return { error: `"${change.name}" was changed more than once.` };
-    }
-    const existing = options.find((o) => sameText(o.name, change.name));
-    if (existing) existing.choice = change.choice;
-    else options.push({ name: change.name, choice: change.choice });
-  }
-
-  return priceCartItem({ itemId: line.itemId, quantity: hasQuantity ? changes.quantity : line.quantity, options }, menu);
-}
-
 /* ---------- Promotions ---------- */
 
 function calculateDiscount(promotion, lines, subtotalPaisa) {
@@ -279,11 +172,11 @@ function checkPromotion(args, promotions, today, customer, lines, subtotalPaisa)
   return { promotion, discountPaisa: calculateDiscount(promotion, lines, subtotalPaisa) };
 }
 
-// For applyPromotion: the same checks as submit_order, against this chat's cart. Returns
-// { promotion, discountPaisa }, { needsOrderType: [...] } or { error }. Unknown and inactive
-// codes get the same answer, so a guess can't tell whether a code exists.
-function checkCartPromotion(state, request, promotions, today) {
-  if (state.items.length === 0) return { error: "the cart is empty, so there's nothing to discount yet." };
+// For applyPromotion: the same checks as submit_order, against this chat's cart as just priced by
+// totals.js ({ lines, subtotalPaisa }). Returns { promotion, discountPaisa }, { needsOrderType: [...] }
+// or { error }. Unknown and inactive codes get the same answer, so a guess can't tell whether a code exists.
+function checkCartPromotion(pricedCart, request, promotions, today) {
+  if (pricedCart.lines.length === 0) return { error: "the cart is empty, so there's nothing to discount yet." };
   const promotionId = trimmedString(request.promotionId);
   const promotionCode = trimmedString(request.promotionCode);
   if (!promotionId && !promotionCode) return { error: "no promotion or code was given." };
@@ -306,18 +199,18 @@ function checkCartPromotion(state, request, promotions, today) {
   }
   // Without an order type the offer covers both, so either one passes the check.
   const checkedType = orderType || (orderTypes ? orderTypes[0] : null);
-  return checkPromotion({ promotionId: promotion.id, promotionCode }, promotions, today, { orderType: checkedType }, state.items, state.subtotalPaisa);
+  return checkPromotion({ promotionId: promotion.id, promotionCode }, promotions, today, { orderType: checkedType }, pricedCart.lines, pricedCart.subtotalPaisa);
 }
 
 // Live promotions the cart already qualifies for. Offers that need a code are left out: only
 // a customer who already has the code can use one.
-function eligibleCartPromotions(state, promotions, today, orderType) {
+function eligibleCartPromotions(pricedCart, promotions, today, orderType) {
   const eligible = [];
   for (const promotion of promotions.filter((p) => !p.code && isPromotionLive(p, today))) {
-    let check = checkCartPromotion(state, { promotionId: promotion.id, orderType }, promotions, today);
+    let check = checkCartPromotion(pricedCart, { promotionId: promotion.id, orderType }, promotions, today);
     const needsOrderType = check.needsOrderType || null;
     // Order type not known yet: still check the other conditions, as if it were an allowed one.
-    if (needsOrderType) check = checkCartPromotion(state, { promotionId: promotion.id, orderType: needsOrderType[0] }, promotions, today);
+    if (needsOrderType) check = checkCartPromotion(pricedCart, { promotionId: promotion.id, orderType: needsOrderType[0] }, promotions, today);
     if (check.promotion && check.discountPaisa > 0) eligible.push({ promotion, discountPaisa: check.discountPaisa, needsOrderType });
   }
   return eligible;
@@ -326,7 +219,8 @@ function eligibleCartPromotions(state, promotions, today, orderType) {
 /* ---------- Whole order ---------- */
 
 // Returns { order } ready to save, or { error } explaining what the customer needs to fix.
-function validateOrder(args, menu, promotions, today, pricing = NO_TAX_NO_FEE) {
+// args.items is [{ item_id, quantity, option_ids }]; every amount is worked out here, at this moment.
+async function validateOrder(args, promotions, today) {
   if (!args || typeof args !== "object") return { error: "no order details were sent." };
   if (args.customerConfirmed !== true) {
     return { error: "the customer hasn't clearly confirmed the order yet. Read it back and ask them to confirm." };
@@ -335,20 +229,23 @@ function validateOrder(args, menu, promotions, today, pricing = NO_TAX_NO_FEE) {
   const customer = validateCustomer(args);
   if (customer.error) return customer;
 
-  const priced = priceOrderLines(args.items, menu);
-  if (priced.error) return priced;
-
-  const subtotalPaisa = priced.lines.reduce((sum, line) => sum + line.lineTotalPaisa, 0);
-  const promo = checkPromotion(args, promotions, today, customer.customer, priced.lines, subtotalPaisa);
+  let promo = { promotion: null, discountPaisa: 0 };
+  const totals = await calculateTotals({
+    cart: args.items,
+    orderType: customer.customer.orderType,
+    getDiscount: ({ lines, subtotalPaisa }) => {
+      promo = checkPromotion(args, promotions, today, customer.customer, lines, subtotalPaisa);
+      return promo.discountPaisa || 0;
+    },
+  });
+  if (totals.error) return totals;
   if (promo.error) return promo;
 
-  const totals = calculateOrderTotals(
-    { lines: priced.lines, discountPaisa: promo.discountPaisa, orderType: customer.customer.orderType },
-    pricing
-  );
-  return { order: { ...customer.customer, lines: priced.lines, ...totals, promotion: promo.promotion } };
+  return { order: { ...customer.customer, ...totals, promotion: promo.promotion } };
 }
 
+// The saved snapshot: each item's name and price as they are right now, so a later menu change
+// can't rewrite this order. Stored as plain values, with no link back to the menu.
 function toOrderRow(order) {
   return {
     order_type: order.orderType,
@@ -358,10 +255,20 @@ function toOrderRow(order) {
     delivery_unit: order.deliveryUnit,
     delivery_instructions: order.deliveryInstructions,
     pickup_time: order.pickupTime,
-    items: order.lines,
+    // A deal also keeps its labels, so the kitchen knows what to cook even if the deal changes later.
+    items: order.lines.map(({ itemId, name, quantity, options, unitPricePaisa, lineTotalPaisa, contains }) => ({
+      itemId,
+      name,
+      quantity,
+      options,
+      unitPricePaisa,
+      lineTotalPaisa,
+      ...(contains ? { contains: [...contains] } : {}),
+    })),
     subtotal_paisa: order.subtotalPaisa,
     discount_paisa: order.discountPaisa,
     tax_paisa: order.taxPaisa,
+    // null on a delivery order: the fee wasn't decided, so it isn't in the total.
     delivery_fee_paisa: order.deliveryFeePaisa,
     total_paisa: order.totalPaisa,
     promotion_id: order.promotion ? order.promotion.id : null,
@@ -369,21 +276,20 @@ function toOrderRow(order) {
 }
 
 function formatSavedOrder(orderNumber, order, phone) {
-  const lines = order.lines.map((line) => {
+  const lines = order.lines.flatMap((line) => {
     const options = line.options.length ? ` (${line.options.map((o) => o.choice).join(", ")})` : "";
-    return `- ${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`;
+    return [
+      `- ${line.quantity} x ${line.name}${options}: ${formatRupees(line.lineTotalPaisa)}`,
+      ...(line.contains || []).map((label) => `    ${label}`),
+    ];
   });
   const totals = [`Subtotal: ${formatRupees(order.subtotalPaisa)}`];
   if (order.discountPaisa > 0) totals.push(`Discount (${order.promotion.name}): -${formatRupees(order.discountPaisa)}`);
   if (order.taxPaisa > 0) totals.push(`Tax: ${formatRupees(order.taxPaisa)}`);
-  if (order.orderType === "delivery") {
-    totals.push(
-      order.deliveryFeePaisa === null
-        ? "Delivery fee: not included; the restaurant will confirm it"
-        : `Delivery fee: ${formatRupees(order.deliveryFeePaisa)}`
-    );
-  }
-  totals.push(`Total: ${formatRupees(order.totalPaisa)} for ${order.orderType}`);
+  const feeLine = deliveryFeeLine(order.orderType, order.deliveryFeePaisa);
+  if (feeLine) totals.push(feeLine);
+  const feeNotDecided = deliveryFeeStatus(order.orderType, order.deliveryFeePaisa) === "not_decided";
+  totals.push(`Total: ${formatRupees(order.totalPaisa)} for ${order.orderType}${feeNotDecided ? " (delivery fee not included)" : ""}`);
   if (order.orderType === "pickup") totals.push(`Pickup time requested: ${order.pickupTime || "as soon as possible"}`);
   if (order.orderType === "delivery") {
     totals.push(`Deliver to: ${order.deliveryAddress}${order.deliveryUnit ? `, ${order.deliveryUnit}` : ""}`);
@@ -406,12 +312,30 @@ function orderNotSavedMessage(phone) {
   return `Sorry, I couldn't save your order, so it has not been placed. Please call us on ${phone} to order.`;
 }
 
+// A total sent with the order is only ever compared, never saved. Only the two amounts are logged,
+// cut short because the submitted one can be anything, so the log holds no customer details.
+function logTotalMismatch(args, order) {
+  if (args.totalPaisa === undefined || args.totalPaisa === order.totalPaisa) return;
+  const submitted = String(JSON.stringify(args.totalPaisa)).slice(0, 40);
+  console.warn(`Order total mismatch: submitted ${submitted}, recalculated ${order.totalPaisa} paisa. Saving the recalculated total.`);
+}
+
 // saveOrder(row) resolves to the new order number, or throws if the database can't save it.
-async function placeOrder({ args, menu, promotions, today, saveOrder, phone, pricing }) {
-  const result = validateOrder(args, menu, promotions, today, pricing);
-  if (result.error) return { status: "invalid", error: result.error };
+async function placeOrder({ args, promotions, today, saveOrder, phone }) {
+  let result;
+  try {
+    result = await validateOrder(args, promotions, today);
+  } catch (error) {
+    if (error.code !== "MENU_UNAVAILABLE") throw error;
+    return { status: "invalid", error: "the menu can't be checked right now." };
+  }
+  if (result.error) {
+    const { error, code, missingIds, unavailableItems } = result;
+    return { status: "invalid", error, code, missingIds, unavailableItems };
+  }
 
   const { order } = result;
+  logTotalMismatch(args, order);
   if (!saveOrder) return { status: "failed", order, reply: orderNotSavedMessage(phone), reason: "not configured" };
   try {
     const orderNumber = await saveOrder(toOrderRow(order));
@@ -426,8 +350,6 @@ module.exports = {
   todayInRestaurant,
   isPromotionLive,
   validateOrder,
-  priceCartItem,
-  priceModifiedLine,
   checkCartPromotion,
   eligibleCartPromotions,
   validatePickupDetails,

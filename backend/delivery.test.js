@@ -1,8 +1,8 @@
 // Tests for collecting delivery details. Run with: npm test
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
 const { validateDeliveryDetails, validateOrder, toOrderRow } = require("./orders");
+const { useFakeMenu } = require("./fake-menu");
 const {
   createOrderState,
   setDeliveryDetails,
@@ -12,7 +12,6 @@ const {
   confirmDeliveryAddress,
 } = require("./order-session");
 
-const menu = require(path.join(__dirname, "..", "data", "menu.json"));
 const FRIDAY = { date: "2026-10-30", weekday: "Friday" };
 
 test("delivery details check only the fields given, in the customer's words", () => {
@@ -119,23 +118,24 @@ test("switching between pickup and delivery drops the other type's details", () 
   assert.deepEqual(state.customer, { name: "Sara", phone: null, deliveryAddress: null, deliveryUnit: null, deliveryInstructions: null });
 });
 
-test("the saved delivery order carries unit and instructions, and none means null", () => {
+test("the saved delivery order carries unit and instructions, and none means null", async () => {
+  useFakeMenu();
   const args = {
     customerConfirmed: true,
     orderType: "delivery",
     customerName: "Sara",
     customerPhone: "0300 1234567",
     deliveryAddress: "House 12, Street 4, Satellite Town",
-    items: [{ itemId: "ayran", quantity: 1 }],
+    items: [{ item_id: "i-drink", quantity: 1 }],
   };
-  const full = validateOrder({ ...args, deliveryUnit: "Flat 2", deliveryInstructions: "Ring twice" }, menu, [], FRIDAY).order;
+  const full = (await validateOrder({ ...args, deliveryUnit: "Flat 2", deliveryInstructions: "Ring twice" }, [], FRIDAY)).order;
   assert.equal(toOrderRow(full).delivery_unit, "Flat 2");
   assert.equal(toOrderRow(full).delivery_instructions, "Ring twice");
 
-  const none = validateOrder({ ...args, deliveryUnit: "", deliveryInstructions: "" }, menu, [], FRIDAY).order;
+  const none = (await validateOrder({ ...args, deliveryUnit: "", deliveryInstructions: "" }, [], FRIDAY)).order;
   assert.equal(none.deliveryUnit, null);
   assert.equal(none.deliveryInstructions, null);
 
-  const pickup = validateOrder({ ...args, orderType: "pickup", deliveryUnit: "Flat 2" }, menu, [], FRIDAY).order;
+  const pickup = (await validateOrder({ ...args, orderType: "pickup", deliveryUnit: "Flat 2" }, [], FRIDAY)).order;
   assert.equal(pickup.deliveryUnit, null, "pickup orders never carry delivery details");
 });

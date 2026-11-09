@@ -32,6 +32,11 @@
       background: var(--white); font: inherit; cursor: pointer;
     }
     .tab[aria-pressed="true"] { background: var(--ink); color: var(--white); border-color: var(--ink); }
+    .nav-link {
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--line);
+      border-radius: 999px; background: var(--white); color: var(--ink); text-decoration: none;
+    }
+    .nav-link:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     #updated { color: var(--muted); font-size: 0.85rem; }
     main { max-width: 1100px; margin: 0 auto; padding: 16px; }
     #message { margin: 0 0 12px; }
@@ -48,6 +53,7 @@
     .status-COMPLETED { background: var(--surface); color: var(--muted); }
     h2 { margin: 12px 0 4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
     ul { margin: 0; padding-left: 18px; }
+    .deal-contents { color: var(--muted); font-size: 0.9rem; list-style: none; }
     p { margin: 0; }
     .total { margin-top: 12px; font-weight: 700; }
     .note { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
@@ -67,6 +73,8 @@
     <div class="controls">
       <button class="tab" type="button" data-view="active" aria-pressed="true">Active</button>
       <button class="tab" type="button" data-view="completed" aria-pressed="false">Completed</button>
+      <a class="nav-link" href="/admin/dashboard">Owner dashboard</a>
+      <a class="nav-link" href="/admin/photos">Menu photos</a>
       <span id="updated" aria-live="polite"></span>
     </div>
   </header>
@@ -112,7 +120,15 @@
       const list = el("ul");
       for (const item of order.items || []) {
         const options = (item.options || []).map((o) => `${o.name}: ${o.choice}`).join(", ");
-        list.append(el("li", null, `${item.quantity} x ${item.name}${options ? ` (${options})` : ""}`));
+        const row = el("li", null, `${item.quantity} x ${item.name}${options ? ` (${options})` : ""}`);
+        if (item.contains && item.contains.length > 0) {
+          // The labels describe one deal, so "2 x Deal 2" must not read as one of each.
+          if (item.quantity > 1) row.append(el("div", "note", "Each deal has:"));
+          const contents = el("ul", "deal-contents");
+          for (const label of item.contains) contents.append(el("li", null, label));
+          row.append(contents);
+        }
+        list.append(row);
       }
       card.append(list);
 
@@ -128,9 +144,20 @@
 
       const total = el("p", "total", `Total: ${rupees(order.total_paisa)}`);
       if (order.order_type === "delivery" && order.delivery_fee_paisa === null) {
-        total.append(" ", el("span", "note", "(delivery fee not included)"));
+        total.append(" ", el("span", "note", "(delivery fee TBC, not included)"));
+      } else if (order.order_type === "delivery" && order.delivery_fee_paisa === 0) {
+        total.append(" ", el("span", "note", "(free delivery)"));
       }
       card.append(total);
+
+      // The chat this order came from, opened in the owner dashboard.
+      if (/^[0-9a-f]{64}$/.test(order.chat_session_id || "")) {
+        const link = el("a", "note", "Open the chat for this order");
+        link.href = `/admin/dashboard#chat=${order.chat_session_id}`;
+        const row = el("p", null);
+        row.append(link);
+        card.append(row);
+      }
 
       if (NEXT[order.status]) {
         const button = el("button", "advance", ACTION[order.status]);

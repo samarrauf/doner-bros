@@ -1,4 +1,4 @@
-// Doner Bros — landing page interactions: location popup, hero slider, menu category tabs.
+// Doner Bros — landing page interactions: location popup, menu and hero from /api/menu, category tabs.
 
 const STORAGE_KEY = "donersBros.location";
 
@@ -24,7 +24,7 @@ function saveLocation(location) {
 
 function describeLocation(location) {
   if (location.orderType === "pickup") {
-    return "Pick-up · Shalimar City";
+    return "Pick-up";
   }
   return `Delivery · ${location.area}`;
 }
@@ -72,7 +72,7 @@ function setupLocationPopup() {
     const location = {
       orderType: selectedOrderType(),
       city: form.city.value,
-      area: selectedOrderType() === "pickup" ? "Shalimar City" : areaSelect.value,
+      area: selectedOrderType() === "pickup" ? "" : areaSelect.value,
     };
     saveLocation(location);
     chipLabel.textContent = describeLocation(location);
@@ -97,120 +97,6 @@ function setupLocationPopup() {
   }
 }
 
-/* ---------- Hero slider ---------- */
-
-const SLIDE_INTERVAL_MS = 6000;
-
-function setupHeroSlider() {
-  const hero = document.querySelector(".hero");
-  const track = document.getElementById("slides");
-  const slides = Array.from(track.querySelectorAll(".slide"));
-  const dots = Array.from(document.querySelectorAll("#slide-dots button"));
-  const prevButton = document.getElementById("slide-prev");
-  const nextButton = document.getElementById("slide-next");
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  let current = 0;
-  let timer = null;
-
-  function goTo(index) {
-    current = (index + slides.length) % slides.length;
-    track.style.transform = `translateX(-${current * 100}%)`;
-
-    slides.forEach((slide, i) => {
-      const isActive = i === current;
-      slide.classList.toggle("is-active", isActive);
-      slide.setAttribute("aria-hidden", String(!isActive));
-      // Keep links in hidden slides out of the keyboard tab order.
-      slide.querySelectorAll("a").forEach((link) => {
-        link.tabIndex = isActive ? 0 : -1;
-      });
-    });
-
-    dots.forEach((dot, i) => {
-      const isActive = i === current;
-      dot.classList.toggle("is-active", isActive);
-      if (isActive) {
-        dot.setAttribute("aria-current", "true");
-      } else {
-        dot.removeAttribute("aria-current");
-      }
-    });
-
-    hero.classList.toggle("on-light", slides[current].classList.contains("slide-2"));
-  }
-
-  function stop() {
-    clearInterval(timer);
-    timer = null;
-  }
-
-  function start() {
-    if (reduceMotion || timer) {
-      return;
-    }
-    timer = setInterval(() => goTo(current + 1), SLIDE_INTERVAL_MS);
-  }
-
-  function restart() {
-    stop();
-    start();
-  }
-
-  prevButton.addEventListener("click", () => {
-    goTo(current - 1);
-    restart();
-  });
-
-  nextButton.addEventListener("click", () => {
-    goTo(current + 1);
-    restart();
-  });
-
-  dots.forEach((dot, i) => {
-    dot.addEventListener("click", () => {
-      goTo(i);
-      restart();
-    });
-  });
-
-  // Pause while the visitor is reading or interacting with a slide.
-  hero.addEventListener("mouseenter", stop);
-  hero.addEventListener("mouseleave", start);
-  hero.addEventListener("focusin", stop);
-  hero.addEventListener("focusout", start);
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      stop();
-    } else {
-      start();
-    }
-  });
-
-  let touchStartX = null;
-
-  hero.addEventListener("touchstart", (event) => {
-    touchStartX = event.touches[0].clientX;
-    stop();
-  }, { passive: true });
-
-  hero.addEventListener("touchend", (event) => {
-    if (touchStartX === null) {
-      return;
-    }
-    const distance = event.changedTouches[0].clientX - touchStartX;
-    if (Math.abs(distance) > 50) {
-      goTo(distance < 0 ? current + 1 : current - 1);
-    }
-    touchStartX = null;
-    start();
-  });
-
-  goTo(0);
-  start();
-}
-
 /* ---------- Menu category tabs ---------- */
 
 function setupCategoryTabs() {
@@ -229,18 +115,103 @@ function setupCategoryTabs() {
       tab.classList.toggle("is-active", isActive);
       if (isActive) {
         tab.setAttribute("aria-current", "true");
-        tab.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+        // Scroll only the strip: scrollIntoView would also cancel the page's own smooth scroll to the section.
+        const strip = tab.parentElement;
+        const offset = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+        strip.scrollTo({ left: strip.scrollLeft + offset - (strip.clientWidth - tab.offsetWidth) / 2, behavior: "smooth" });
       } else {
         tab.removeAttribute("aria-current");
       }
     });
   }
 
+  // While a clicked tab's smooth scroll runs, tracking must not change the active tab.
+  let clickLock = false;
+  let settleTimer = null;
+  // Sections in the band, oldest entry first. Kept up to date during a lock, so a user
+  // scroll that ends the lock can pick up the section they are actually on.
+  const sectionsInBand = new Set();
+
+  function releaseClickLock() {
+    clickLock = false;
+    clearInterval(settleTimer);
+  }
+
+  function watchForSettle() {
+    const supportsScrollEnd = "onscrollend" in window;
+    let lastY = window.scrollY;
+    clearInterval(settleTimer);
+    settleTimer = setInterval(() => {
+      if (window.scrollY === lastY) {
+        // Settled, or the section was already in place so no scroll (and no scrollend) ever happens.
+        releaseClickLock();
+      } else if (supportsScrollEnd) {
+        clearInterval(settleTimer);
+      } else {
+        lastY = window.scrollY;
+      }
+    }, 150);
+  }
+
+  function onUserScroll() {
+    if (!clickLock) {
+      return;
+    }
+    releaseClickLock();
+    const current = Array.from(sectionsInBand).pop();
+    if (current) {
+      setActive(current);
+    }
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const id = tab.getAttribute("href").slice(1);
+      setActive(id);
+      clickLock = true;
+      // The browser drops an anchor jump made during a smooth scroll, so a second click would
+      // highlight this tab but land on the first one. This scroll replaces the running one.
+      document.getElementById(id).scrollIntoView({ behavior: "smooth" });
+      watchForSettle();
+    });
+  });
+
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+  const stripElement = document.getElementById("category-tabs");
+  window.addEventListener("scrollend", () => {
+    if (clickLock) {
+      releaseClickLock();
+    }
+  });
+  window.addEventListener("wheel", onUserScroll, { passive: true });
+  // A swipe along the tab strip moves the strip, not the page.
+  window.addEventListener("touchmove", (event) => {
+    if (!stripElement.contains(event.target)) {
+      onUserScroll();
+    }
+  }, { passive: true });
+  window.addEventListener("keydown", (event) => {
+    if (SCROLL_KEYS.has(event.key)) {
+      onUserScroll();
+    }
+  });
+  // A press on the page scrollbar lands on the root element.
+  window.addEventListener("mousedown", (event) => {
+    if (event.target === document.documentElement) {
+      onUserScroll();
+    }
+  });
+
   // A section counts as "current" once it reaches the band just below the sticky bars.
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
-        setActive(entry.target.id);
+        sectionsInBand.add(entry.target.id);
+        if (!clickLock) {
+          setActive(entry.target.id);
+        }
+      } else {
+        sectionsInBand.delete(entry.target.id);
       }
     });
   }, { rootMargin: "-140px 0px -60% 0px" });
@@ -248,30 +219,314 @@ function setupCategoryTabs() {
   sections.forEach((section) => observer.observe(section));
 }
 
+/* ---------- Menu and hero, rendered from /api/menu ---------- */
+
+const MENU_ENDPOINT = "/api/menu";
+// The only hardcoded contact detail: what a customer gets if /api/menu can't be reached.
+// Everything else on the page comes from the whatsapp and address settings.
+const FALLBACK_WHATSAPP = "03103994111";
+// Number of category colours defined in styles.css (.category[data-tone]).
+const CATEGORY_TONES = 6;
+
+// Text goes in through textContent, so menu data is never treated as HTML.
+function createElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) {
+    element.className = className;
+  }
+  if (text !== undefined) {
+    element.textContent = text;
+  }
+  return element;
+}
+
+function safeImageUrl(value) {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value, window.location.href);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function parsePhone(value) {
+  const digits = String(value).replace(/\D/g, "").replace(/^92/, "0");
+  return { display: `${digits.slice(0, 4)}-${digits.slice(4)}`, international: `92${digits.slice(1)}` };
+}
+
+let contactPhone = parsePhone(FALLBACK_WHATSAPP);
+
+function applyPhone(value) {
+  contactPhone = parsePhone(value);
+  document.querySelectorAll("[data-phone-link]").forEach((link) => {
+    link.href = `tel:+${contactPhone.international}`;
+  });
+  document.querySelectorAll("[data-phone-text]").forEach((element) => {
+    element.textContent = contactPhone.display;
+  });
+}
+
+function applyAddress(address) {
+  document.querySelectorAll("[data-address-text]").forEach((element) => {
+    element.textContent = address;
+  });
+  document.querySelectorAll("[data-directions-link]").forEach((link) => {
+    link.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  });
+  document.querySelectorAll("[data-needs-address]").forEach((element) => {
+    element.hidden = false;
+  });
+}
+
+function applyHeroPhoto(settings) {
+  const photoUrl = safeImageUrl(settings.hero_image_url);
+  if (!photoUrl) {
+    return;
+  }
+
+  // Swap the photo in only once it has loaded; if it fails the hero stays brand-coloured.
+  const photo = new Image();
+  photo.addEventListener("load", () => {
+    const hero = document.querySelector(".hero");
+    hero.style.setProperty("--hero-photo", `url("${photoUrl}")`);
+    hero.classList.add("has-photo");
+  });
+  photo.src = photoUrl;
+}
+
+function applyLogo(settings) {
+  const logoUrl = safeImageUrl(settings.brand_logo_url);
+  if (!logoUrl) {
+    return;
+  }
+
+  // Swap the logo in only once it has loaded; if it fails the built-in file stays.
+  const logo = new Image();
+  logo.addEventListener("load", () => {
+    document.querySelectorAll('img[src="images/logo.png"]').forEach((image) => {
+      image.style.objectFit = "contain"; // Their width and height are square; never stretch another shape.
+      image.src = logoUrl;
+    });
+    const icon = document.querySelector('link[rel="icon"]');
+    icon.type = "image/webp";
+    icon.href = logoUrl;
+  });
+  logo.src = logoUrl;
+}
+
+function buildItemCard(item) {
+  const card = createElement("article", "product");
+  const photoUrl = safeImageUrl(item.imageUrl);
+
+  if (photoUrl) {
+    const frame = createElement("div", "product-img");
+    const image = document.createElement("img");
+    image.alt = item.name;
+    image.loading = "lazy";
+    // A photo that fails to load falls back to the photo-free card, never a broken image.
+    image.addEventListener("error", () => {
+      frame.remove();
+      card.classList.add("product-plain");
+    });
+    image.src = photoUrl;
+    frame.appendChild(image);
+    card.appendChild(frame);
+  } else {
+    card.classList.add("product-plain");
+  }
+
+  const info = createElement("div", "product-info");
+  info.appendChild(createElement("h4", "", item.name));
+
+  const foot = createElement("div", "product-foot");
+  foot.appendChild(createElement("span", "price", item.priceDisplay));
+
+  const orderButton = createElement("button", "btn btn-small", "Order");
+  orderButton.type = "button";
+  orderButton.dataset.itemId = item.id;
+  orderButton.setAttribute("aria-label", `Order ${item.name}`);
+  foot.appendChild(orderButton);
+
+  info.appendChild(foot);
+  card.appendChild(info);
+  return card;
+}
+
+function buildCategorySection(category, index) {
+  const section = createElement("section", "category");
+  section.id = `cat-${category.slug}`;
+  section.dataset.tone = String(index % CATEGORY_TONES);
+  section.setAttribute("aria-labelledby", `h-${category.slug}`);
+
+  const title = createElement("h3", "category-title", category.name);
+  title.id = `h-${category.slug}`;
+  section.appendChild(title);
+
+  if (category.items.length === 0) {
+    section.appendChild(createElement("p", "menu-status", "Nothing available in this category right now."));
+    return section;
+  }
+
+  const grid = createElement("div", "product-grid");
+  category.items.forEach((item) => grid.appendChild(buildItemCard(item)));
+  section.appendChild(grid);
+  return section;
+}
+
+function buildDealsSection(deals) {
+  const section = createElement("section", "category");
+  section.id = "deals";
+  section.setAttribute("aria-labelledby", "h-deals");
+
+  const title = createElement("h3", "category-title", "Deals");
+  title.id = "h-deals";
+  section.appendChild(title);
+
+  const grid = createElement("div", "product-grid");
+  deals.forEach((deal) => {
+    const card = createElement("article", "deal");
+    card.appendChild(createElement("h4", "", deal.name));
+    const contents = createElement("ul", "deal-items");
+    deal.items.forEach((dealItem) => contents.appendChild(createElement("li", "", dealItem.label)));
+    card.appendChild(contents);
+
+    const foot = createElement("div", "product-foot");
+    foot.appendChild(createElement("p", "deal-price", deal.priceDisplay));
+    const orderButton = createElement("button", "btn btn-small", "Order");
+    orderButton.type = "button";
+    orderButton.dataset.itemId = deal.id;
+    orderButton.setAttribute("aria-label", `Order ${deal.name}`);
+    foot.appendChild(orderButton);
+    card.appendChild(foot);
+
+    grid.appendChild(card);
+  });
+  section.appendChild(grid);
+  return section;
+}
+
+function renderMenu({ categories, deals }) {
+  const root = document.getElementById("menu-root");
+  const tabs = document.getElementById("category-tabs");
+
+  const hasDeals = Array.isArray(deals) && deals.length > 0;
+
+  if (hasDeals) {
+    const dealsTab = createElement("a", "tab-deals is-active", "Deals");
+    dealsTab.href = "#deals";
+    tabs.appendChild(dealsTab);
+  }
+
+  categories.forEach((category, index) => {
+    const tab = createElement("a", index === 0 && !hasDeals ? "is-active" : "", category.name);
+    tab.href = `#cat-${category.slug}`;
+    tabs.appendChild(tab);
+  });
+
+  root.replaceChildren();
+  if (hasDeals) {
+    root.appendChild(buildDealsSection(deals));
+  }
+  categories.forEach((category, index) => root.appendChild(buildCategorySection(category, index)));
+
+  document.getElementById("category-bar").hidden = false;
+  setupCategoryTabs();
+}
+
+function showMenuLoading() {
+  const status = createElement("p", "menu-status", "Loading the menu…");
+  status.setAttribute("role", "status");
+  document.getElementById("menu-root").replaceChildren(status);
+}
+
+function showMenuError() {
+  const message = createElement("p", "menu-status", "Sorry, the menu could not be loaded. Message us on WhatsApp: ");
+  message.setAttribute("role", "alert");
+  const link = createElement("a", "", contactPhone.display);
+  link.href = `https://wa.me/${contactPhone.international}`;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  message.appendChild(link);
+  document.getElementById("menu-root").replaceChildren(message);
+}
+
+async function loadMenu() {
+  showMenuLoading();
+  try {
+    const response = await fetch(MENU_ENDPOINT);
+    if (!response.ok) {
+      throw new Error(`Menu request failed with status ${response.status}`);
+    }
+    const menu = await response.json();
+    const settings = menu.settings || {};
+    applyLogo(settings);
+    if (settings.whatsapp) {
+      applyPhone(settings.whatsapp);
+    }
+    if (settings.address) {
+      applyAddress(settings.address);
+    }
+    if (!Array.isArray(menu.categories) || menu.categories.length === 0) {
+      throw new Error("Menu response had no categories");
+    }
+    renderMenu(menu);
+    applyHeroPhoto(settings);
+  } catch (error) {
+    console.error(error);
+    showMenuError();
+  }
+}
+
 /* ---------- AI Order Taker chat widget ---------- */
 
 const CHAT_ENDPOINT = "/api/chat";
-const CHAT_FALLBACK_ERROR = "Sorry, I couldn't reach AI Order Taker. Please try again, or call us on 0301 8474036.";
+function chatFallbackError() {
+  return `Sorry, I couldn't reach AI Order Taker. Please try again, or call us on ${contactPhone.display}.`;
+}
 
-// Sends the message and prior turns to the backend; resolves with AI Order Taker's reply text.
-async function requestOrderTakerReply(message, conversationHistory) {
+function newClickId() {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // randomUUID only exists on https and localhost.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+// The server's own account of the cart, shown after every Order click.
+function describeCartForCustomer(cart) {
+  if (cart.lines.length === 0) {
+    return "Your cart is empty.";
+  }
+  const lines = cart.lines.flatMap((line) => [
+    `${line.quantity} x ${line.name}${line.lineTotal ? `: ${line.lineTotal}` : ""}${line.orderable ? "" : " (can't be ordered right now)"}`,
+    ...line.contains.map((label) => `    ${label}`),
+  ]);
+  return ["Your cart:", ...lines, ...(cart.total ? [`Total: ${cart.total}`] : [])].join("\n");
+}
+
+// Sends the message and prior turns to the backend; resolves with the response body.
+// orderItem is set when a menu Order button sent the message: the server orders by its id, not the words.
+async function requestOrderTakerReply(message, conversationHistory, orderItem) {
   let response;
   try {
     response = await fetch(CHAT_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, conversationHistory }),
+      body: JSON.stringify({ message, conversationHistory, orderItem }),
     });
   } catch (error) {
     // Network failure (offline, server down).
-    throw new Error(CHAT_FALLBACK_ERROR);
+    throw new Error(chatFallbackError());
   }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok || typeof data.reply !== "string") {
-    throw new Error(data.error || CHAT_FALLBACK_ERROR);
+    throw new Error(data.error || chatFallbackError());
   }
-  return data.reply;
+  return data;
 }
 
 function setupChatWidget() {
@@ -333,22 +588,33 @@ function setupChatWidget() {
   const conversationHistory = [];
   // Messages from menu Order buttons clicked while a reply is still on its way.
   const queuedMessages = [];
+  // Item id -> id of its Order click the server hasn't answered for yet. If the answer never arrives
+  // (a dropped connection), the item may or may not have gone in, so the customer's next click on it
+  // is sent as the same click: the server adds it at most once. A new id is only made once the server
+  // has answered, when the customer can see the cart and another click means they want another.
+  const unansweredClicks = new Map();
   let isWaiting = false;
 
   function refreshSendButton() {
     sendButton.disabled = isWaiting || input.value.trim() === "";
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, orderItem) {
     addBubble(text, "user");
     isWaiting = true;
     refreshSendButton();
 
     const typing = showTyping();
     try {
-      const reply = await requestOrderTakerReply(text, conversationHistory);
+      const { reply, clickStatus, cart } = await requestOrderTakerReply(text, conversationHistory, orderItem);
       addBubble(reply, "bot");
       conversationHistory.push({ role: "user", content: text }, { role: "assistant", content: reply });
+      if (orderItem && clickStatus) {
+        unansweredClicks.delete(orderItem.item_id);
+      }
+      if (cart) {
+        addBubble(describeCartForCustomer(cart), "bot").classList.add("chat-bubble-cart");
+      }
     } catch (error) {
       // Failed turns stay out of the history so the next attempt starts clean.
       addBubble(error.message, "bot");
@@ -360,7 +626,8 @@ function setupChatWidget() {
     }
 
     if (queuedMessages.length > 0) {
-      sendMessage(queuedMessages.shift());
+      const next = queuedMessages.shift();
+      sendMessage(next.text, next.orderItem);
     }
   }
 
@@ -376,25 +643,30 @@ function setupChatWidget() {
     sendMessage(text);
   });
 
-  // Menu Order buttons add the item through AI Order Taker, which prices it on the server,
-  // asks for any choices, and shows the order summary at checkout. They're still tel: links
-  // underneath, so without JavaScript they call the restaurant instead.
-  document.querySelectorAll(".order-item").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      const itemName = button.closest(".product").querySelector("h4").textContent.trim();
-      const text = `I'd like to order 1 x ${itemName}.`;
-      setOpen(true);
-      if (isWaiting) {
-        queuedMessages.push(text);
-      } else {
-        sendMessage(text);
-      }
-    });
+  // Menu Order buttons send the item's id; the name is only for the message the customer reads.
+  // The server looks up the price. The menu is drawn after this runs, so the click is caught on
+  // its container.
+  document.getElementById("menu-root").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-item-id]");
+    if (!button) {
+      return;
+    }
+    const itemName = button.closest(".product, .deal").querySelector("h4").textContent.trim();
+    const text = `I'd like to order 1 x ${itemName}.`;
+    const itemId = button.dataset.itemId;
+    const clickId = unansweredClicks.get(itemId) || newClickId();
+    unansweredClicks.set(itemId, clickId);
+    const orderItem = { item_id: itemId, quantity: 1, option_ids: [], click_id: clickId };
+    setOpen(true);
+    if (isWaiting) {
+      queuedMessages.push({ text, orderItem });
+    } else {
+      sendMessage(text, orderItem);
+    }
   });
 }
 
+applyPhone(FALLBACK_WHATSAPP);
 setupLocationPopup();
-setupHeroSlider();
-setupCategoryTabs();
 setupChatWidget();
+loadMenu();

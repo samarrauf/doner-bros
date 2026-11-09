@@ -9,7 +9,7 @@ dashboard for orders. Orders are saved to Supabase.
 frontend/   customer-facing site (index.html, styles.css, app.js)
 admin/      staff dashboard, served at /staff
 backend/    Express server and API code
-data/       menu, pricing, promotions and restaurant details
+data/       menu, pricing and restaurant details
 prompts/    AI Order Taker system prompt
 supabase/   SQL for the orders, chat sessions and rate limit tables
 server.js   Vercel's entrypoint; it loads the app from backend/server.js
@@ -21,7 +21,7 @@ CLAUDE.md   guidance for Claude
 
 - Node.js 18 or newer
 - A Supabase project with the tables from `supabase/orders.sql` and `supabase/chat-sessions.sql`
-- A Gemini API key for the AI Order Taker
+- An Anthropic API key for the AI Order Taker
 
 ## Setup
 
@@ -55,12 +55,13 @@ npm test
 
 | Name | Required | Notes |
 |------|----------|-------|
-| `GEMINI_API_KEY` | Yes | Powers the AI Order Taker chat. |
+| `ANTHROPIC_API_KEY` | Yes | Powers the AI Order Taker chat (Claude). |
+| `GEMINI_API_KEY` | No | No longer used; kept until Stage 13. |
 | `SUPABASE_URL` | Yes | Your Supabase project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Secret. Server only, never sent to the browser. |
 | `STAFF_PASSWORD` | Yes | Password for `/staff`. Use a long, unique one. |
 | `PORT` | No | Defaults to 3000. |
-| `GEMINI_MODEL` | No | Defaults to `gemini-3.5-flash`. |
+| `CHAT_MODEL` | No | Defaults to `claude-haiku-5-5`. |
 
 On a host, set these in its environment settings instead of uploading a `.env` file.
 

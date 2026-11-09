@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Doner Bros Photos</title>
+  <style>
+    :root {
+      --ink: #0b0b0b;
+      --muted: #5f666d;
+      --line: #ebebeb;
+      --surface: #f5f6f8;
+      --white: #ffffff;
+      --accent: #f5a623;
+      --accent-dark: #d98c0a;
+      --green: #2f7d4f;
+      --red: #d93a3a;
+      --radius: 14px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--ink); font: 16px/1.5 var(--font); }
+    p { margin: 0; }
+    header {
+      position: sticky; top: 0; z-index: 1; padding: 12px 16px;
+      background: var(--white); border-bottom: 1px solid var(--line);
+    }
+    .header-inner, main { max-width: 760px; margin: 0 auto; }
+    #counter { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #meter { width: 100%; height: 8px; margin-top: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+    #meter-fill { width: 0; height: 100%; background: var(--green); transition: width 0.2s; }
+    main { padding: 16px 16px 48px; }
+    #page-message { margin-bottom: 12px; color: var(--red); font-weight: 600; }
+    #page-message:empty { display: none; }
+    h2 { margin: 24px 0 8px; font-size: 1.05rem; }
+    h2:first-child { margin-top: 0; }
+    .list { display: grid; gap: 10px; }
+    .slot {
+      display: grid; grid-template-columns: 88px 1fr; gap: 10px 12px; align-items: center;
+      padding: 12px; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius);
+    }
+    .thumb {
+      display: flex; align-items: center; justify-content: center; width: 88px; height: 88px; overflow: hidden;
+      border-radius: 10px; background: var(--surface); text-align: center;
+    }
+    .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .thumb.logo img { object-fit: contain; }
+    .no-photo {
+      display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 4px;
+      border: 2px dashed var(--muted); border-radius: 10px; color: var(--muted); font-size: 0.85rem; font-weight: 600; line-height: 1.2;
+    }
+    .name { margin: 0; font-size: 1rem; font-weight: 700; overflow-wrap: anywhere; }
+    .hint { color: var(--muted); font-size: 0.85rem; }
+    .actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+    button {
+      min-height: 52px; padding: 0 16px; border: 1px solid var(--line); border-radius: 12px;
+      background: var(--white); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer;
+      touch-action: manipulation;
+    }
+    button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .actions button { flex: 1; }
+    button.primary { border-color: var(--accent); background: var(--accent); }
+    button.primary:hover { background: var(--accent-dark); }
+    button.danger { color: var(--red); }
+    .status { grid-column: 1 / -1; font-size: 0.9rem; }
+    .status:empty { display: none; }
+    .status.error { color: var(--red); font-weight: 600; }
+    .status.done { color: var(--green); font-weight: 600; }
+    progress { grid-column: 1 / -1; width: 100%; height: 10px; accent-color: var(--accent); }
+    dialog {
+      width: 100%; max-width: 480px; margin: auto auto 0; padding: 16px;
+      border: 0; border-radius: 18px 18px 0 0; color: var(--ink);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+    #sheet-title { margin-bottom: 12px; font-weight: 700; overflow-wrap: anywhere; }
+    #sheet-actions { display: grid; gap: 8px; }
+    #sheet-actions button { min-height: 60px; width: 100%; }
+    @media (min-width: 640px) {
+      .slot { grid-template-columns: 88px 1fr auto; }
+      .actions { grid-column: auto; }
+      .actions button { flex: none; min-width: 100px; }
+      dialog { margin: auto; border-radius: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <p id="counter" aria-live="polite">Loading…</p>
+      <div id="meter"><div id="meter-fill"></div></div>
+    </div>
+  </header>
+  <main>
+    <p id="page-message" role="alert"></p>
+    <section id="brand" hidden>
+      <h2>Brand images</h2>
+      <div id="brand-list" class="list"></div>
+    </section>
+    <div id="menu"></div>
+  </main>
+
+  <dialog id="sheet">
+    <p id="sheet-title"></p>
+    <div id="sheet-actions"></div>
+  </dialog>
+
+  <!-- Camera opens straight away where the phone supports it. The gallery input lists only the allowed
+       formats, which also makes iPhones convert HEIC photos to JPG as they are picked. -->
+  <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+  <input id="gallery-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+
+  <script>
+    // Names come from the database, so everything is set with textContent, never innerHTML.
+    const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const MAX_LONGEST_SIDE = 1600;
+    const JPEG_QUALITY = 0.85;
+    const MB = 1024 * 1024;
+    const CONNECTION_PROBLEM = "Couldn't reach the server. Check the connection and try again.";
+
+    const sheet = document.getElementById("sheet");
+    const sheetTitle = document.getElementById("sheet-title");
+    const sheetActions = document.getElementById("sheet-actions");
+    const cameraInput = document.getElementById("camera-input");
+    const galleryInput = document.getElementById("gallery-input");
+
+    let maxUploadBytes = 0;
+    let itemSlots = [];
+    let pickingFor = null; // The slot the camera or gallery was opened for.
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function button(text, className, onClick) {
+      const node = el("button", className, text);
+      node.type = "button";
+      node.addEventListener("click", onClick);
+      return node;
+    }
+
+    function updateCounter() {
+      const done = itemSlots.filter((slot) => slot.imageUrl).length;
+      document.getElementById("counter").textContent = `${done} of ${itemSlots.length} items have photos`;
+      document.getElementById("meter-fill").style.width = itemSlots.length ? `${(done / itemSlots.length) * 100}%` : "0";
+    }
+
+    // One row: an item, or a brand image. endpoint takes POST and DELETE; responseKey names the new URL in the reply.
+    function createSlot({ name, hint, imageUrl, endpoint, responseKey, isLogo }) {
+      const slot = { name, imageUrl, endpoint, responseKey, isLogo };
+      const root = el("article", "slot");
+      const thumb = el("div", isLogo ? "thumb logo" : "thumb");
+      const body = el("div");
+      body.append(el("h3", "name", name));
+      if (hint) body.append(el("p", "hint", hint));
+      const actions = el("div", "actions");
+      const bar = el("progress");
+      bar.hidden = true;
+      const status = el("p", "status");
+      status.setAttribute("role", "status");
+      root.append(thumb, body, actions, bar, status);
+      slot.root = root;
+
+      slot.setStatus = (text, kind) => {
+        status.textContent = text || "";
+        status.className = kind ? `status ${kind}` : "status";
+      };
+
+      slot.render = (busy = false) => {
+        if (slot.imageUrl) {
+          const image = el("img");
+          image.alt = `Photo of ${name}`;
+          image.loading = "lazy";
+          image.decoding = "async";
+          image.src = slot.imageUrl;
+          thumb.replaceChildren(image);
+        } else {
+          thumb.replaceChildren(el("span", "no-photo", "No photo"));
+        }
+        const controls = slot.imageUrl
+          ? [button("Replace", "primary", () => openPicker(slot)), button("Remove", "danger", () => confirmRemove(slot))]
+          : [button("Upload", "primary", () => openPicker(slot))];
+        controls.forEach((control) => { control.disabled = busy; });
+        actions.replaceChildren(...controls);
+      };
+
+      slot.showProgress = (value) => {
+        bar.hidden = value === null;
+        if (value === undefined) bar.removeAttribute("value"); // Moving bar: sent, and the server is working.
+        else if (value !== null) bar.value = value;
+      };
+
+      slot.render();
+      return slot;
+    }
+
+    function openSheet(title, buttons) {
+      sheetTitle.textContent = title;
+      sheetActions.replaceChildren(...buttons, button("Cancel", null, () => sheet.close()));
+      sheet.showModal();
+    }
+
+    // Tapping the dimmed area outside the sheet closes it.
+    sheet.addEventListener("click", (event) => {
+      if (event.target === sheet) {
+        const box = sheet.getBoundingClientRect();
+        const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+        if (!inside) sheet.close();
+      }
+    });
+
+    function openPicker(slot) {
+      const pick = (input) => () => {
+        pickingFor = slot;
+        sheet.close();
+        input.click();
+      };
+      openSheet(slot.name, [
+        button("Take photo", "primary", pick(cameraInput)),
+        button("Choose from gallery", null, pick(galleryInput)),
+      ]);
+    }
+
+    function confirmRemove(slot) {
+      openSheet(`Remove the photo of ${slot.name}?`, [
+        button("Remove photo", "danger", () => {
+          sheet.close();
+          removePhoto(slot);
+        }),
+      ]);
+    }
+
+    for (const input of [cameraInput, galleryInput]) {
+      input.addEventListener("change", () => {
+        const file = input.files[0];
+        input.value = ""; // So picking the same file again still counts as a change.
+        if (file && pickingFor) uploadPhoto(pickingFor, file);
+      });
+    }
+
+    function formatSize(bytes) {
+      return bytes < MB ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / MB).toFixed(1)} MB`;
+    }
+
+    // Resolves to a smaller JPEG, or null if this browser can't make one.
+    async function shrink(file) {
+      const url = URL.createObjectURL(file);
+      try {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const longest = Math.max(image.naturalWidth, image.naturalHeight);
+        if (!longest) return null;
+        const scale = Math.min(1, MAX_LONGEST_SIDE / longest);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.naturalWidth * scale);
+        canvas.height = Math.round(image.naturalHeight * scale);
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#fff"; // JPEG has no transparency; see-through areas would otherwise turn black.
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height); // Browsers apply the phone's rotation here.
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
+        return blob && blob.type === "image/jpeg" ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : null;
+      } catch {
+        return null;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    // What to upload. Falls back to the original, for the server to accept or refuse.
+    async function prepare(slot, file) {
+      if (slot.isLogo && file.type !== "image/jpeg") return file; // Keeps a see-through logo see-through.
+      const small = await shrink(file);
+      if (!small) return file;
+      return small.size >= file.size && ALLOWED_TYPES.has(file.type) ? file : small;
+    }
+
+    function errorFrom(responseText, status) {
+      try {
+        const message = JSON.parse(responseText).error;
+        if (message) return message;
+      } catch {
+        // Not our JSON: a proxy in front of the server answered.
+      }
+      if (status === 413) return `That photo is over the ${maxUploadBytes / MB} MB limit.`;
+      return "Something went wrong. Try again.";
+    }
+
+    // XMLHttpRequest because fetch can't report upload progress.
+    async function uploadPhoto(slot, picked) {
+      slot.render(true);
+      slot.showProgress(undefined);
+      slot.setStatus("Preparing photo…");
+      const file = await prepare(slot, picked);
+      const size = formatSize(file.size);
+      slot.showProgress(0);
+      slot.setStatus(`Photo ready: ${size}. Uploading 0%`);
+
+      const form = new FormData();
+      form.append("image", file);
+      const request = new XMLHttpRequest();
+      request.open("POST", slot.endpoint);
+      request.upload.addEventListener("progress", (event) => {
+        if (!event.lengthComputable) return;
+        if (event.loaded < event.total) {
+          const percent = Math.floor((event.loaded / event.total) * 100);
+          slot.showProgress(percent / 100);
+          slot.setStatus(`Photo ready: ${size}. Uploading ${percent}%`);
+        } else {
+          slot.showProgress(undefined);
+          slot.setStatus(`Photo ready: ${size}. Saving…`);
+        }
+      });
+      const finish = (text, kind) => {
+        slot.showProgress(null);
+        slot.render();
+        slot.setStatus(text, kind);
+        updateCounter();
+      };
+      request.addEventListener("load", () => {
+        if (request.status < 200 || request.status >= 300) {
+          finish(errorFrom(request.responseText, request.status), "error");
+          return;
+        }
+        try {
+          slot.imageUrl = JSON.parse(request.responseText)[slot.responseKey];
+          finish(`Photo saved (${size}).`, "done");
+        } catch {
+          finish("Something went wrong. Try again.", "error");
+        }
+      });
+      // A server refusing a big upload can cut the connection before the browser reads its reply.
+      const failed = () => finish(file.size > maxUploadBytes ? `That photo is over the ${maxUploadBytes / MB} MB limit.` : CONNECTION_PROBLEM, "error");
+      request.addEventListener("error", failed);
+      request.addEventListener("abort", failed);
+      request.send(form);
+    }
+
+    async function removePhoto(slot) {
+      slot.render(true);
+      slot.setStatus("Removing…");
+      let text = "Photo removed.";
+      let kind = "done";
+      try {
+        const response = await fetch(slot.endpoint, { method: "DELETE" });
+        if (response.ok) slot.imageUrl = null;
+        else {
+          text = errorFrom(await response.text(), response.status);
+          kind = "error";
+        }
+      } catch {
+        text = CONNECTION_PROBLEM;
+        kind = "error";
+      }
+      slot.render();
+      slot.setStatus(text, kind);
+      updateCounter();
+    }
+
+    function renderPage(data) {
+      maxUploadBytes = data.maxUploadBytes;
+      document.getElementById("brand-list").replaceChildren(
+        createSlot({
+          name: "Hero photo",
+          hint: "The large photo at the top of the main page. Hold the phone sideways.",
+          imageUrl: data.heroImageUrl,
+          endpoint: "/api/admin/settings/hero-image",
+          responseKey: "hero_image_url",
+        }).root,
+        createSlot({
+          name: "Logo",
+          hint: "Shown across the website, in a circle. Use a square logo.",
+          imageUrl: data.logoImageUrl,
+          endpoint: "/api/admin/settings/logo-image",
+          responseKey: "brand_logo_url",
+          isLogo: true,
+        }).root,
+      );
+      document.getElementById("brand").hidden = false;
+
+      const menu = document.getElementById("menu");
+      itemSlots = [];
+      menu.replaceChildren(...data.categories.flatMap((category) => {
+        const list = el("div", "list");
+        for (const item of category.items) {
+          const slot = createSlot({
+            name: item.name,
+            hint: item.isAvailable ? null : "Not on sale right now",
+            imageUrl: item.imageUrl,
+            endpoint: `/api/admin/menu/${encodeURIComponent(item.id)}/image`,
+            responseKey: "image_url",
+          });
+          itemSlots.push(slot);
+          list.append(slot.root);
+        }
+        return [el("h2", null, category.name), list];
+      }));
+      updateCounter();
+    }
+
+    async function load() {
+      const message = document.getElementById("page-message");
+      try {
+        const response = await fetch("/api/admin/photos", { cache: "no-store" });
+        const text = await response.text();
+        if (!response.ok) throw new Error(errorFrom(text, response.status));
+        renderPage(JSON.parse(text));
+      } catch (error) {
+        document.getElementById("counter").textContent = "Photos";
+        message.textContent = error instanceof TypeError ? CONNECTION_PROBLEM : error.message;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

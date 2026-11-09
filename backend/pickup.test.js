@@ -5,9 +5,9 @@ const path = require("path");
 const { checkPickupTime } = require("./pickup-time");
 const { validatePickupDetails, validateOrder, toOrderRow } = require("./orders");
 const { createOrderState, setPickupDetails, missingCheckoutDetails } = require("./order-session");
+const { useFakeMenu } = require("./fake-menu");
 
-const menu = require(path.join(__dirname, "..", "data", "menu.json"));
-const HOURS = require(path.join(__dirname, "..", "data", "restaurant.json")).hours;
+const HOURS = require(path.join(__dirname, "..", "data", "hours.json")).hours;
 
 // Restaurant time is UTC+5.
 const FRIDAY_8PM = new Date("2026-10-30T15:00:00Z");
@@ -63,19 +63,21 @@ test("only details still missing are listed, and given ones are kept", () => {
   assert.equal(state.pickupTime, null, "back to as soon as possible");
 });
 
-test("the saved order carries the pickup time, and only for pickup", () => {
+test("the saved order carries the pickup time, and only for pickup", async () => {
+  useFakeMenu();
   const args = {
     customerConfirmed: true,
     orderType: "pickup",
     customerName: "Ali",
     customerPhone: "0300 1234567",
-    items: [{ itemId: "ayran", quantity: 1 }],
+    items: [{ item_id: "i-drink", quantity: 1 }],
   };
   const today = { date: "2026-10-30", weekday: "Friday" };
-  assert.equal(validateOrder({ ...args, pickupTime: "21:30" }, menu, [], today).order.pickupTime, "21:30");
-  assert.equal(toOrderRow(validateOrder({ ...args, pickupTime: "21:30" }, menu, [], today).order).pickup_time, "21:30");
-  assert.equal(validateOrder(args, menu, [], today).order.pickupTime, null);
-  assert.match(validateOrder({ ...args, pickupTime: "9pm" }, menu, [], today).error, /like 18:30/);
+  const timed = (await validateOrder({ ...args, pickupTime: "21:30" }, [], today)).order;
+  assert.equal(timed.pickupTime, "21:30");
+  assert.equal(toOrderRow(timed).pickup_time, "21:30");
+  assert.equal((await validateOrder(args, [], today)).order.pickupTime, null);
+  assert.match((await validateOrder({ ...args, pickupTime: "9pm" }, [], today)).error, /like 18:30/);
   const delivery = { ...args, orderType: "delivery", deliveryAddress: "House 5, Shalimar City", pickupTime: "21:30" };
-  assert.equal(validateOrder(delivery, menu, [], today).order.pickupTime, null);
+  assert.equal((await validateOrder(delivery, [], today)).order.pickupTime, null);
 });

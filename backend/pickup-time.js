@@ -1,4 +1,4 @@
-// Doner Bros — checks a requested pickup time against data/restaurant.json opening hours.
+// Doner Bros — checks a requested pickup time against data/hours.json opening hours.
 // A pickup time is optional; without one the order is for as soon as possible.
 
 const RESTAURANT_TIMEZONE = "Asia/Karachi";
