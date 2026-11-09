@@ -920,10 +920,9 @@ async function runCartTool(call, orderState, contents, turn) {
 
 // Tools that only read or update this chat's data; the model sees the result and carries on.
 async function runDataTool(call, orderState, contents, turn) {
-  if (MENU_TOOL_NAMES.includes(call.name)) {
-    console.log(`Gemini called ${call.name}.`);
-    return runMenuTool(call.name, call.args);
-  }
+  // Tool name only: arguments can hold the customer's name, phone or address.
+  console.log(`Gemini called ${call.name}.`);
+  if (MENU_TOOL_NAMES.includes(call.name)) return runMenuTool(call.name, call.args);
   try {
     return await runCartTool(call, orderState, contents, turn);
   } catch (error) {
@@ -1124,6 +1123,7 @@ async function submitCheckedOrder(call, contents, orderState, turn) {
 
 // fromServer marks the server's own fixed order messages, which the price guard doesn't check.
 async function handleOrderCall(call, contents, response, orderState, turn) {
+  console.log(`Gemini called ${call.name}.`);
   const duplicate = duplicateSubmission(orderState);
   const result = duplicate ? { status: "duplicate", error: duplicate } : await submitCheckedOrder(call, contents, orderState, turn);
   // A refused duplicate leaves the saved order's state exactly as it was.
@@ -1138,6 +1138,8 @@ async function handleOrderCall(call, contents, response, orderState, turn) {
     console.error(`Order not saved (${result.reason}).`);
     return { text: result.reply, fromServer: true };
   }
+  // The reason can quote customer input, so it stays in the chat state (state.problem), not the log.
+  console.warn(`submit_order ${result.status === "duplicate" ? "refused as a duplicate" : "rejected"}.`);
 
   contents.push(response.candidates[0].content, {
     role: "user",
