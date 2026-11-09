@@ -9,12 +9,106 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="images/logo.png">
+  <link rel="preload" as="image" href="images/logo.png" fetchpriority="high">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="chat-widget.css">
   <script src="app.js" defer></script>
   <script src="chat-widget.js" defer></script>
 </head>
 <body>
+
+  <!-- Intro splash, first visit of a browser session only. Hidden by default (styles.css);
+       the script below shows it, and the real page is already in the HTML underneath. -->
+  <div class="splash" id="splash" aria-hidden="true">
+    <div class="splash-inner">
+      <div class="splash-mark">
+        <img class="splash-logo" src="images/logo.png" alt="" width="220" height="220" fetchpriority="high">
+      </div>
+      <span class="splash-dots"><span></span><span></span><span></span></span>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var KEY = "donerBros.splashSeen";
+      var MIN_MS = 1300;
+      var MAX_MS = 4000;
+      var root = document.documentElement;
+      var splash = document.getElementById("splash");
+      try {
+        if (!splash || sessionStorage.getItem(KEY)) return;
+        sessionStorage.setItem(KEY, "1");
+      } catch (error) {
+        return; // No storage: skip it rather than show it on every page load.
+      }
+
+      var start = Date.now();
+      var menuReady = false;
+      var pageReady = false;
+      var done = false;
+      var inerted = [];
+      var resolveDone;
+      var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      // app.js waits on this before opening the location popup, which would sit above the splash.
+      window.donerSplash = new Promise(function (resolve) { resolveDone = resolve; });
+
+      // Focus and scrolling are blocked by events, not overflow: hidden, so the scrollbar never
+      // comes and goes and the page does not shift when the splash leaves.
+      var BLOCKED_KEYS = ["Tab", " ", "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"];
+      function blockKeys(event) {
+        if (BLOCKED_KEYS.indexOf(event.key) !== -1) event.preventDefault();
+      }
+      function blockScroll(event) {
+        event.preventDefault();
+      }
+      function listen(on) {
+        var method = on ? "addEventListener" : "removeEventListener";
+        document[method]("keydown", blockKeys, true);
+        window[method]("wheel", blockScroll, { capture: true, passive: false });
+        window[method]("touchmove", blockScroll, { capture: true, passive: false });
+      }
+
+      function setInert() {
+        if (done) return;
+        Array.prototype.forEach.call(document.body.children, function (element) {
+          if (element !== splash && element.tagName !== "SCRIPT" && !element.inert) {
+            element.inert = true;
+            inerted.push(element);
+          }
+        });
+      }
+
+      function hide() {
+        if (done) return;
+        done = true;
+        listen(false);
+        inerted.forEach(function (element) { element.inert = false; });
+        splash.classList.add("splash-out");
+        setTimeout(function () {
+          splash.remove();
+          root.classList.remove("splash-on");
+          resolveDone();
+        }, reduced ? 220 : 480);
+      }
+
+      function maybeHide() {
+        if (!menuReady || !pageReady) return;
+        setTimeout(hide, Math.max(0, MIN_MS - (Date.now() - start)));
+      }
+
+      try {
+        root.classList.add("splash-on");
+        listen(true);
+        document.addEventListener("DOMContentLoaded", setInert);
+        document.addEventListener("donerbros:menu-settled", function () { menuReady = true; maybeHide(); });
+        window.addEventListener("load", function () { pageReady = true; maybeHide(); });
+        setTimeout(hide, MAX_MS); // Never stuck: the site shows by 4 seconds whatever happens.
+      } catch (error) {
+        listen(false);
+        root.classList.remove("splash-on");
+        resolveDone();
+      }
+    })();
+  </script>
 
   <!-- Icon sprite -->
   <svg class="sprite" aria-hidden="true" focusable="false">

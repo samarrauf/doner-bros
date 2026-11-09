@@ -93,7 +93,8 @@ function setupLocationPopup() {
     applyLocation(saved);
   } else {
     refreshForm();
-    modal.showModal();
+    // The popup opens in the top layer, above everything, so it waits for the intro splash to go.
+    Promise.resolve(window.donerSplash).then(() => modal.showModal());
   }
 }
 
@@ -477,6 +478,9 @@ async function loadMenu() {
   } catch (error) {
     console.error(error);
     showMenuError();
+  } finally {
+    // Tells the intro splash the menu has arrived (or failed), so it can step aside.
+    document.dispatchEvent(new Event("donerbros:menu-settled"));
   }
 }
 

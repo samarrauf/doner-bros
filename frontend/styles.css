@@ -1169,3 +1169,165 @@ address {
     transition: none !important;
   }
 }
+
+/* ---------- Intro splash ----------
+   Hidden by default. The inline script in index.html adds .splash-on to <html> only when it
+   starts the splash, so with no JavaScript the overlay never covers the site. */
+
+.splash {
+  display: none;
+}
+
+html.splash-on .splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: radial-gradient(circle at 50% 45%, var(--charcoal) 0%, var(--ink) 68%);
+  transition: opacity 0.45s var(--ease), visibility 0s linear 0.45s;
+  /* Failsafe: even if the script stops, the overlay clears itself. */
+  animation: splash-failsafe 0.3s linear 5s forwards;
+}
+
+.splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  transition: transform 0.45s var(--ease);
+}
+
+.splash-mark {
+  position: relative;
+  width: 40vw;
+  max-width: 220px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  animation: splash-logo-in 0.7s var(--ease) both;
+}
+
+.splash-mark::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.55), 0 0 42px 6px rgba(245, 166, 35, 0.45);
+  opacity: 0;
+  animation: splash-glow 1.4s ease-in-out 0.55s infinite alternate;
+}
+
+.splash-logo {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+.splash-dots {
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  animation: splash-fade 0.3s ease 0.45s forwards;
+}
+
+.splash-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: splash-dot 0.9s ease-in-out infinite;
+}
+
+.splash-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.splash-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.splash.splash-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash.splash-out .splash-inner {
+  transform: translateY(-18px) scale(0.97);
+}
+
+@media (min-width: 768px) {
+  .splash-mark {
+    width: clamp(160px, 22vw, 220px);
+  }
+}
+
+@keyframes splash-logo-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes splash-glow {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes splash-fade {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes splash-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes splash-failsafe {
+  to {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+/* Reduced motion: no scale, glow or bouncing, just a quick plain fade out. These override the
+   site-wide reduced-motion reset above, which would otherwise remove the fade and the failsafe. */
+@media (prefers-reduced-motion: reduce) {
+  html.splash-on .splash {
+    transition: opacity 0.2s linear, visibility 0s linear 0.2s !important;
+    animation: splash-failsafe 0.2s linear 5s forwards !important;
+  }
+
+  html.splash-on .splash-dots {
+    opacity: 1;
+  }
+
+  .splash.splash-out .splash-inner {
+    transform: none;
+  }
+}
