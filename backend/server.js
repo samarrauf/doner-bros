@@ -25,6 +25,7 @@ const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders")
 const { addStaffRoutes } = require("./staff");
 const { createSupabaseSessionStore, sessionRowId } = require("./supabase-sessions");
 const { addAdminStatsRoutes } = require("./admin-stats");
+const { addKitchenRoutes } = require("./kitchen");
 const { createAnalyticsService } = require("./services/analytics-service");
 const { createConversationService } = require("./services/conversation-service");
 const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = require("./rate-limit");
@@ -1327,7 +1328,8 @@ function menuRoute(read) {
   };
 }
 // Owner dashboard data, all behind the staff password.
-addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin") });
+addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings });
+addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));

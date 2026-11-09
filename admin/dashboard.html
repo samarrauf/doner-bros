@@ -101,7 +101,7 @@
     .alert { padding: 12px 16px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border)); color: var(--ink); background: color-mix(in srgb, var(--bad) 8%, var(--surface)); }
 
     /* ---------- KPI tiles ---------- */
-    .kpis { display: grid; gap: var(--gap); grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .kpis { display: grid; gap: var(--gap); grid-template-columns: repeat(6, minmax(0, 1fr)); }
     .kpi { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; }
     .kpi-label { font-size: var(--t-xs); color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
     .kpi-value { font-size: var(--t-xl); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -261,7 +261,6 @@
     @media (max-width: 640px) {
       .wrap { padding: 0 16px; }
       .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .kpis > :last-child { grid-column: 1 / -1; }
       .kpi { padding: 14px; }
       .kpi-value { font-size: 24px; }
       .grid-3 { grid-template-columns: 1fr; }
@@ -292,7 +291,8 @@
         <button class="view-tab" role="tab" id="tab-convos" aria-controls="view-convos" aria-selected="false">Conversations</button>
       </div>
       <nav class="top-links" aria-label="Other staff pages">
-        <a href="/staff">Kitchen orders</a>
+        <a href="/admin/kitchen">Kitchen board</a>
+        <a href="/staff">Order list</a>
         <a href="/admin/photos">Menu photos</a>
       </nav>
     </div>
@@ -553,20 +553,28 @@
 
     /* ---------- Overview ---------- */
     function kpiSkeleton() {
-      fill("kpis", ...Array.from({ length: 5 }, () => h("div", { class: "card kpi" },
+      fill("kpis", ...Array.from({ length: 6 }, () => h("div", { class: "card kpi" },
         h("div", { class: "sk", style: "height:12px;width:55%" }), h("div", { class: "sk", style: "height:33px;width:75%" }), h("div", { class: "sk", style: "height:12px;width:65%" }))));
     }
     function renderKpis(c) {
       const cur = c.current, ch = c.change, vs = currentRange().vs;
-      const tile = (label, value, d) => h("div", { class: "card kpi" }, h("div", { class: "kpi-label" }, label), value, d);
+      const tile = (label, value, d, extra) => h("div", { class: "card kpi" }, h("div", { class: "kpi-label" }, label), value, d, extra || null);
       const money = (p) => h("div", { class: "kpi-value", title: rs(p) }, h("small", null, "Rs"), rupees(p));
+      // Prep time is from Preparing to Ready; a rise is slower, so its chip shows the change without colour.
+      const prep = (sec) => (sec === null ? "–" : sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`);
+      const prepNote = h("div", { class: "delta" }, h("span", null,
+        cur.preparedCount ? `${orders(cur.preparedCount)} timed, Preparing → Ready` : "No orders reached Ready"));
+      const cancelledNote = cur.cancelled.orderCount
+        ? h("div", { class: "delta" }, h("span", null, `${count(cur.cancelled.orderCount)} cancelled (${rs(cur.cancelled.valuePaisa)}), not counted`))
+        : null;
       fill("kpis",
-        tile("Orders", h("div", { class: "kpi-value" }, count(cur.orderCount)), delta(ch.orderCount.percent, vs)),
+        tile("Orders", h("div", { class: "kpi-value" }, count(cur.orderCount)), delta(ch.orderCount.percent, vs), cancelledNote),
         tile("Customers", h("div", { class: "kpi-value" }, count(cur.uniqueCustomers)), delta(ch.uniqueCustomers.percent, vs)),
         tile("Net sales", money(cur.netSalesPaisa), delta(ch.netSalesPaisa.percent, vs)),
         tile("Average order", money(cur.averageOrderValuePaisa), delta(ch.averageOrderValuePaisa.percent, vs)),
         tile("Delivery share", h("div", { class: "kpi-value" }, cur.deliverySharePercent === null ? "–" : `${cur.deliverySharePercent}%`),
-          delta(ch.deliverySharePercent.points, vs, "points")));
+          delta(ch.deliverySharePercent.points, vs, "points")),
+        tile("Avg prep time", h("div", { class: "kpi-value" }, prep(cur.averagePrepSeconds)), prepNote));
     }
 
     function monthSkeleton() {

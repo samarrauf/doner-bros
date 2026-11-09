@@ -174,3 +174,37 @@ test("percentage change has no base when the previous figure is zero", () => {
   assert.equal(percentChange(150, 100), 50);
   assert.equal(percentChange(1, 3), -66.7);
 });
+
+/* ---------- Stage 12: preparation time and the kitchen feed ---------- */
+
+test("average prep time is Preparing to Ready, from orders that reached Ready, cancelled left out", () => {
+  const { summarise: sum, kitchenLines } = require("./analytics-service");
+  const base = "2026-11-08T10:00:00.000Z";
+  const at = (sec) => new Date(Date.parse(base) + sec * 1000).toISOString();
+  const s = sum([
+    { ...order({ at: base, status: "COMPLETED" }), preparing_at: at(0), ready_at: at(300) },
+    { ...order({ at: base, status: "READY" }), preparing_at: at(0), ready_at: at(601) },
+    { ...order({ at: base, status: "PREPARING" }), preparing_at: at(0), ready_at: null },
+    { ...order({ at: base, status: "CANCELLED" }), preparing_at: at(0), ready_at: at(9000) },
+  ]);
+  assert.equal(s.averagePrepSeconds, 450, "(300 + 601) / 2, rounded down");
+  assert.equal(s.preparedCount, 2);
+  assert.equal(s.orderCount, 3, "the cancelled order is not counted");
+  assert.equal(s.cancelled.orderCount, 1);
+  assert.equal(sum([order({ at: base })]).averagePrepSeconds, null, "nothing timed yet");
+
+  const lines = kitchenLines([{ itemId: "x", name: "Test wrap", quantity: 2, unitPricePaisa: 1, lineTotalPaisa: 2, options: [{ name: "Sauce", choice: "Mild" }] }]);
+  assert.deepEqual(lines, [{ name: "Test wrap", quantity: 2, options: ["Sauce: Mild"], contains: [] }], "no prices reach the kitchen");
+});
+
+test("getLiveOrders sends open orders with items and no amounts", async () => {
+  const live = order({ at: "2026-11-08T10:00:00Z", status: "NEW" });
+  live.items = [{ name: "Test wrap", quantity: 1, lineTotalPaisa: 999 }];
+  const done = order({ at: "2026-11-08T10:00:00Z", status: "CANCELLED" });
+  const service = createAnalyticsService({ client: fakeClient([live, done]), now: () => new Date("2026-11-08T10:05:00Z") });
+  const result = await service.getLiveOrders();
+  assert.equal(result.orders.length, 1, "cancelled orders leave the board");
+  assert.equal(result.orders[0].ageMinutes, 5);
+  assert.ok(!JSON.stringify(result).includes("999"), "no amounts in the kitchen feed");
+  assert.ok(!("totalPaisa" in result.orders[0]));
+});

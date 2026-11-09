@@ -76,7 +76,7 @@ function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createM
     let query = client.from("orders").select(ORDER_FIELDS);
     query = completed
       ? query.eq("status", "COMPLETED").order("created_at", { ascending: false })
-      : query.neq("status", "COMPLETED").order("created_at", { ascending: true });
+      : query.in("status", ["NEW", "PREPARING", "READY"]).order("created_at", { ascending: true });
     const { data, error } = await query.limit(MAX_ORDERS);
     if (error) {
       console.error("Staff order list failed:", error.code || error.name);

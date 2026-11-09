@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#111111">
+  <title>Kitchen Board</title>
+  <style>
+    /* Built for a cheap tablet in a bright food court: light background, near-black text, strong
+       status colours, everything big enough to read from a metre away, nothing that needs hover. */
+    :root {
+      --bg: #e9e9e6;
+      --card: #ffffff;
+      --ink: #0b0b0b;
+      --ink-2: #333333;
+      --line: #1a1a1a;
+      --new: #0b57d0;
+      --prep: #b45309;
+      --ready: #0f7a3a;
+      --amber-bg: #ffd54a;
+      --red-bg: #d61f1f;
+      --delivery: #6d28d9;
+      --pickup: #0b0b0b;
+      --gap: 12px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      -webkit-text-size-adjust: 100%;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; color: inherit; touch-action: manipulation; cursor: pointer; }
+
+    /* ---------- Top bar ---------- */
+    .bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #111; color: #fff; flex: none; }
+    .bar h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.01em; }
+    .bar .clock { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+    .status { font-size: 18px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: #2a2a2a; }
+    .status.bad { background: var(--red-bg); }
+    .bar-btn { min-height: 52px; min-width: 52px; padding: 0 16px; border-radius: 10px; border: 2px solid #fff; background: transparent; color: #fff; font-size: 20px; font-weight: 700; }
+    .bar-btn[aria-pressed="true"] { background: #fff; color: #111; }
+
+    .notice { flex: none; padding: 10px 14px; font-size: 20px; font-weight: 700; text-align: center; }
+    .notice.warn { background: var(--amber-bg); color: #000; }
+    .notice.err { background: var(--red-bg); color: #fff; }
+    .notice button { margin-left: 12px; min-height: 48px; padding: 0 18px; border-radius: 10px; border: 2px solid currentColor; background: transparent; font-weight: 800; font-size: 20px; }
+
+    /* ---------- Board ---------- */
+    .board { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); padding: var(--gap); }
+    .col { display: flex; flex-direction: column; min-height: 0; background: #d6d6d2; border-radius: 14px; overflow: hidden; }
+    .col-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; color: #fff; font-size: 30px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+    .col-head .n { min-width: 52px; text-align: center; background: #fff; color: #000; border-radius: 999px; padding: 2px 12px; font-size: 28px; }
+    .col[data-status="NEW"] .col-head { background: var(--new); }
+    .col[data-status="PREPARING"] .col-head { background: var(--prep); }
+    .col[data-status="READY"] .col-head { background: var(--ready); }
+    .cards { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
+    .empty-col { margin: 24px 8px; text-align: center; font-size: 22px; font-weight: 600; color: #555; }
+
+    /* ---------- Card ---------- */
+    .card { background: var(--card); border: 3px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .card.amber { background: var(--amber-bg); border-color: #000; }
+    .card.red { background: var(--red-bg); border-color: #000; color: #fff; }
+    .card.red .opts, .card.red .meta { color: #fff; }
+    .card-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .num { font-size: 40px; font-weight: 900; line-height: 1; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+    .badge { font-size: 22px; font-weight: 900; padding: 6px 12px; border-radius: 8px; color: #fff; text-transform: uppercase; letter-spacing: 0.04em; border: 2px solid #fff; }
+    .badge.delivery { background: var(--delivery); }
+    .badge.pickup { background: var(--pickup); }
+    .timer { margin-left: auto; font-size: 34px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; }
+    .meta { font-size: 20px; font-weight: 600; color: var(--ink-2); }
+    .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .items li { font-size: 28px; font-weight: 700; line-height: 1.2; }
+    .items .qty { display: inline-block; min-width: 2.2em; font-weight: 900; }
+    .opts { font-size: 20px; font-weight: 600; color: var(--ink-2); padding-left: 2.6em; margin-top: 2px; }
+    .note { font-size: 22px; font-weight: 700; background: #fff3b0; color: #000; border: 2px dashed #000; border-radius: 8px; padding: 8px 10px; }
+    .note b { text-transform: uppercase; }
+    .go { min-height: 76px; border: 0; border-radius: 12px; font-size: 30px; font-weight: 900; color: #fff; text-transform: uppercase; letter-spacing: 0.03em; }
+    .go:active, .small:active { transform: scale(0.98); }
+    .go[disabled], .small[disabled] { opacity: 0.5; }
+    .col[data-status="NEW"] .go { background: var(--prep); }
+    .col[data-status="PREPARING"] .go { background: var(--ready); }
+    .col[data-status="READY"] .go { background: #111; }
+    .card.red .go { outline: 3px solid #fff; }
+    .row { display: flex; gap: 10px; }
+    .small { flex: 1; min-height: 56px; border-radius: 10px; border: 3px solid #000; background: #fff; color: #000; font-size: 20px; font-weight: 800; }
+    .small.cancel { border-color: var(--red-bg); color: var(--red-bg); }
+
+    /* A new order flashes for a few seconds so it's seen across the room. */
+    @keyframes flash { 0%, 100% { box-shadow: 0 0 0 0 rgba(11, 87, 208, 0); } 50% { box-shadow: 0 0 0 10px rgba(11, 87, 208, 0.95); background: #dbe8ff; } }
+    .card.flash { animation: flash 0.8s ease-in-out 8; }
+    @media (prefers-reduced-motion: reduce) { .card.flash { animation: none; outline: 8px solid var(--new); } }
+
+    /* ---------- Confirm dialog ---------- */
+    .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+    .modal[hidden] { display: none; }
+    .dialog { background: #fff; color: #000; border-radius: 16px; padding: 24px; width: min(560px, 100%); display: flex; flex-direction: column; gap: 20px; border: 4px solid #000; }
+    .dialog p { margin: 0; font-size: 28px; font-weight: 800; line-height: 1.25; }
+    .dialog .row button { flex: 1; min-height: 76px; border-radius: 12px; font-size: 26px; font-weight: 900; border: 3px solid #000; }
+    .dialog .yes { background: #000; color: #fff; }
+    .dialog .yes.danger { background: var(--red-bg); border-color: var(--red-bg); }
+    .dialog .no { background: #fff; }
+
+    /* Narrow screens (phone, or a tablet held upright): columns side by side, swiped across. */
+    @media (max-width: 820px) {
+      .board { min-width: 0; width: 100%; grid-template-columns: repeat(3, 85vw); overflow-x: auto; scroll-snap-type: x mandatory; }
+      .col { scroll-snap-align: start; }
+      .bar { gap: 8px; padding: 8px 10px; }
+      .bar h1 { font-size: 22px; }
+      .bar .clock { font-size: 20px; white-space: nowrap; }
+      .bar-btn { padding: 0 10px; font-size: 18px; white-space: nowrap; }
+      .status { font-size: 16px; padding: 4px 10px; }
+      .num { font-size: 34px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <h1>Kitchen</h1>
+    <span class="status" id="status" role="status" aria-live="polite">Loading…</span>
+    <span class="clock" id="clock" aria-hidden="true"></span>
+    <button class="bar-btn" id="mute" type="button" aria-pressed="false">🔔 Sound on</button>
+  </header>
+  <div class="notice warn" id="sound-notice" hidden>Tap anywhere to turn on the new-order sound.</div>
+  <div class="notice warn" id="threshold-notice" hidden>Card colours are off: set kitchen_amber_minutes and kitchen_red_minutes in settings.</div>
+  <div class="notice err" id="error" role="alert" hidden></div>
+
+  <main class="board" id="board">
+    <section class="col" data-status="NEW" aria-labelledby="h-new">
+      <div class="col-head"><span id="h-new">New</span><span class="n" id="n-NEW">0</span></div>
+      <div class="cards" id="c-NEW"></div>
+    </section>
+    <section class="col" data-status="PREPARING" aria-labelledby="h-prep">
+      <div class="col-head"><span id="h-prep">Preparing</span><span class="n" id="n-PREPARING">0</span></div>
+      <div class="cards" id="c-PREPARING"></div>
+    </section>
+    <section class="col" data-status="READY" aria-labelledby="h-ready">
+      <div class="col-head"><span id="h-ready">Ready</span><span class="n" id="n-READY">0</span></div>
+      <div class="cards" id="c-READY"></div>
+    </section>
+  </main>
+
+  <div class="modal" id="modal" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="modal-text">
+      <p id="modal-text"></p>
+      <div class="row">
+        <button class="no" id="modal-no" type="button">No, keep it</button>
+        <button class="yes" id="modal-yes" type="button">Yes</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+    const POLL_MS = 10000;
+    const TZ = "Asia/Karachi";
+    const STATUSES = ["NEW", "PREPARING", "READY"];
+    const FORWARD = { NEW: ["PREPARING", "Start"], PREPARING: ["READY", "Ready"], READY: ["COMPLETED", "Complete"] };
+    const BACK = { PREPARING: ["NEW", "New"], READY: ["PREPARING", "Preparing"] };
+    // Per-tablet conveniences only; the orders themselves always come from the server.
+    const MUTE_KEY = "kitchen.muted";
+    const SEEN_KEY = "kitchen.seenOrderIds";
+
+    const $ = (id) => document.getElementById(id);
+    // Every value is added as text, never as HTML, so nothing a customer typed can run as markup.
+    function h(tag, attrs, ...children) {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v === null || v === undefined || v === false) continue;
+        if (k === "class") el.className = v;
+        else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? "" : v);
+      }
+      for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
+      return el;
+    }
+    const store = {
+      get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+      set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode: not remembered */ } },
+    };
+
+    const state = {
+      orders: [],
+      thresholds: null,
+      clockOffsetMs: 0,      // server time minus this tablet's time, so timers don't drift with a wrong clock
+      lastOk: 0,
+      busy: new Set(),       // order ids with a request in flight
+      flashUntil: new Map(), // order id -> time its flash ends
+      cards: new Map(),      // order id -> { el, sig }
+      seen: null,            // order ids already on the board; null until the first load
+      muted: store.get(MUTE_KEY) === "1",
+    };
+    try {
+      const saved = JSON.parse(store.get(SEEN_KEY) || "null");
+      if (Array.isArray(saved)) state.seen = new Set(saved);
+    } catch { /* ignore a broken value */ }
+
+    const now = () => Date.now() + state.clockOffsetMs;
+    const mmss = (ms) => {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const m = Math.floor(s / 60);
+      return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}:${String(s % 60).padStart(2, "0")}`;
+    };
+    const clockFmt = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "numeric", minute: "2-digit", hour12: true });
+    // The customer is given e.g. DB-20261030-K7M2QX; its last six characters are what they'll say.
+    const shortId = (id) => id.slice(-6);
+
+    /* ---------- Sound ---------- */
+    let audio = null;
+    function unlockAudio() {
+      try {
+        if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+        if (audio.state === "suspended") audio.resume();
+      } catch { audio = null; }
+      updateSoundNotice();
+    }
+    function updateSoundNotice() {
+      $("sound-notice").hidden = state.muted || (audio && audio.state === "running");
+    }
+    function chime() {
+      if (state.muted || !audio || audio.state !== "running") return;
+      const t = audio.currentTime;
+      [[880, 0], [1320, 0.18]].forEach(([freq, at]) => {
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = "square";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t + at);
+        gain.gain.exponentialRampToValueAtTime(0.35, t + at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.16);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t + at);
+        osc.stop(t + at + 0.18);
+      });
+    }
+    function renderMute() {
+      const btn = $("mute");
+      btn.setAttribute("aria-pressed", String(state.muted));
+      btn.textContent = state.muted ? "🔕 Muted" : "🔔 Sound on";
+      updateSoundNotice();
+    }
+    $("mute").addEventListener("click", () => {
+      state.muted = !state.muted;
+      store.set(MUTE_KEY, state.muted ? "1" : "0");
+      unlockAudio();
+      renderMute();
+      if (!state.muted) chime(); // so staff hear that it works
+    });
+    document.addEventListener("pointerdown", unlockAudio, { passive: true });
+
+    /* ---------- Keep the screen awake where the tablet allows it ---------- */
+    let wakeLock = null;
+    async function keepAwake() {
+      if (!("wakeLock" in navigator) || document.visibilityState !== "visible" || wakeLock) return;
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      } catch { /* not allowed (e.g. battery saver); the board still works */ }
+    }
+
+    /* ---------- API ---------- */
+    class ApiError extends Error {}
+    async function api(path, body) {
+      const res = await fetch(new URL(path, location.origin), {
+        method: body ? "POST" : "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status === 401) throw new ApiError("Signed out. Reload the page to sign in again.");
+      let data = null;
+      try { data = await res.json(); } catch { /* not JSON */ }
+      if (!res.ok) throw Object.assign(new ApiError((data && data.error) || "Couldn't reach the server."), { status: res.status });
+      return data;
+    }
+
+    function showError(message, retry) {
+      const el = $("error");
+      if (!message) { el.hidden = true; el.replaceChildren(); return; }
+      el.replaceChildren(message, retry ? h("button", { type: "button", onclick: retry }, "Try again") : null);
+      el.hidden = false;
+    }
+
+    /* ---------- Board ---------- */
+    let polling = null;
+    let loading = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const data = await api("/api/admin/orders/live");
+        state.clockOffsetMs = Date.parse(data.serverNow) - Date.now();
+        state.thresholds = data.thresholds;
+        state.orders = data.orders;
+        state.lastOk = Date.now();
+        noticeNew(data.orders);
+        showError(null);
+        render();
+      } catch (error) {
+        showError(error.message, error.message.startsWith("Signed out") ? null : load);
+      } finally {
+        loading = false;
+        renderStatus();
+      }
+    }
+
+    // Orders not on the board before flash, and sound once. The first load after opening the page
+    // with nothing remembered only learns what is already there.
+    function noticeNew(orders) {
+      const ids = orders.map((o) => o.orderId);
+      if (state.seen) {
+        const fresh = ids.filter((id) => !state.seen.has(id));
+        if (fresh.length) {
+          const until = Date.now() + 8000;
+          for (const id of fresh) state.flashUntil.set(id, until);
+          chime();
+        }
+      }
+      state.seen = new Set(ids);
+      store.set(SEEN_KEY, JSON.stringify(ids));
+    }
+
+    function startPolling() {
+      clearInterval(polling);
+      polling = setInterval(load, POLL_MS);
+    }
+
+    function lineItem(line) {
+      const extra = [...line.options, ...line.contains];
+      return h("li", null,
+        h("span", { class: "qty" }, `${line.quantity === null ? "?" : line.quantity} ×`), line.name,
+        extra.length ? h("div", { class: "opts" }, extra.join(" · ")) : null);
+    }
+
+    function buildCard(order) {
+      const id = order.orderId;
+      const busy = state.busy.has(id);
+      const [forwardTo, forwardLabel] = FORWARD[order.status];
+      const back = BACK[order.status];
+      const meta = [];
+      if (order.customerName) meta.push(order.customerName);
+      if (order.orderType === "pickup") meta.push(order.pickupTime ? `Pickup at ${order.pickupTime}` : "Pickup ASAP");
+      return h("article", { class: "card", "data-id": id, "aria-label": `Order ${shortId(id)}` },
+        h("div", { class: "card-top" },
+          h("span", { class: "num" }, `#${shortId(id)}`),
+          h("span", { class: `badge ${order.orderType}` }, order.orderType === "delivery" ? "🛵 Delivery" : "🛍 Pickup"),
+          h("span", { class: "timer", "data-timer": "" }, "")),
+        meta.length ? h("div", { class: "meta" }, meta.join(" · ")) : null,
+        h("ul", { class: "items" }, order.items.map(lineItem)),
+        order.note ? h("div", { class: "note" }, h("b", null, "Note: "), order.note) : null,
+        h("button", { class: "go", type: "button", disabled: busy, onclick: () => move(order, forwardTo) }, `${forwardLabel} ▶`),
+        h("div", { class: "row" },
+          back ? h("button", { class: "small", type: "button", disabled: busy, onclick: () => confirmMove(order, back[0], `Move order #${shortId(id)} back to ${back[1]}?`, false) }, `◀ Back to ${back[1]}`) : null,
+          h("button", { class: "small cancel", type: "button", disabled: busy, onclick: () => confirmMove(order, "CANCELLED", `Cancel order #${shortId(id)}? It will leave the board and won't count as a sale.`, true) }, "✕ Cancel order")));
+    }
+
+    function render() {
+      const live = new Set(state.orders.map((o) => o.orderId));
+      for (const id of state.cards.keys()) if (!live.has(id)) state.cards.delete(id);
+      for (const id of state.flashUntil.keys()) if (!live.has(id)) state.flashUntil.delete(id);
+
+      for (const status of STATUSES) {
+        const list = state.orders.filter((o) => o.status === status);
+        const wanted = list.map((order) => {
+          // A card is rebuilt only when what it shows changes, so a running flash isn't restarted.
+          const sig = JSON.stringify([order, state.busy.has(order.orderId)]);
+          let entry = state.cards.get(order.orderId);
+          if (!entry || entry.sig !== sig) {
+            const el = buildCard(order);
+            if (entry && entry.el.classList.contains("flash")) el.classList.add("flash");
+            entry = { el, sig, order };
+            state.cards.set(order.orderId, entry);
+          }
+          return entry.el;
+        });
+        const box = $(`c-${status}`);
+        const current = [...box.children];
+        const same = current.length === wanted.length && current.every((el, i) => el === wanted[i]);
+        if (!same) box.replaceChildren(...(wanted.length ? wanted : [h("div", { class: "empty-col" }, "No orders")]));
+        $(`n-${status}`).textContent = String(list.length);
+      }
+      tick();
+    }
+
+    // Every second: timers, colours, the clock and flashes. Nothing is rebuilt here.
+    function tick() {
+      const t = now();
+      const th = state.thresholds;
+      for (const { el, order } of state.cards.values()) {
+        el.querySelector("[data-timer]").textContent = mmss(t - Date.parse(order.createdAt));
+        const inColumnMin = (t - Date.parse(order.statusChangedAt)) / 60000;
+        el.classList.toggle("red", !!th && inColumnMin >= th.redMinutes);
+        el.classList.toggle("amber", !!th && inColumnMin >= th.amberMinutes && inColumnMin < th.redMinutes);
+        const flashing = (state.flashUntil.get(order.orderId) || 0) > Date.now();
+        if (flashing && !el.classList.contains("flash")) el.classList.add("flash");
+        if (!flashing && el.classList.contains("flash")) el.classList.remove("flash");
+      }
+      $("threshold-notice").hidden = !!th || state.lastOk === 0;
+      $("clock").textContent = clockFmt.format(new Date(t));
+      renderStatus();
+    }
+
+    function renderStatus() {
+      const el = $("status");
+      if (!state.lastOk) { el.textContent = "Loading…"; el.classList.remove("bad"); return; }
+      const age = Math.floor((Date.now() - state.lastOk) / 1000);
+      const stale = age > POLL_MS / 1000 * 3;
+      el.classList.toggle("bad", stale);
+      el.textContent = stale ? `Not updated for ${mmss(age * 1000)}` : "Live";
+    }
+
+    /* ---------- Moving orders ---------- */
+    async function move(order, to) {
+      const id = order.orderId;
+      if (state.busy.has(id)) return;
+      state.busy.add(id);
+      render();
+      try {
+        await api(`/api/admin/orders/${encodeURIComponent(id)}/status`, { from: order.status, to });
+        showError(null);
+      } catch (error) {
+        // 409: another tablet changed it first; the reload below shows where it is now.
+        showError(error.message);
+      } finally {
+        state.busy.delete(id);
+        await load();
+      }
+    }
+
+    let pending = null;
+    function confirmMove(order, to, text, danger) {
+      pending = { order, to };
+      $("modal-text").textContent = text;
+      const yes = $("modal-yes");
+      yes.textContent = danger ? "Yes, cancel it" : "Yes, move back";
+      yes.classList.toggle("danger", danger);
+      $("modal").hidden = false;
+      $("modal-no").focus();
+    }
+    function closeModal() { $("modal").hidden = true; pending = null; }
+    $("modal-no").addEventListener("click", closeModal);
+    $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
+    $("modal-yes").addEventListener("click", () => {
+      const p = pending;
+      closeModal();
+      if (p) move(p.order, p.to);
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) closeModal(); });
+
+    /* ---------- Sleep and wake ---------- */
+    // A sleeping tablet stops timers and network. On waking, reload at once and restart the poll;
+    // orders that came in while asleep are still new to this tablet, so they flash and chime.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") { load(); startPolling(); keepAwake(); }
+    });
+    window.addEventListener("online", load);
+    window.addEventListener("pageshow", (e) => { if (e.persisted) { load(); startPolling(); } });
+
+    renderMute();
+    setInterval(tick, 1000);
+    load();
+    startPolling();
+    keepAwake();
+  })();
+  </script>
+</body>
+</html>

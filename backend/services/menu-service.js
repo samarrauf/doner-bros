@@ -195,6 +195,16 @@ async function getPublicSettings(snapshot) {
   return publicSettings;
 }
 
+// The kitchen board's colour thresholds, and nothing else, for the admin kitchen screen. A missing
+// or invalid pair comes back null, so the board shows that colours are off rather than guessing.
+async function getKitchenSettings() {
+  const { settings } = await loadSnapshot();
+  const minutes = (key) => (/^\d{1,4}$/.test(String(settings[key] || "")) ? Number(settings[key]) : null);
+  const amber = minutes("kitchen_amber_minutes");
+  const red = minutes("kitchen_red_minutes");
+  return amber !== null && red !== null && amber > 0 && red > amber ? { amberMinutes: amber, redMinutes: red } : null;
+}
+
 // Every word of the search must appear in the item's name, in any order, ignoring case.
 async function findItems(searchText) {
   const { itemsById } = await loadSnapshot();
@@ -255,6 +265,7 @@ module.exports = {
   getDeals,
   getSettings,
   getPublicSettings,
+  getKitchenSettings,
   findItems,
   getPublicMenu,
   getPhotoChecklist,

@@ -13,7 +13,7 @@ const OPEN_STATUSES = ["NEW", "PREPARING", "READY"];
 const CANCELLED = "CANCELLED";
 const MAX_RANGE_DAYS = 366;
 const SUMMARY_COLUMNS =
-  "order_id, created_at, status, order_type, customer_phone, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa, promotion_id";
+  "order_id, created_at, status, order_type, customer_phone, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa, promotion_id, preparing_at, ready_at";
 
 const sum = (rows, pick) => rows.reduce((total, row) => total + (Number.isInteger(pick(row)) ? pick(row) : 0), 0);
 
@@ -51,6 +51,19 @@ function sharePercent(part, whole) {
   return whole ? Math.round((part * 1000) / whole) / 10 : null;
 }
 
+// Preparation time: from the kitchen moving an order to Preparing until it moved it to Ready, from
+// the timestamps the database records. Only orders that reached Ready count. Whole seconds, rounded down.
+function preparation(sold) {
+  const seconds = sold
+    .filter((o) => o.preparing_at && o.ready_at)
+    .map((o) => Math.floor((Date.parse(o.ready_at) - Date.parse(o.preparing_at)) / 1000))
+    .filter((s) => Number.isFinite(s) && s >= 0);
+  return {
+    averagePrepSeconds: seconds.length ? Math.floor(seconds.reduce((a, b) => a + b, 0) / seconds.length) : null,
+    preparedCount: seconds.length,
+  };
+}
+
 function summarise(orders) {
   const sold = orders.filter((o) => o.status !== CANCELLED);
   const cancelled = orders.filter((o) => o.status === CANCELLED);
@@ -70,7 +83,19 @@ function summarise(orders) {
     delivery: salesOf(sold.filter((o) => o.order_type === "delivery")),
     pickup: salesOf(sold.filter((o) => o.order_type === "pickup")),
     cancelled: { orderCount: cancelled.length, valuePaisa: sum(cancelled, (o) => o.total_paisa) },
+    ...preparation(sold),
   };
+}
+
+// An order line as the kitchen needs it: what and how many, never a price.
+function kitchenLines(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter(Boolean).map((line) => ({
+    name: String(line.name || ""),
+    quantity: Number.isInteger(line.quantity) ? line.quantity : null,
+    options: Array.isArray(line.options) ? line.options.map((o) => `${o.name}: ${o.choice}`) : [],
+    contains: Array.isArray(line.contains) ? line.contains.map(String) : [],
+  }));
 }
 
 function hourly(orders) {
@@ -159,6 +184,9 @@ function change(current, previous) {
   const a = current.deliverySharePercent;
   const b = previous.deliverySharePercent;
   figures.deliverySharePercent = { points: a === null || b === null ? null : Math.round((a - b) * 10) / 10 };
+  const p = current.averagePrepSeconds;
+  const q = previous.averagePrepSeconds;
+  figures.averagePrepSeconds = { difference: p === null || q === null ? null : p - q, percent: p === null || q === null ? null : percentChange(p, q) };
   return figures;
 }
 
@@ -279,25 +307,30 @@ function createAnalyticsService({ client, now = () => new Date() }) {
     return { from: range.from, to: range.to, customers: repeatCustomers(await fetchOrders(range.from, range.to)) };
   }
 
+  // Open orders for the kitchen board. No amounts: kitchen staff see what to make, not what it cost.
   async function getLiveOrders() {
     const { data, error } = await client
       .from("orders")
-      .select("order_id, created_at, status, order_type, customer_name, pickup_time, total_paisa")
+      .select("order_number, order_id, created_at, status, status_changed_at, order_type, customer_name, pickup_time, delivery_instructions, items")
       .in("status", OPEN_STATUSES)
       .order("created_at", { ascending: true })
       .limit(100);
     if (error) throw error;
-    const at = now().getTime();
+    const at = now();
     return {
+      serverNow: at.toISOString(),
       orders: data.map((o) => ({
+        orderNumber: o.order_number,
         orderId: o.order_id,
         status: o.status,
         orderType: o.order_type,
         customerName: o.customer_name,
         pickupTime: o.pickup_time,
-        totalPaisa: o.total_paisa,
+        note: o.delivery_instructions || null,
+        items: kitchenLines(o.items),
         createdAt: o.created_at,
-        ageMinutes: Math.max(0, Math.floor((at - Date.parse(o.created_at)) / 60000)),
+        statusChangedAt: o.status_changed_at || o.created_at,
+        ageMinutes: Math.max(0, Math.floor((at.getTime() - Date.parse(o.created_at)) / 60000)),
       })),
     };
   }
@@ -325,6 +358,7 @@ module.exports = {
   createAnalyticsService,
   normaliseRange,
   summarise,
+  kitchenLines,
   hourly,
   topItems,
   dealPerformance,

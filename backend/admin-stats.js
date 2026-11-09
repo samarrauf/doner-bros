@@ -4,7 +4,7 @@
 
 const path = require("path");
 
-function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir }) {
+function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir, getKitchenSettings }) {
   const guard = [requireStaff, requireDatabase];
 
   // The owner dashboard page itself.
@@ -32,7 +32,11 @@ function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, co
   app.get("/api/admin/stats/top-items", ...guard, route("top items", (req) => analytics.getTopItems(q(req, "from"), q(req, "to"), q(req, "limit"))));
   app.get("/api/admin/stats/deals", ...guard, route("deals", (req) => analytics.getDealPerformance(q(req, "from"), q(req, "to"))));
   app.get("/api/admin/stats/customers", ...guard, route("customers", (req) => analytics.getRepeatCustomers(q(req, "from"), q(req, "to"))));
-  app.get("/api/admin/orders/live", ...guard, route("live orders", () => analytics.getLiveOrders()));
+  // The kitchen board's feed: open orders plus its amber/red thresholds (null if not set).
+  app.get("/api/admin/orders/live", ...guard, route("live orders", async () => {
+    const [live, thresholds] = await Promise.all([analytics.getLiveOrders(), getKitchenSettings().catch(() => null)]);
+    return { ...live, thresholds };
+  }));
 
   // Fixed paths before /chats/:id.
   app.get("/api/admin/chats/live", ...guard, route("live chats", () => conversations.getLiveConversations()));

@@ -23,6 +23,7 @@ function fakeSupabase(rows) {
         update: (values) => { update = values; return builder; },
         eq: (column, value) => { filters.push((r) => r[column] === value); return builder; },
         neq: (column, value) => { filters.push((r) => r[column] !== value); return builder; },
+        in: (column, values) => { filters.push((r) => values.includes(r[column])); return builder; },
         order: (column, { ascending }) => { order = { column, ascending }; return builder; },
         limit: async () => {
           let result = rows.filter((r) => filters.every((f) => f(r)));
