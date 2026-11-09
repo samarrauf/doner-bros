@@ -274,6 +274,15 @@
       .top-links { margin-left: auto; }
       .filter-end { margin-left: 0; width: 100%; justify-content: space-between; }
       .chart { height: 190px; }
+      /* Phones: every card in one column; only tables scroll sideways, inside their own box. */
+      .kpis, .figs { grid-template-columns: minmax(0, 1fr); }
+      .grid-2, .grid-3, .convo-layout { grid-template-columns: minmax(0, 1fr); }
+      .grid-3 > :last-child { grid-column: auto; }
+      .top-links { flex-wrap: wrap; gap: 4px 14px; }
+      .filter-end { flex-wrap: wrap; }
+      .custom { flex-wrap: wrap; }
+      .custom input { min-width: 0; flex: 1; }
+      .split { gap: 10px; }
     }
   </style>
 </head>

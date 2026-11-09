@@ -312,7 +312,7 @@ function createAnalyticsService({ client, now = () => new Date() }) {
   async function getLiveOrders() {
     const { data, error } = await client
       .from("orders")
-      .select("order_number, order_id, created_at, status, status_changed_at, order_type, customer_name, pickup_time, delivery_instructions, items, delivery_fee_paisa")
+      .select("order_number, order_id, created_at, status, status_changed_at, order_type, customer_name, customer_phone, delivery_address, delivery_unit, pickup_time, delivery_instructions, items, delivery_fee_paisa")
       .in("status", OPEN_STATUSES)
       .order("created_at", { ascending: true })
       .limit(100);
@@ -326,6 +326,9 @@ function createAnalyticsService({ client, now = () => new Date() }) {
         status: o.status,
         orderType: o.order_type,
         customerName: o.customer_name,
+        // So staff can call the customer and the rider knows where to go.
+        customerPhone: o.customer_phone || null,
+        address: o.order_type === "delivery" ? [o.delivery_unit, o.delivery_address].filter(Boolean).join(", ") || null : null,
         pickupTime: o.pickup_time,
         note: o.delivery_instructions || null,
         // A flag only, never the amount: the rider needs to know the fee still has to be agreed.
