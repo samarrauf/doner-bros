@@ -19,6 +19,8 @@ function isAllowedMove(from, to) {
 
 function addKitchenRoutes(app, { client, requireStaff, requireDatabase, adminDir }) {
   app.get("/admin/kitchen", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen.html")));
+  // The board's alert rules (when to ring and remind), shared with the tests.
+  app.get("/admin/kitchen-alerts.js", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen-alerts.js")));
 
   // Changes the status only if the order is still in the status the board showed, so two tablets
   // tapping at once can't skip or undo a step: the second gets 409 and the board refreshes.
