@@ -43,6 +43,20 @@ const MENU_TOOLS = [
     },
   },
   {
+    name: "find_items_within_budget",
+    description:
+      "Only for budget questions, where the customer names the most they want to spend (never for a request to change an item's price): the available items and deals that cost no more than the " +
+      "budget, cheapest first. The result repeats the budget as the server formats it, so you may say it back.",
+    input_schema: {
+      type: "object",
+      properties: {
+        max_rupees: { type: "integer", description: "The customer's budget in whole rupees, as they said it." },
+        category_slug: { type: "string", description: "Optional: only this category from <categories>." },
+      },
+      required: ["max_rupees"],
+    },
+  },
+  {
     name: "list_deals",
     description:
       "List the available deals with their ids, names and prices. contains lists exactly what comes in each deal. A deal is " +
@@ -123,6 +137,34 @@ async function listDeals() {
   };
 }
 
+const MAX_BUDGET_RESULTS = 15;
+
+// Only whole rupees are taken in; the comparison is done in paisa on the menu's own prices.
+async function findItemsWithinBudget(maxRupees, categorySlug) {
+  if (!Number.isInteger(maxRupees) || maxRupees <= 0 || maxRupees > 1000000) {
+    return { error: "max_rupees must be a whole number of rupees.", instruction: "Ask the customer for their budget." };
+  }
+  const maxPaisa = maxRupees * 100;
+  const [categories, deals] = await Promise.all([menuService.getMenu(), menuService.getDeals()]);
+  const chosen = categorySlug ? categories.filter((c) => c.slug === categorySlug) : categories;
+  const items = chosen
+    .flatMap((c) => c.items)
+    .filter((item) => item.isAvailable && item.pricePaisa <= maxPaisa)
+    .map(toToolItem);
+  const withinDeals = categorySlug
+    ? []
+    : deals
+        .filter((deal) => deal.isAvailable && deal.pricePaisa <= maxPaisa)
+        .map((deal) => ({ id: deal.id, name: deal.name, pricePaisa: deal.pricePaisa, priceDisplay: deal.priceDisplay, contains: deal.items.map((d) => d.label) }));
+  const all = [...items, ...withinDeals].sort((a, b) => a.pricePaisa - b.pricePaisa);
+  return {
+    budget: menuService.formatPrice(maxPaisa),
+    found: all.length > 0,
+    items: all.slice(0, MAX_BUDGET_RESULTS),
+    ...(all.length > MAX_BUDGET_RESULTS ? { more: all.length - MAX_BUDGET_RESULTS } : {}),
+  };
+}
+
 // A failed read becomes a tool result the model must act on, so a Supabase outage never ends the chat.
 async function runMenuTool(name, args) {
   const input = args || {};
@@ -132,6 +174,7 @@ async function runMenuTool(name, args) {
     if (name === "search_items") return await searchItems(input.text);
     if (name === "get_item") return await getItem(input.item_id);
     if (name === "list_deals") return await listDeals();
+    if (name === "find_items_within_budget") return await findItemsWithinBudget(input.max_rupees, input.category_slug);
   } catch (error) {
     console.error(`Menu tool ${name} failed:`, error.code || error.message);
     return MENU_TOOL_FAILED;

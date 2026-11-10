@@ -164,7 +164,9 @@ test("only categories go up front, and the contact details come from settings", 
   await ask("hi");
   const prompt = requests[0].system;
   assert.doesNotMatch(prompt, /showed the customer the reviewOrder summary/, "no summary shown yet");
-  assert.ok(requests[0].messages.every((m) => m.role !== "system"), "no earlier replies, so no note");
+  const notes = requests[0].messages.filter((m) => m.role === "system").map((m) => m.content).join(" ");
+  assert.doesNotMatch(notes, /earlier replies/, "no earlier replies, so no note about them");
+  assert.match(notes, /same language and script as the customer/, "only the language note");
   assert.ok(prompt.includes("- alpha: Alpha"));
   assert.ok(!prompt.includes("Test Item"), "no items up front");
   assert.ok(prompt.includes(`WhatsApp: ${TEST_WHATSAPP}`));
@@ -228,7 +230,7 @@ const reviewShown = (request) => say(`${viewOf(request).text}\nReply yes to plac
 
 test("an Order button sends the id: the server adds it without the model, and the model isn't told to add it again", async () => {
   script = [(request) => {
-    assert.match(request.system, /already handled it, so don't call addItemToCart/);
+    assert.match(request.system, /JUST ADDED this item to the cart[\s\S]*never say it was already in the cart[\s\S]*Don't call addItemToCart for it/);
     assert.ok(request.system.includes(`1 x Test Item: ${rs(PRICE.item)}`));
     return say(`Added Test Item, ${rs(PRICE.item)}.`);
   }];
@@ -388,7 +390,9 @@ test("each request names the model once, sends the system prompt as a parameter,
   const request = requests[0];
   assert.equal(request.model, "claude-haiku-5-5");
   assert.equal(typeof request.system, "string");
-  assert.ok(request.messages.every((m) => m.role === "user" || m.role === "assistant"), "no system message in the list");
+  const system = request.messages.filter((m) => m.role === "system");
+  assert.deepEqual(system.map((m) => /same language and script/.test(m.content)), [true], "the only system message is the language note, after the customer");
+  assert.equal(request.messages.at(-1).role, "system");
   assert.equal(request.temperature, undefined);
   for (const tool of request.tools) {
     assert.equal(tool.input_schema.type, "object", tool.name);
@@ -461,17 +465,10 @@ test("the submit_order log line has item ids and the total source, and no custom
   ];
   await ask("pickup, Test Customer, 03000000000", cookie);
 
-  // The model only sees earlier turns as text, so the server tells it the summary it showed was reviewOrder's.
-  script = [(request) => {
-    assert.match(request.system, /showed the customer the reviewOrder summary of this order/);
-    const [customer, note] = request.messages.slice(-2);
-    assert.deepEqual(customer.content, [{ type: "text", text: "yes" }]);
-    assert.equal(note.role, "system");
-    assert.match(note.content, /call submit_order now/);
-    return call("submit_order", { customerConfirmed: true });
-  }];
+  // A plain yes to the shown summary is submitted by the server itself, with no model call.
+  script = [];
   const { logs } = await captureLogs(() => ask("yes", cookie));
-  const line = logs.find((l) => l.startsWith("Model called submit_order"));
+  const line = logs.find((l) => l.startsWith("Plain yes to the shown summary, submit_order:"));
   assert.match(line, /items=\[i-1x2\] total_paisa=/);
   const all = logs.join("\n");
   assert.ok(!all.includes("Test Customer") && !all.includes("03000000000"), "no personal data in the logs");

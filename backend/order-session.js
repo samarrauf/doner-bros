@@ -92,12 +92,19 @@ function recordOrderAttempt(state, result) {
 
 // Only the ids and quantity go into the cart, whatever else the line carries. Adding after an
 // order was saved or failed starts a new cart rather than editing that order.
+// After an order was saved (or failed to save), the next cart item or checkout detail starts a new,
+// separate order: the submitted one is never edited. suggestionsOffered (set by recommendations.js)
+// is kept so a declined suggestion stays declined, and appliedClickIds so a late repeat of a click
+// can't land in the new cart. chatSecret and savedOrderCount aren't in createOrderState, so they stay
+// and a resubmission of an earlier order is still refused. Returns true if a new order was started.
+function startNewOrderIfSubmitted(state) {
+  if (state.status !== "saved" && state.status !== "not_saved") return false;
+  Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [], appliedClickIds: state.appliedClickIds || [] });
+  return true;
+}
+
 function addToCart(state, { item_id, quantity, option_ids }) {
-  // suggestionsOffered (set by recommendations.js) is kept so a declined suggestion stays declined,
-  // and appliedClickIds so a late repeat of a click can't land in the new cart.
-  if (state.status === "saved" || state.status === "not_saved") {
-    Object.assign(state, createOrderState(), { suggestionsOffered: state.suggestionsOffered || [], appliedClickIds: state.appliedClickIds || [] });
-  }
+  startNewOrderIfSubmitted(state);
   if (state.items.length >= MAX_CART_LINES) return { error: `the cart is limited to ${MAX_CART_LINES} lines.` };
 
   state.items.push({ item_id, quantity, option_ids: [...(option_ids || [])] });
@@ -338,4 +345,4 @@ function sessionCookie(id, secure) {
   return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }
 
-module.exports = { createOrderState, upgradeOrderState, recordOrderAttempt, addToCart, isClickApplied, recordClick, setLineQuantity, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };
+module.exports = { createOrderState, upgradeOrderState, recordOrderAttempt, startNewOrderIfSubmitted, addToCart, isClickApplied, recordClick, setLineQuantity, findCartLine, removeFromCart, applyDiscount, clearDiscount, setPickupDetails, setDeliveryDetails, missingCheckoutDetails, deliveryAddressReadBack, confirmDeliveryAddress, normaliseForReadBack, cartSummary, SessionStore, createMemorySessionStore, SESSION_IDLE_MS, readSessionId, sessionCookie };
