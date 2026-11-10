@@ -1306,7 +1306,9 @@ address {
 
 /* ---------- Intro splash ----------
    Hidden by default. The inline script in index.html adds .splash-on to <html> only when it
-   starts the splash, so with no JavaScript the overlay never covers the site. */
+   starts the splash, so with no JavaScript the overlay never covers the site.
+   About 3.5 s in all: the logo blinks with a soft orange glow (1 s per blink), the welcome line
+   fades in, the orange line fills, then everything fades into the site. */
 
 .splash {
   display: none;
@@ -1322,37 +1324,42 @@ html.splash-on .splash {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
-  background: radial-gradient(circle at 50% 45%, var(--charcoal) 0%, var(--ink) 68%);
-  transition: opacity 0.45s var(--ease), visibility 0s linear 0.45s;
-  /* Failsafe: even if the script stops, the overlay clears itself. */
-  animation: splash-failsafe 0.3s linear 5s forwards;
+  padding: 24px 16px;
+  background:
+    radial-gradient(42% 36% at 50% 44%, rgba(245, 166, 35, 0.22), rgba(245, 166, 35, 0) 70%),
+    radial-gradient(circle at 50% 45%, var(--charcoal) 0%, var(--ink) 70%);
+  transition: opacity 0.5s var(--ease), visibility 0s linear 0.5s;
+  /* Failsafe: even if the script stops, the overlay clears itself after about 4 seconds. */
+  animation: splash-failsafe 0.3s linear 4.2s forwards;
 }
 
 .splash-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 28px;
-  transition: transform 0.45s var(--ease);
+  gap: clamp(16px, 3vh, 26px);
+  max-width: 100%;
+  text-align: center;
+  transition: transform 0.5s var(--ease);
 }
 
 .splash-mark {
   position: relative;
-  width: 40vw;
-  max-width: 220px;
+  width: min(44vw, 34vh, 220px);
   aspect-ratio: 1;
   border-radius: 50%;
-  animation: splash-logo-in 0.7s var(--ease) both;
+  animation: splash-logo-in 0.6s var(--ease) both;
 }
 
+/* The glow ring behind the logo: the blink. */
 .splash-mark::before {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -8px;
   border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.55), 0 0 42px 6px rgba(245, 166, 35, 0.45);
-  opacity: 0;
-  animation: splash-glow 1.4s ease-in-out 0.55s infinite alternate;
+  box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.6), 0 0 48px 10px rgba(245, 166, 35, 0.5);
+  opacity: 0.15;
+  animation: splash-glow 1s ease-in-out 0.4s infinite;
 }
 
 .splash-logo {
@@ -1362,29 +1369,41 @@ html.splash-on .splash {
   height: 100%;
   border-radius: 50%;
   object-fit: contain;
+  animation: splash-blink 1s ease-in-out 0.4s infinite;
 }
 
-.splash-dots {
-  display: flex;
-  gap: 8px;
+.splash-welcome {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(1.15rem, 0.95rem + 1.2vw, 1.6rem);
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: #f7f6f3;
   opacity: 0;
-  animation: splash-fade 0.3s ease 0.45s forwards;
+  animation: splash-fade 0.6s ease 0.35s forwards;
 }
 
-.splash-dots span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+/* A thin orange line that fills over the splash's ~3.5 s. */
+.splash-line {
+  display: block;
+  width: min(220px, 60vw);
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(245, 166, 35, 0.18);
+  overflow: hidden;
+}
+
+.splash-line span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
   background: var(--accent);
-  animation: splash-dot 0.9s ease-in-out infinite;
-}
-
-.splash-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.splash-dots span:nth-child(3) {
-  animation-delay: 0.3s;
+  box-shadow: 0 0 10px rgba(245, 166, 35, 0.7);
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: splash-progress 3.2s cubic-bezier(0.4, 0, 0.2, 1) 0.1s forwards;
 }
 
 .splash.splash-out {
@@ -1394,19 +1413,13 @@ html.splash-on .splash {
 }
 
 .splash.splash-out .splash-inner {
-  transform: translateY(-18px) scale(0.97);
-}
-
-@media (min-width: 768px) {
-  .splash-mark {
-    width: clamp(160px, 22vw, 220px);
-  }
+  transform: translateY(-14px) scale(0.98);
 }
 
 @keyframes splash-logo-in {
   from {
     opacity: 0;
-    transform: scale(0.82);
+    transform: scale(0.86);
   }
   to {
     opacity: 1;
@@ -1415,11 +1428,26 @@ html.splash-on .splash {
 }
 
 @keyframes splash-glow {
-  from {
-    opacity: 0.35;
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.97);
   }
-  to {
+  50% {
     opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes splash-blink {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 4px rgba(245, 166, 35, 0.25));
+  }
+  50% {
+    opacity: 0.72;
+    filter: drop-shadow(0 0 22px rgba(245, 166, 35, 0.8));
   }
 }
 
@@ -1429,15 +1457,9 @@ html.splash-on .splash {
   }
 }
 
-@keyframes splash-dot {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: translateY(0);
-  }
-  50% {
-    opacity: 1;
-    transform: translateY(-5px);
+@keyframes splash-progress {
+  to {
+    transform: scaleX(1);
   }
 }
 
@@ -1449,16 +1471,25 @@ html.splash-on .splash {
   }
 }
 
-/* Reduced motion: no scale, glow or bouncing, just a quick plain fade out. These override the
-   site-wide reduced-motion reset above, which would otherwise remove the fade and the failsafe. */
+/* Reduced motion: no blinking, scaling or moving line; the splash simply appears and fades into
+   the site. These override the site-wide reduced-motion reset above, which would otherwise remove
+   the fade and the failsafe. */
 @media (prefers-reduced-motion: reduce) {
   html.splash-on .splash {
-    transition: opacity 0.2s linear, visibility 0s linear 0.2s !important;
-    animation: splash-failsafe 0.2s linear 5s forwards !important;
+    transition: opacity 0.5s linear, visibility 0s linear 0.5s !important;
+    animation: splash-failsafe 0.3s linear 4.2s forwards !important;
   }
 
-  html.splash-on .splash-dots {
+  html.splash-on .splash-welcome {
     opacity: 1;
+  }
+
+  html.splash-on .splash-mark::before {
+    opacity: 0.6;
+  }
+
+  html.splash-on .splash-line span {
+    transform: scaleX(1);
   }
 
   .splash.splash-out .splash-inner {

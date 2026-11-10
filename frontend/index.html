@@ -17,28 +17,54 @@
 </head>
 <body>
 
-  <!-- Intro splash, first visit of a browser session only. Hidden by default (styles.css);
+  <!-- Intro splash on every fresh visit: a new tab, a link from outside the site, or a reload.
+       Skipped only when coming from another page of this site. Hidden by default (styles.css);
        the script below shows it, and the real page is already in the HTML underneath. -->
   <div class="splash" id="splash" aria-hidden="true">
     <div class="splash-inner">
       <div class="splash-mark">
         <img class="splash-logo" src="images/logo.png" alt="" width="220" height="220" fetchpriority="high">
       </div>
-      <span class="splash-dots"><span></span><span></span><span></span></span>
+      <p class="splash-welcome">Welcome to Doner Bros</p>
+      <span class="splash-line"><span></span></span>
     </div>
   </div>
   <script>
     (function () {
-      var KEY = "donerBros.splashSeen";
-      var MIN_MS = 1300;
-      var MAX_MS = 4000;
+      /* splash-rule:start (also run by backend/splash.test.js) */
+      var SPLASH_TIMING = { VISIBLE_MIN_MS: 3000, FADE_MS: 500, TOTAL_MAX_MS: 4000 };
+      // navType is the Navigation Timing type: "navigate", "reload", "back_forward" or "prerender".
+      // Shown on a reload, a new tab, or a link from another site; skipped only when the visitor
+      // came here from another page of this site. ?splash=1 always shows it (for testing).
+      function shouldShowSplash(navType, referrer, origin, search) {
+        if (/(?:^|[?&])splash=1(?:&|$)/.test(String(search || "").replace(/^\?/, ""))) return true;
+        if (navType === "reload") return true;
+        var fromThisSite = false;
+        try { fromThisSite = !!referrer && new URL(referrer).origin === origin; } catch (error) { fromThisSite = false; }
+        return !fromThisSite;
+      }
+      // When the fade-out starts, in ms after the splash appeared: never before VISIBLE_MIN_MS (so
+      // a fast page still gets about 3.5 s in all), later if the page is still loading, but always
+      // early enough that the fade ends by TOTAL_MAX_MS. readyAtMs is null while not ready.
+      function splashFadeStartMs(readyAtMs) {
+        var latest = SPLASH_TIMING.TOTAL_MAX_MS - SPLASH_TIMING.FADE_MS;
+        if (readyAtMs === null || readyAtMs === undefined) return latest;
+        return Math.min(Math.max(SPLASH_TIMING.VISIBLE_MIN_MS, readyAtMs), latest);
+      }
+      /* splash-rule:end */
+
       var root = document.documentElement;
       var splash = document.getElementById("splash");
+      if (!splash) return;
+      var navType = "navigate";
       try {
-        if (!splash || sessionStorage.getItem(KEY)) return;
-        sessionStorage.setItem(KEY, "1");
-      } catch (error) {
-        return; // No storage: skip it rather than show it on every page load.
+        var entry = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+        if (entry && entry.type) navType = entry.type;
+        else if (performance.navigation && performance.navigation.type === 1) navType = "reload";
+      } catch (error) { /* older browser: treat as a normal visit */ }
+      if (!shouldShowSplash(navType, document.referrer, location.origin, location.search)) {
+        splash.remove();
+        return;
       }
 
       var start = Date.now();
@@ -47,7 +73,6 @@
       var done = false;
       var inerted = [];
       var resolveDone;
-      var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       // app.js waits on this before opening the location popup, which would sit above the splash.
       window.donerSplash = new Promise(function (resolve) { resolveDone = resolve; });
 
@@ -87,12 +112,12 @@
           splash.remove();
           root.classList.remove("splash-on");
           resolveDone();
-        }, reduced ? 220 : 480);
+        }, SPLASH_TIMING.FADE_MS);
       }
 
       function maybeHide() {
         if (!menuReady || !pageReady) return;
-        setTimeout(hide, Math.max(0, MIN_MS - (Date.now() - start)));
+        setTimeout(hide, Math.max(0, splashFadeStartMs(Date.now() - start) - (Date.now() - start)));
       }
 
       try {
@@ -101,7 +126,8 @@
         document.addEventListener("DOMContentLoaded", setInert);
         document.addEventListener("donerbros:menu-settled", function () { menuReady = true; maybeHide(); });
         window.addEventListener("load", function () { pageReady = true; maybeHide(); });
-        setTimeout(hide, MAX_MS); // Never stuck: the site shows by 4 seconds whatever happens.
+        // Never stuck: the fade starts by 3.5 s whatever happens, so the site shows by 4 s.
+        setTimeout(hide, splashFadeStartMs(null));
       } catch (error) {
         listen(false);
         root.classList.remove("splash-on");
