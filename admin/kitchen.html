@@ -67,6 +67,13 @@
       background: var(--card); font-size: 1.25rem; line-height: 1; padding: 0;
     }
     .sound[aria-pressed="false"] { opacity: 0.7; }
+    .logout {
+      flex: none; min-width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px;
+      border-radius: 999px; border: 2px solid var(--line); background: transparent; color: var(--text); font: 700 0.9375rem var(--font-body); cursor: pointer;
+    }
+    .logout svg { width: 18px; height: 18px; }
+    .logout:hover { border-color: var(--accent); color: var(--accent); }
+    @media (max-width: 480px) { .logout { padding: 0; } .logout span { display: none; } }
 
     .notice { flex: none; padding: 6px var(--edge); font-size: 0.9375rem; font-weight: 700; text-align: center; }
     .notice.warn { background: #2c2416; color: #ffe2a8; border-bottom: 1px solid #4a3a1c; }
@@ -281,6 +288,7 @@
     <span class="status" id="status" role="status" aria-live="polite">Loading…</span>
     <span class="clock" id="clock" aria-hidden="true"></span>
     <button class="sound" id="mute" type="button" aria-pressed="true" aria-label="Sound is on. Turn sound off">🔔</button>
+    <button class="logout" id="logout" type="button" aria-label="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg><span>Log out</span></button>
   </header>
   <div class="notice warn" id="threshold-notice" hidden>Card colours are off: set kitchen_amber_minutes and kitchen_red_minutes in settings.</div>
   <div class="notice err" id="error" role="alert" hidden></div>
@@ -528,6 +536,19 @@
       } catch { /* not allowed (e.g. battery saver): the board still works */ }
     }
 
+
+    /* ---------- Log out ---------- */
+    $("logout").addEventListener("click", async () => {
+      $("logout").disabled = true;
+      let target = "/kitchen/login";
+      try {
+        const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+        const data = await res.json();
+        if (data && typeof data.next === "string" && data.next.startsWith("/") && !data.next.startsWith("//")) target = data.next;
+      } catch { /* the cookie may still be cleared; go to the login page either way */ }
+      location.assign(target);
+    });
+
     /* ---------- API ---------- */
     class ApiError extends Error {}
     async function api(path, body) {
@@ -538,7 +559,10 @@
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (res.status === 401) throw new ApiError("Signed out. Reload the page to sign in again.");
+      if (res.status === 401) {
+        location.assign(`/kitchen/login?next=${encodeURIComponent(location.pathname)}`);
+        throw new ApiError("Signed out. Opening the login page…");
+      }
       let data = null;
       try { data = await res.json(); } catch { /* not JSON */ }
       if (!res.ok) throw Object.assign(new ApiError((data && data.error) || "Couldn't reach the server."), { status: res.status });

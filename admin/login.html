@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en" data-role="__ROLE__">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0b0b0b">
+  <title>Doner Bros Login</title>
+  <link rel="icon" type="image/png" href="/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&family=Playfair+Display:wght@600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    /* The customer site's theme: ink background, the menu's orange accent, Karla and Playfair Display. */
+    :root {
+      --ink: #0b0b0b;               /* site --ink */
+      --charcoal: #24282b;          /* site --charcoal */
+      --charcoal-soft: #31363a;     /* site --charcoal-soft */
+      --accent: #f5a623;            /* site --accent */
+      --accent-dark: #d98c0a;       /* site --accent-dark */
+      --accent-ink: #1a1003;
+      --text: #f7f6f3;
+      --muted: #b9bec3;
+      --line: #4a5157;
+      --error: #ff8a80;
+      --font-body: "Karla", "Noto Naskh Arabic", "Noto Nastaliq Urdu", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --font-display: "Playfair Display", "Noto Naskh Arabic", "Noto Nastaliq Urdu", Georgia, "Times New Roman", serif;
+      color-scheme: dark;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      background: var(--ink);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 1rem;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    html[data-role="kitchen"] [data-for="owner"],
+    html[data-role="owner"] [data-for="kitchen"] { display: none !important; }
+
+    /* Calm full-screen background: a soft warm glow that drifts slowly. */
+    .bg {
+      position: fixed; inset: -20%;
+      z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(245, 166, 35, 0.26), transparent 42%),
+        radial-gradient(circle at 20% 85%, rgba(217, 140, 10, 0.12), transparent 40%),
+        linear-gradient(160deg, var(--ink) 0%, var(--charcoal) 55%, var(--ink) 100%);
+      animation: drift 24s ease-in-out infinite alternate;
+    }
+    @keyframes drift {
+      from { transform: translate3d(-3%, -2%, 0) scale(1); }
+      to   { transform: translate3d(3%, 2%, 0) scale(1.06); }
+    }
+
+    .page {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex; flex-direction: column; align-items: center;
+      padding:
+        max(32px, env(safe-area-inset-top))
+        max(20px, env(safe-area-inset-right))
+        max(20px, env(safe-area-inset-bottom))
+        max(20px, env(safe-area-inset-left));
+    }
+    .col { width: 100%; max-width: 420px; flex: 1; display: flex; flex-direction: column; }
+    .main { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 16px 0 32px; }
+
+    .logo {
+      display: block; width: 96px; height: 96px; margin: 0 auto 20px;
+      border-radius: 50%;
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1;    filter: drop-shadow(0 0 6px rgba(245, 166, 35, 0.25)); }
+      50%      { opacity: 0.78; filter: drop-shadow(0 0 22px rgba(245, 166, 35, 0.75)); }
+    }
+
+    h1 {
+      margin: 0; text-align: center;
+      font-family: var(--font-display); font-weight: 700;
+      font-size: clamp(1.75rem, 1.4rem + 1.6vw, 2.25rem); line-height: 1.2;
+    }
+    .hint { margin: 6px 0 28px; text-align: center; color: var(--muted); }
+
+    form { display: flex; flex-direction: column; gap: 14px; }
+    label.field-label { font-weight: 600; font-size: 0.95rem; }
+    .field { position: relative; }
+    .field input {
+      width: 100%; height: 56px;
+      padding: 0 60px 0 24px;
+      border-radius: 999px;
+      border: 1.5px solid var(--line);
+      background: rgba(36, 40, 43, 0.82);
+      color: var(--text);
+      font: inherit; font-size: 1.0625rem;
+      transition: border-color 150ms, box-shadow 150ms;
+    }
+    .field input::placeholder { color: #8d949a; }
+    .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.4); }
+    .field input[aria-invalid="true"] { border-color: var(--error); }
+    .field.shake { animation: shake 360ms ease-in-out; }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-8px); } 40% { transform: translateX(7px); }
+      60% { transform: translateX(-5px); } 80% { transform: translateX(3px); }
+    }
+    .eye {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      width: 44px; height: 44px; border: 0; border-radius: 50%;
+      background: transparent; color: var(--muted); cursor: pointer;
+      display: grid; place-items: center;
+    }
+    .eye:hover { color: var(--text); }
+    .eye svg { width: 22px; height: 22px; }
+    .eye svg[hidden] { display: none; }
+
+    .error { min-height: 1.5em; margin: -4px 0 0; padding-left: 24px; color: var(--error); font-weight: 600; font-size: 0.95rem; }
+    .error:empty { min-height: 0; margin: 0; }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; min-height: 56px; padding: 0 24px;
+      border-radius: 999px;
+      font: inherit; font-weight: 700; font-size: 1.0625rem; letter-spacing: 0.01em;
+      text-decoration: none; cursor: pointer;
+      transition: transform 120ms, filter 150ms, background-color 150ms;
+    }
+    .btn:active:not(:disabled) { transform: scale(0.985); }
+    .primary {
+      border: 0;
+      background: linear-gradient(135deg, #ffbf4d 0%, var(--accent) 45%, var(--accent-dark) 100%);
+      color: var(--accent-ink);
+      box-shadow: 0 10px 28px -10px rgba(245, 166, 35, 0.6);
+    }
+    .primary:hover:not(:disabled) { filter: brightness(1.06); }
+    .primary:disabled { cursor: progress; filter: saturate(0.7) brightness(0.85); }
+    .primary[aria-disabled="true"] { cursor: not-allowed; opacity: 0.5; filter: saturate(0.4); box-shadow: none; }
+    .spinner {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2.5px solid rgba(26, 16, 3, 0.3); border-top-color: var(--accent-ink);
+      animation: spin 700ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .forgot { text-align: center; margin-top: 4px; }
+    .link {
+      min-height: 44px; padding: 0 12px; border: 0; background: none;
+      color: var(--accent); font: inherit; font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+    }
+    .help {
+      margin: 4px auto 0; max-width: 340px; padding: 12px 16px;
+      border-radius: 16px; background: rgba(49, 54, 58, 0.7);
+      color: var(--text); font-size: 0.95rem; text-align: center;
+    }
+
+    .notice {
+      margin: 0 0 16px; padding: 14px 18px; border-radius: 16px;
+      background: rgba(255, 138, 128, 0.12); border: 1px solid rgba(255, 138, 128, 0.5);
+      color: var(--text); text-align: center; font-weight: 600;
+    }
+
+    .bottom { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .secondary {
+      background: transparent; color: var(--text);
+      border: 1.5px solid rgba(247, 246, 243, 0.45);
+    }
+    .secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .foot { margin: 0; color: var(--muted); font-size: 0.8125rem; text-align: center; }
+
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .field input:focus-visible { outline: none; }
+
+    .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    @media (min-width: 768px) {
+      .page { justify-content: center; }
+      .col { flex: 0 1 auto; min-height: min(760px, 100dvh - 64px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .bg, .logo, .spinner, .field.shake { animation: none; }
+      .spinner { border-top-color: rgba(26, 16, 3, 0.3); border-right-color: var(--accent-ink); }
+      .btn { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+  <div class="page">
+    <div class="col">
+      <main class="main">
+        <img class="logo" src="/images/logo.png" alt="Doner Bros" width="96" height="96">
+        <h1><span data-for="kitchen">Kitchen Login</span><span data-for="owner">Owner Login</span></h1>
+        <p class="hint"><span data-for="kitchen">For kitchen staff</span><span data-for="owner">For the restaurant owner</span></p>
+
+        <p class="notice" id="off" role="alert" hidden></p>
+
+        <form id="form" novalidate>
+          <label class="field-label" for="password">Password</label>
+          <div class="field" id="field">
+            <input id="password" name="password" type="password" autocomplete="current-password" inputmode="text"
+                   autocapitalize="off" autocorrect="off" spellcheck="false" required aria-describedby="error">
+            <button class="eye" id="eye" type="button" aria-label="Show password" aria-pressed="false" aria-controls="password">
+              <svg id="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg id="eye-shut" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <p class="error" id="error" aria-live="assertive"></p>
+          <button class="btn primary" id="submit" type="submit">
+            <span class="spinner" id="spinner" aria-hidden="true" hidden></span>
+            <span id="submit-label">Log in</span>
+          </button>
+        </form>
+
+        <div class="forgot">
+          <button class="link" id="forgot" type="button" aria-expanded="false" aria-controls="help">Forgot password?</button>
+          <p class="help" id="help" hidden>
+            <span data-for="kitchen">Ask the owner to reset the kitchen password.</span>
+            <span data-for="owner">The password is set in the server settings. Contact your developer.</span>
+          </p>
+        </div>
+      </main>
+
+      <footer class="bottom">
+        <a class="btn secondary" data-for="kitchen" href="/owner/login">Owner login</a>
+        <a class="btn secondary" data-for="owner" href="/kitchen/login">Kitchen login</a>
+        <p class="foot" id="foot">Doner Bros · Shalimar Smart City, Sargodha</p>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+    const page = document.documentElement.dataset.role === "owner" ? "owner" : "kitchen";
+    const role = page === "owner" ? "owner" : "staff";
+    document.title = page === "owner" ? "Owner Login · Doner Bros" : "Kitchen Login · Doner Bros";
+
+    const $ = (id) => document.getElementById(id);
+    const form = $("form"), input = $("password"), field = $("field"), error = $("error");
+    const submit = $("submit"), spinner = $("spinner"), label = $("submit-label");
+    const next = new URLSearchParams(location.search).get("next") || "";
+    let configured = true;
+
+    function showError(message) {
+      error.textContent = message;
+      input.setAttribute("aria-invalid", message ? "true" : "false");
+      if (!message) return;
+      field.classList.remove("shake");
+      void field.offsetWidth; // restart the animation
+      field.classList.add("shake");
+    }
+
+    function setBusy(busy) {
+      submit.disabled = busy;
+      spinner.hidden = !busy;
+      label.textContent = busy ? "Checking…" : "Log in";
+    }
+
+    function turnOff(message) {
+      configured = false;
+      $("off").textContent = message;
+      $("off").hidden = false;
+      input.disabled = true;
+      submit.setAttribute("aria-disabled", "true");
+    }
+
+    $("eye").addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      $("eye").setAttribute("aria-pressed", String(show));
+      $("eye").setAttribute("aria-label", show ? "Hide password" : "Show password");
+      $("eye-open").toggleAttribute("hidden", show); // SVG elements have no .hidden property
+      $("eye-shut").toggleAttribute("hidden", !show);
+      input.focus();
+    });
+
+    $("forgot").addEventListener("click", () => {
+      const open = $("help").hidden;
+      $("help").hidden = !open;
+      $("forgot").setAttribute("aria-expanded", String(open));
+    });
+
+    input.addEventListener("input", () => { if (error.textContent) showError(""); });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!configured || submit.disabled) return;
+      if (!input.value) { showError("Enter the password."); input.focus(); return; }
+      showError("");
+      setBusy(true);
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role, password: input.value, next }),
+        });
+        let data = null;
+        try { data = await res.json(); } catch { /* not JSON */ }
+        if (res.ok && data && typeof data.next === "string" && data.next.startsWith("/") && !data.next.startsWith("//")) {
+          input.value = "";
+          label.textContent = "Opening…";
+          location.assign(data.next);
+          return;
+        }
+        if (res.status === 503 && role === "owner" && data && /not configured/.test(data.error || "")) turnOff(data.error);
+        else showError((data && data.error) || "Something went wrong. Please try again.");
+        input.select();
+      } catch {
+        showError("Couldn't reach the server. Check the internet and try again.");
+      }
+      setBusy(false);
+      if (configured) input.focus();
+    });
+
+    fetch(`/api/login/info?role=${role}`, { cache: "no-store", credentials: "same-origin" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((info) => {
+        if (!info) return;
+        if (info.footer) $("foot").textContent = `Doner Bros · ${info.footer}`;
+        if (!info.configured) turnOff(page === "owner" ? "Owner login is not configured." : "Kitchen login is not configured.");
+      })
+      .catch(() => { /* the page still works; the server checks again on submit */ });
+
+    input.focus({ preventScroll: true });
+  })();
+  </script>
+</body>
+</html>

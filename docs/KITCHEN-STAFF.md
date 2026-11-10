@@ -4,7 +4,8 @@ The kitchen board shows every open order and rings when a new one arrives.
 
 ## At the start of every shift
 
-1. Open the board: **doner-bros.vercel.app/admin/kitchen** and sign in.
+1. Open **doner-bros.vercel.app/kitchen/login**, type the kitchen password and tap **Log in**.
+   You stay logged in for 14 hours. If you forget the password, ask the owner to reset it.
 2. Tap the big **START KITCHEN** button. You will hear a short chime: that means sound works.
 3. Leave the board open all day.
 
