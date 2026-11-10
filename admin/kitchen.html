@@ -9,20 +9,20 @@
   <link rel="icon" type="image/png" href="/images/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
   <style>
     /* The customer site's theme on a dark board: ink background, charcoal cards, the menu's orange
-       accent, Karla and Playfair Display. Each status has its own colour; red is kept for overdue. */
+       accent, Karla and Playfair Display. Built to be read from across the kitchen. */
     :root {
       --bg: #0b0b0b;               /* site --ink */
-      --panel: #16191b;
+      --panel: #15181a;
       --card: #24282b;             /* site --charcoal */
       --card-2: #31363a;           /* site --charcoal-soft */
       --line: #3a4045;
-      --text: #f5f4f1;
-      --text-2: #c7cbcf;
+      --text: #f7f6f3;
+      --text-2: #c9cdd1;
       --accent: #f5a623;           /* site --accent */
-      --accent-ink: #141005;
+      --accent-ink: #1a1003;
       --new: #f5a623;              /* bright accent */
       --prep: #ffcd6b;             /* warm amber */
       --ready: #43c486;            /* green */
@@ -32,18 +32,12 @@
       --late-bg: #3a1d1c;
       --cancel: #ef9a94;           /* muted red outline */
       --delivery: #7c3aed;
-      --pickup: #474e54;
+      --pickup: #4a5157;
       --link: #ffd08a;
-      --gap: clamp(6px, 0.8vw, 12px);
+      --edge: max(12px, env(safe-area-inset-left), env(safe-area-inset-right));
+      --gap: clamp(8px, 0.9vw, 16px);
       --font-body: "Karla", "Noto Naskh Arabic", "Noto Nastaliq Urdu", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       --font-display: "Playfair Display", "Noto Naskh Arabic", "Noto Nastaliq Urdu", Georgia, "Times New Roman", serif;
-      /* Type scale: readable across the room on a laptop, never below 16px for body text. */
-      --t-num: clamp(1.25rem, 0.95rem + 0.9vw, 1.75rem);
-      --t-item: clamp(1rem, 0.88rem + 0.4vw, 1.25rem);
-      --t-body: 1rem;
-      --t-timer: clamp(1.125rem, 0.95rem + 0.6vw, 1.5rem);
-      --t-head: clamp(1rem, 0.85rem + 0.5vw, 1.375rem);
-      --tap: 48px;
       color-scheme: dark;
       font-family: var(--font-body);
       -webkit-text-size-adjust: 100%;
@@ -57,55 +51,71 @@
     button { font: inherit; color: inherit; touch-action: manipulation; cursor: pointer; }
     :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
-    /* ---------- Top bar and banners: their natural height ---------- */
+    /* ---------- Slim top bar ---------- */
     .bar {
-      flex: none; display: flex; align-items: center; gap: 12px; background: #000; border-bottom: 1px solid var(--line);
-      padding: max(6px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 6px max(14px, env(safe-area-inset-left));
+      flex: none; display: flex; align-items: center; gap: 12px; min-height: 52px; background: #000; border-bottom: 1px solid var(--line);
+      padding: max(4px, env(safe-area-inset-top)) var(--edge) 4px;
     }
-    .bar h1 { margin: 0; font: 700 clamp(1.25rem, 1rem + 0.8vw, 1.625rem)/1.1 var(--font-display); letter-spacing: -0.01em; }
-    .bar h1 span { color: var(--accent); }
-    .status { font-size: 0.9375rem; font-weight: 700; padding: 4px 12px; border-radius: 999px; background: var(--card); color: var(--text-2); white-space: nowrap; }
-    .status.live::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--ready); vertical-align: 1px; }
+    .bar img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: var(--card); flex: none; }
+    .bar h1 { margin: 0; font: 700 clamp(1.2rem, 1rem + 0.6vw, 1.5rem)/1.1 var(--font-display); letter-spacing: -0.01em; white-space: nowrap; }
+    .status { font-size: 0.9375rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--card); color: var(--text-2); white-space: nowrap; }
+    .status.live::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--ready); vertical-align: 0; box-shadow: 0 0 0 3px rgba(67, 196, 134, 0.25); }
     .status.bad { background: var(--late); color: #fff; }
-    .clock { margin-left: auto; font-size: clamp(1.125rem, 0.9rem + 0.6vw, 1.5rem); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .bar-btn {
-      min-height: 44px; padding: 0 14px; border-radius: 10px; border: 2px solid var(--line); background: var(--card);
-      color: var(--text); font-size: 1rem; font-weight: 700; white-space: nowrap;
+    .clock { margin-left: auto; font-size: clamp(1.125rem, 0.95rem + 0.6vw, 1.5rem); font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .sound {
+      flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--line);
+      background: var(--card); font-size: 1.25rem; line-height: 1; padding: 0;
     }
-    .bar-btn.on { border-color: var(--ready); }
-    .bar-btn.off { color: var(--text-2); }
-    .bar-btn.blocked { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+    .sound[aria-pressed="false"] { opacity: 0.7; }
 
-    .notice { flex: none; padding: 8px 14px; font-size: 1rem; font-weight: 700; text-align: center; }
-    .notice.warn { background: var(--accent); color: var(--accent-ink); }
-    .notice .short { display: none; }
+    .notice { flex: none; padding: 6px var(--edge); font-size: 0.9375rem; font-weight: 700; text-align: center; }
+    .notice.warn { background: #2c2416; color: #ffe2a8; border-bottom: 1px solid #4a3a1c; }
     .notice.err { background: var(--late); color: #fff; }
     .notice button { margin-left: 12px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 2px solid currentColor; background: transparent; font-weight: 800; }
 
-    /* ---------- Board: fills the height that is left; only each column's list scrolls ---------- */
+    /* ---------- Board: fills all the height left; only each column's list scrolls ---------- */
     .board {
       flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap);
-      padding: var(--gap) max(var(--gap), env(safe-area-inset-right)) max(var(--gap), env(safe-area-inset-bottom)) max(var(--gap), env(safe-area-inset-left));
+      padding: var(--gap) var(--edge) max(var(--gap), env(safe-area-inset-bottom));
     }
-    .col { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .col {
+      /* Card type is sized from the column's width (cqi). --k (set by fitColumn) makes it larger
+         when a quiet column has room, but never smaller than the base size. */
+      container-type: inline-size; --k: 1;
+      display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+    }
     .col-head {
-      flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px;
-      color: var(--status-ink); font-size: var(--t-head); font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
+      flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px clamp(12px, 4cqi, 20px);
+      color: var(--status-ink); font-size: clamp(1.05rem, 0.7rem + 2.4cqi, 1.6rem); font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
     }
-    .col-head .n { min-width: 2.2em; text-align: center; background: var(--status-ink); color: var(--text); border-radius: 999px; padding: 1px 10px; }
+    .col-head .n { min-width: 2em; text-align: center; background: var(--status-ink); color: var(--text); border-radius: 999px; padding: 0 10px; }
     .col[data-status="NEW"] .col-head { background: var(--new); }
     .col[data-status="PREPARING"] .col-head { background: var(--prep); }
     .col[data-status="READY"] .col-head { background: var(--ready); }
-    .cards { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); }
-    .empty-col { margin: 24px 8px; text-align: center; font-size: 1.0625rem; font-weight: 600; color: var(--text-2); }
-
-    /* ---------- Card: everything visible without scrolling the card ---------- */
-    .card {
-      flex: none; container-type: inline-size; position: relative; display: flex; flex-direction: column; gap: 8px;
-      padding: 10px 12px 12px 16px; background: var(--card); border: 2px solid var(--line); border-radius: 12px; overflow-wrap: anywhere;
+    .cards {
+      flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+      padding: clamp(8px, 2.5cqi, 14px); display: flex; flex-direction: column; gap: clamp(8px, 2.5cqi, 14px);
     }
-    /* Status stripe down the left edge. */
-    .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; border-radius: 10px 0 0 10px; background: var(--stripe, var(--line)); }
+    .empty-col { margin: auto; padding: 24px 8px; text-align: center; font-size: clamp(1.1rem, 0.8rem + 2cqi, 1.5rem); font-weight: 700; color: var(--text-2); }
+
+    /* ---------- Card ---------- */
+    .card {
+      /* Sizes follow the column's width (cqi) and, on short screens, the window's height (vh),
+         whichever is smaller, never going below the minimums. */
+      --pad: clamp(10px, min(3.2cqi, 2.4vh), 24px);
+      --t-num: calc(var(--k) * clamp(2.5rem, min(1.5rem + 5cqi, 1.2rem + 3.8vh), 4.5rem));
+      --t-item: calc(var(--k) * clamp(1.25rem, min(0.6rem + 4cqi, 0.45rem + 2.7vh), 2.6rem));
+      --t-body: calc(var(--k) * clamp(1rem, min(0.55rem + 2.2cqi, 0.4rem + 1.6vh), 1.6rem));
+      --t-small: calc(var(--k) * clamp(0.85rem, min(0.55rem + 1.4cqi, 0.4rem + 1.1vh), 1.15rem));
+      --t-timer: calc(var(--k) * clamp(1.5rem, min(1rem + 3.2cqi, 0.8rem + 2.4vh), 3rem));
+      --t-btn: calc(var(--k) * clamp(1.15rem, min(0.7rem + 2.4cqi, 0.5rem + 1.8vh), 1.9rem));
+      flex: none; position: relative; display: flex; flex-direction: column; gap: calc(var(--pad) * 0.5);
+      padding: var(--pad) var(--pad) var(--pad) calc(var(--pad) + 6px); min-width: 0;
+      background: var(--card); border: 2px solid var(--line); border-radius: 14px; overflow-wrap: anywhere; word-break: break-word;
+    }
+    /* With one to three orders, cards share the column's height; the buttons stay at the bottom. */
+    .col[data-load="1"] .card, .col[data-load="2"] .card, .col[data-load="3"] .card { flex: 1 0 auto; }
+    .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 7px; border-radius: 12px 0 0 12px; background: var(--stripe, var(--line)); }
     .col[data-status="NEW"] .card { --stripe: var(--new); }
     .col[data-status="PREPARING"] .card { --stripe: var(--prep); }
     .col[data-status="READY"] .card { --stripe: var(--ready); }
@@ -114,103 +124,136 @@
     .card.red { border-color: var(--late); background: var(--late-bg); --stripe: var(--late); }
     .card.red .timer { color: var(--late); }
 
-    .card-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .num { font-size: var(--t-num); font-weight: 800; line-height: 1; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
-    .badge { font-size: 0.8125rem; font-weight: 800; padding: 3px 8px; border-radius: 6px; color: #fff; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+    .card-top { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; min-width: 0; }
+    .num { font-size: var(--t-num); font-weight: 800; line-height: 1; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+    .badge { font-size: var(--t-small); font-weight: 800; padding: 0.25em 0.6em; border-radius: 8px; color: #fff; text-transform: uppercase; letter-spacing: 0.05em; }
     .badge.delivery { background: var(--delivery); }
     .badge.pickup { background: var(--pickup); }
-    .timer { margin-left: auto; font-size: var(--t-timer); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
-    .timer small { font-size: 0.75rem; font-weight: 600; color: var(--text-2); margin-right: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .meta { font-size: var(--t-body); font-weight: 700; color: var(--accent); }
+    .timer { margin-left: auto; display: flex; align-items: baseline; gap: 6px; font-size: var(--t-timer); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
+    .timer small { font-size: var(--t-small); font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.05em; }
+    .meta { font-size: var(--t-body); font-weight: 800; color: var(--accent); }
 
-    .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-    .items li { font-size: var(--t-item); font-weight: 700; line-height: 1.25; }
-    .items .qty { display: inline-block; min-width: 2.1em; font-weight: 800; color: var(--accent); }
-    .opts { font-size: 0.9375rem; font-weight: 500; color: var(--text-2); padding-left: 2.25em; line-height: 1.3; }
-    .more {
-      align-self: flex-start; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px dashed var(--line);
-      background: transparent; color: var(--link); font-size: var(--t-body); font-weight: 700;
+    .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25em; font-size: var(--t-item); }
+    .items li { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 0.45em; font-weight: 800; line-height: 1.15; }
+    .items .qty {
+      min-width: 1.9em; text-align: center; padding: 0 0.2em; border-radius: 8px; background: var(--accent); color: var(--accent-ink);
+      font-weight: 800; align-self: start; font-variant-numeric: tabular-nums;
     }
-    .note { font-size: var(--t-body); font-weight: 700; background: #3b3220; color: #ffe2a8; border-left: 4px solid var(--accent); border-radius: 6px; padding: 6px 10px; }
+    .items .opts { grid-column: 2; font-size: var(--t-body); font-weight: 600; color: var(--text-2); line-height: 1.3; margin-top: 2px; }
+    .note { font-size: var(--t-body); font-weight: 700; line-height: 1.35; background: #3b3220; color: #ffe2a8; border-left: 5px solid var(--accent); border-radius: 8px; padding: 0.4em 0.65em; }
     .note b { text-transform: uppercase; }
 
-    .who { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; font-size: var(--t-body); font-weight: 600; color: var(--text-2); }
-    .who .name { color: var(--text); font-weight: 700; }
+    .who { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; font-size: var(--t-body); font-weight: 700; }
+    .who .name { color: var(--text); }
     .tel { display: inline-flex; align-items: center; min-height: 44px; font-weight: 800; color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
-    .addr { flex-basis: 100%; color: var(--text); font-weight: 600; line-height: 1.35; }
+    .addr { font-size: var(--t-body); font-weight: 700; line-height: 1.35; color: var(--text); }
 
-    /* Main status button and Cancel side by side; Back is a small icon button before them. */
-    .actions { display: flex; gap: 6px; align-items: stretch; }
+    /* Big full-width main button, Back and Cancel side by side under it. */
+    .actions { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
     .go {
-      flex: 1 1 auto; min-width: 0; min-height: var(--tap); padding: 0 10px; border: 0; border-radius: 10px;
-      font-size: clamp(1rem, 0.9rem + 0.3vw, 1.1875rem); font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--status-ink);
+      width: 100%; min-height: max(56px, calc(var(--k) * min(3cqi, 2vh) + 46px)); padding: 6px 12px; border: 0; border-radius: 12px;
+      font-size: var(--t-btn); font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--status-ink);
     }
     .col[data-status="NEW"] .go { background: var(--new); }
     .col[data-status="PREPARING"] .go { background: var(--ready); }
     .col[data-status="READY"] .go { background: var(--text); }
+    .sub-actions { display: flex; gap: 8px; }
     .back, .cancel {
-      flex: none; min-height: var(--tap); min-width: 44px; padding: 0 10px; border-radius: 10px; background: transparent;
-      font-size: var(--t-body); font-weight: 700; white-space: nowrap;
+      flex: 1 1 0; min-width: 0; min-height: 48px; padding: 4px 10px; border-radius: 12px; background: transparent;
+      font-size: var(--t-body); font-weight: 800;
     }
     .back { border: 2px solid var(--line); color: var(--text); }
     .cancel { border: 2px solid var(--cancel); color: var(--cancel); }
     .go:active, .back:active, .cancel:active { transform: scale(0.98); }
     .go[disabled], .back[disabled], .cancel[disabled] { opacity: 0.5; }
-    /* Narrow cards: Cancel shows its icon only (its label stays for screen readers). */
-    @container (max-width: 270px) {
-      .cancel .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-      .go { letter-spacing: 0.02em; }
-    }
 
     /* A new order flashes for a few seconds so it's seen across the room. */
     @keyframes flash {
       0%, 100% { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0); }
-      50% { box-shadow: 0 0 0 6px rgba(245, 166, 35, 0.95); background: #3a3020; }
+      50% { box-shadow: inset 0 0 0 4px rgba(245, 166, 35, 0.95); background: #3a3020; }
     }
     .card.flash { animation: flash 0.75s ease-in-out 8; border-color: var(--accent); }
-    @media (prefers-reduced-motion: reduce) { .card.flash { animation: none; outline: 6px solid var(--accent); } }
+    @media (prefers-reduced-motion: reduce) { .card.flash { animation: none; outline: 5px solid var(--accent); outline-offset: -5px; } }
 
     /* ---------- Dialogs ---------- */
     .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
     .modal[hidden] { display: none; }
-    .dialog { background: var(--card); color: var(--text); border-radius: 16px; padding: 22px; width: min(540px, 100%); max-height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 16px; border: 2px solid var(--line); }
-    .dialog p { margin: 0; font-size: 1.375rem; font-weight: 800; line-height: 1.3; }
+    .dialog { background: var(--card); color: var(--text); border-radius: 16px; padding: 22px; width: min(560px, 100%); max-height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 16px; border: 2px solid var(--line); overflow-wrap: anywhere; }
+    .dialog p { margin: 0; font-size: 1.5rem; font-weight: 800; line-height: 1.3; }
     .dialog > p:first-child { font-family: var(--font-display); font-weight: 700; }
     .dialog .row { display: flex; gap: 10px; }
-    .dialog .row button { flex: 1; min-height: 56px; border-radius: 12px; font-size: 1.125rem; font-weight: 800; border: 2px solid var(--line); }
+    .dialog .row button { flex: 1; min-height: 60px; border-radius: 12px; font-size: 1.25rem; font-weight: 800; border: 2px solid var(--line); }
     .dialog .yes { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
     .dialog .yes.danger { background: #d93a3a; border-color: #d93a3a; color: #fff; }
     .dialog .no { background: transparent; color: var(--text); }
-    .dialog .wa { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 56px; border-radius: 12px; background: #128c4a; color: #fff;
-                  font-size: 1.125rem; font-weight: 800; text-decoration: none; text-align: center; }
+    .dialog .wa { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 60px; border-radius: 12px; background: #128c4a; color: #fff;
+                  font-size: 1.25rem; font-weight: 800; text-decoration: none; text-align: center; }
     .dialog .wa[hidden] { display: none; }
-    .dialog .preview { font-size: 1rem; font-weight: 500; line-height: 1.45; background: var(--card-2); border-radius: 10px; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .dialog .sub { font-size: 1rem; font-weight: 600; color: var(--text-2); }
+    .dialog .preview { font-size: 1.0625rem; font-weight: 500; line-height: 1.45; background: var(--card-2); border-radius: 10px; padding: 12px; white-space: pre-wrap; }
+    .dialog .sub { font-size: 1.0625rem; font-weight: 600; color: var(--text-2); }
+
+    /* ---------- START KITCHEN screen ---------- */
+    .start {
+      position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; overflow: hidden;
+      padding: max(24px, env(safe-area-inset-top)) var(--edge) max(56px, env(safe-area-inset-bottom));
+      background:
+        radial-gradient(55% 45% at 50% 42%, rgba(245, 166, 35, 0.30), rgba(245, 166, 35, 0) 70%),
+        radial-gradient(80% 60% at 50% 110%, rgba(226, 120, 14, 0.22), rgba(226, 120, 14, 0) 70%),
+        var(--bg);
+      transition: opacity 0.4s ease, visibility 0.4s;
+    }
+    .start.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    /* Two soft warm lights drifting slowly behind the content. */
+    .start::before, .start::after {
+      content: ""; position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(60px); opacity: 0.35; pointer-events: none;
+      background: radial-gradient(circle, rgba(255, 196, 92, 0.55), rgba(245, 166, 35, 0) 65%);
+      animation: drift 18s ease-in-out infinite alternate;
+    }
+    .start::before { top: -25vmax; left: -15vmax; }
+    .start::after { bottom: -30vmax; right: -20vmax; animation-duration: 23s; animation-direction: alternate-reverse; }
+    @keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(12vmax, 8vmax) scale(1.15); } }
+    .start-inner { position: relative; z-index: 1; width: min(620px, 100%); display: flex; flex-direction: column; align-items: center; text-align: center; gap: clamp(14px, 2.6vh, 26px); }
+    .start-logo {
+      width: clamp(96px, 20vmin, 168px); height: clamp(96px, 20vmin, 168px); border-radius: 50%; object-fit: cover; background: var(--card);
+      box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.4), 0 24px 70px rgba(245, 166, 35, 0.28);
+    }
+    .start h2 { margin: 0; font: 800 clamp(2rem, 1.3rem + 3.4vw, 3.6rem)/1.08 var(--font-display); letter-spacing: -0.015em; }
+    .start .lead { margin: 0; font: 600 clamp(1.15rem, 0.95rem + 1vw, 1.6rem)/1.4 var(--font-body); color: var(--text-2); }
+    .start-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 14px; min-width: min(340px, 100%); max-width: 100%; min-height: 78px; padding: 12px 36px;
+      border: 0; border-radius: 999px; color: var(--accent-ink); white-space: nowrap;
+      background: linear-gradient(135deg, #ffcf6e 0%, #f5a623 48%, #e47d12 100%);
+      font: 800 clamp(1.2rem, 1rem + 0.9vw, 1.6rem)/1 var(--font-display); text-transform: uppercase; letter-spacing: 0.1em;
+      box-shadow: 0 14px 36px rgba(245, 166, 35, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -3px 0 rgba(150, 70, 0, 0.35);
+      animation: pulse 2.4s ease-in-out infinite; transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .start-btn svg { width: 1.3em; height: 1.3em; flex: none; }
+    .start-btn:hover { filter: brightness(1.04); }
+    .start-btn:active { transform: translateY(3px) scale(0.97); box-shadow: 0 6px 16px rgba(245, 166, 35, 0.4), inset 0 2px 4px rgba(150, 70, 0, 0.35); animation: none; }
+    .start-btn:focus-visible { outline: 4px solid #fff; outline-offset: 4px; }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 14px 36px rgba(245, 166, 35, 0.45), 0 0 0 0 rgba(245, 166, 35, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -3px 0 rgba(150, 70, 0, 0.35); }
+      50% { box-shadow: 0 14px 36px rgba(245, 166, 35, 0.55), 0 0 0 16px rgba(245, 166, 35, 0), inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -3px 0 rgba(150, 70, 0, 0.35); }
+    }
+    .start-foot { position: absolute; z-index: 1; left: var(--edge); right: var(--edge); bottom: max(18px, env(safe-area-inset-bottom)); margin: 0; text-align: center; font-size: 0.9375rem; font-weight: 600; color: var(--text-2); }
+    @media (prefers-reduced-motion: reduce) {
+      .start::before, .start::after, .start-btn { animation: none; }
+      .start { transition: none; }
+    }
 
     /* Column tabs: phones only. */
     .tabs { display: none; }
 
-    /* ---------- Tablets (768-1100px): three narrow columns ---------- */
-    @media (max-width: 1100px) {
-      .bar { gap: 8px; }
-      .col-head { padding: 6px 10px; letter-spacing: 0.04em; }
-      .card { padding: 8px 10px 10px 14px; gap: 6px; }
-    }
-
     /* ---------- Phones (under 768px): one column at a time, picked with the tabs ---------- */
     @media (max-width: 767.98px) {
-      .clock, .bar h1 span, .notice .long { display: none; }
-      .notice .short { display: inline; }
-      .notice { padding: 6px 10px; }
-      .status { margin-left: auto; }
-      .bar-btn { padding: 0 10px; }
-
-      .tabs { flex: none; display: flex; gap: 6px; padding: 8px max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); }
+      .bar { gap: 8px; }
+      .bar h1 { font-size: 1.15rem; }
+      .tabs { flex: none; display: flex; gap: 6px; padding: 8px var(--edge) 0; }
       .tab {
-        flex: 1; min-width: 0; min-height: 48px; padding: 4px; border: 2px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text);
-        display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 6px; font-size: 1rem; font-weight: 800;
+        flex: 1; min-width: 0; min-height: 50px; padding: 4px; border: 2px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text);
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 6px; font-size: 1.0625rem; font-weight: 800;
       }
-      .tab .tn { min-width: 26px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--text); line-height: 24px; text-align: center; }
+      .tab .tn { min-width: 28px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--text); line-height: 26px; text-align: center; }
       .tab[aria-selected="true"] { color: var(--status-ink); }
       .tab[aria-selected="true"] .tn { background: var(--status-ink); color: var(--text); }
       .tab[aria-selected="true"][data-status="NEW"] { background: var(--new); border-color: var(--new); }
@@ -218,24 +261,27 @@
       .tab[aria-selected="true"][data-status="READY"] { background: var(--ready); border-color: var(--ready); }
 
       .board { grid-template-columns: minmax(0, 1fr); padding-top: 8px; }
-      .board .col { display: none; background: transparent; border: 0; border-radius: 0; }
+      .board .col { display: none; }
       .board[data-tab="NEW"] .col[data-status="NEW"],
       .board[data-tab="PREPARING"] .col[data-status="PREPARING"],
       .board[data-tab="READY"] .col[data-status="READY"] { display: flex; }
       .col-head { display: none; }
-      .cards { padding: 0 0 12px; }
-      .card { padding: 8px 12px 10px 16px; gap: 6px; }
+    }
+    @media (max-width: 400px) {
+      .clock { display: none; }
+      .status { margin-left: auto; }
+      .start-btn { width: 100%; padding: 12px 20px; letter-spacing: 0.08em; }
     }
   </style>
 </head>
 <body>
   <header class="bar">
-    <h1>Kitchen <span>Board</span></h1>
+    <img src="/images/logo.png" alt="" width="34" height="34">
+    <h1>Kitchen</h1>
     <span class="status" id="status" role="status" aria-live="polite">Loading…</span>
     <span class="clock" id="clock" aria-hidden="true"></span>
-    <button class="bar-btn" id="mute" type="button" aria-pressed="true">🔔 Sound on</button>
+    <button class="sound" id="mute" type="button" aria-pressed="true" aria-label="Sound is on. Turn sound off">🔔</button>
   </header>
-  <div class="notice warn" id="sound-notice" hidden>🔇 <span class="long">Sound is blocked by the browser. Tap anywhere to turn on the new-order ringtone.</span><span class="short">Sound blocked: tap anywhere to allow it.</span></div>
   <div class="notice warn" id="threshold-notice" hidden>Card colours are off: set kitchen_amber_minutes and kitchen_red_minutes in settings.</div>
   <div class="notice err" id="error" role="alert" hidden></div>
 
@@ -283,6 +329,20 @@
     </div>
   </div>
 
+  <!-- Browsers keep a page silent until it is tapped once, so the board opens behind this screen. -->
+  <div class="start" id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
+    <div class="start-inner">
+      <img class="start-logo" src="/images/logo.png" alt="Doner Bros" width="168" height="168">
+      <h2 id="start-title">Kitchen is ready to open</h2>
+      <p class="lead" id="start-lead">Tap once. New orders will ring automatically.</p>
+      <button class="start-btn" id="start-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        Start kitchen
+      </button>
+    </div>
+    <p class="start-foot">Keep this screen open and awake all day.</p>
+  </div>
+
   <script src="/admin/kitchen-alerts.js"></script>
   <script>
   (() => {
@@ -292,10 +352,10 @@
     const STATUSES = ["NEW", "PREPARING", "READY"];
     const FORWARD = { NEW: ["PREPARING", "Start"], PREPARING: ["READY", "Ready"], READY: ["COMPLETED", "Complete"] };
     const BACK = { PREPARING: ["NEW", "New"], READY: ["PREPARING", "Preparing"] };
-    const ITEMS_SHOWN = 3;      // a card with more lines than ITEMS_SHOWN + 1 shows "+N more"
-    const { CONFIG, createNewOrderDetector, reminderDue } = window.KitchenAlerts;
-    // The sound choice lasts for this browser session only.
+    const { CONFIG, createNewOrderDetector, reminderDue, startScreenNeeded } = window.KitchenAlerts;
+    // Remembered for this browser session only.
     const MUTE_KEY = "kitchen.muted";
+    const STARTED_KEY = "kitchen.started";
 
     const $ = (id) => document.getElementById(id);
     // Every value is added as text, never as HTML, so nothing a customer typed can run as markup.
@@ -319,10 +379,9 @@
       orders: [],
       thresholds: null,
       deliveryEta: null,
-      clockOffsetMs: 0,      // server time minus this tablet's time, so timers don't drift with a wrong clock
+      clockOffsetMs: 0,      // server time minus this device's time, so timers don't drift with a wrong clock
       lastOk: 0,
       busy: new Set(),       // order ids with a request in flight
-      expanded: new Set(),   // order ids whose full item list is open
       flashUntil: new Map(), // order id -> time its flash ends
       cards: new Map(),      // order id -> { el, sig, order }
       detector: createNewOrderDetector(),
@@ -341,68 +400,123 @@
     const shortId = (id) => id.slice(-6);
 
     /* ---------- Sound ---------- */
-    // Browsers block audio until someone taps the page; the banner says so until then.
     let audio = null;
-    let blockedAtTap = false;
-    const audioRunning = () => !!audio && audio.state === "running";
-    function unlockAudio() {
+    let out = null; // a compressor in front of the speakers, so the ring is loud without crackling
+    const audioState = () => (audio ? audio.state : "none");
+    function ensureAudio() {
+      if (audio) return audio;
       try {
-        if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
-        if (audio.state === "suspended") audio.resume().then(renderMute, renderMute);
+        audio = new (window.AudioContext || window.webkitAudioContext)();
+        out = audio.createDynamicsCompressor();
+        out.threshold.value = -10;
+        out.ratio.value = 4;
+        out.connect(audio.destination);
+        audio.addEventListener("statechange", renderMute);
       } catch { audio = null; }
+      return audio;
+    }
+    // Tries to let sound play; resolves to true when it can.
+    async function resumeAudio() {
+      if (!ensureAudio()) return false;
+      // Without a tap, some browsers never settle resume(), so give it a moment at most.
+      if (audio.state !== "running") {
+        try { await Promise.race([audio.resume(), new Promise((r) => setTimeout(r, 400))]); } catch { /* still blocked */ }
+      }
       renderMute();
+      return audio.state === "running";
     }
     // One bell strike: a sine at the note plus a quieter, faster-fading overtone, so it rings, not beeps.
     function strike(freq, at, length, volume) {
       const t = audio.currentTime + at;
-      for (const [mult, level, decay] of [[1, 1, length], [2.76, 0.28, length * 0.45]]) {
+      for (const [mult, level, decay] of [[1, 1, length], [2.76, 0.3, length * 0.45]]) {
         const osc = audio.createOscillator();
         const gain = audio.createGain();
         osc.type = "sine";
         osc.frequency.value = freq * mult;
         gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(volume * level, t + 0.012);
+        gain.gain.exponentialRampToValueAtTime(volume * level, t + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-        osc.connect(gain).connect(audio.destination);
+        osc.connect(gain).connect(out);
         osc.start(t);
         osc.stop(t + decay + 0.05);
       }
     }
-    const canPlay = () => !state.muted && audioRunning();
-    // New order: a two-tone ring (high, low) repeated for about CONFIG.RING_MS.
+    const canPlay = () => !state.muted && audioState() === "running";
+    // New order: a loud two-tone ring (high, low) repeated for about CONFIG.RING_MS.
     function ring() {
       if (!canPlay()) return;
       const cycle = 0.75;
       const cycles = Math.max(1, Math.round(CONFIG.RING_MS / 1000 / cycle));
       for (let i = 0; i < cycles; i++) {
-        strike(1318.5, i * cycle, 0.6, 0.55);       // E6
-        strike(987.8, i * cycle + 0.3, 0.6, 0.55);  // B5
+        strike(1318.5, i * cycle, 0.6, 0.9);       // E6
+        strike(987.8, i * cycle + 0.3, 0.6, 0.9);  // B5
       }
     }
-    // Reminder: one short, softer ping of about CONFIG.PING_MS.
+    // Reminder: one short ping of about CONFIG.PING_MS.
     function ping() {
       if (!canPlay()) return;
-      strike(1568, 0, CONFIG.PING_MS / 1000, 0.4);  // G6
+      strike(1568, 0, CONFIG.PING_MS / 1000, 0.7); // G6
+    }
+    // After START: a short, friendly rising chime, so staff hear that sound works.
+    function testChime() {
+      if (!canPlay()) return;
+      [1046.5, 1318.5, 1568].forEach((f, i) => strike(f, i * 0.14, 0.7, 0.6)); // C6 E6 G6
     }
     function renderMute() {
       const btn = $("mute");
-      const blocked = !state.muted && !audioRunning();
       btn.setAttribute("aria-pressed", String(!state.muted));
-      btn.className = `bar-btn ${state.muted ? "off" : blocked ? "blocked" : "on"}`;
-      btn.textContent = state.muted ? "🔕 Sound off" : blocked ? "🔇 Tap to allow sound" : "🔔 Sound on";
-      $("sound-notice").hidden = !blocked;
+      btn.textContent = state.muted ? "🔕" : "🔔";
+      btn.setAttribute("aria-label", state.muted ? "Sound is off. Turn sound on" : "Sound is on. Turn sound off");
+      btn.title = state.muted ? "Sound off" : "Sound on";
     }
-    // The first tap on a blocked page only allows sound; it never also switches it off.
-    document.addEventListener("pointerdown", () => { blockedAtTap = !audioRunning(); unlockAudio(); }, { capture: true, passive: true });
-    document.addEventListener("keydown", unlockAudio, { capture: true });
-    $("mute").addEventListener("click", () => {
-      if (blockedAtTap && !state.muted) { blockedAtTap = false; unlockAudio(); return; }
+    $("mute").addEventListener("click", async () => {
       state.muted = !state.muted;
       session.set(MUTE_KEY, state.muted ? "1" : "0");
-      unlockAudio();
       renderMute();
-      if (!state.muted) ping(); // so staff hear that it works
+      if (!state.muted && (await resumeAudio())) ping(); // so staff hear that it works
+      checkSound();
     });
+    // Any tap or key press also tries to bring sound back quietly.
+    const quietUnlock = () => { if (audioState() !== "running") resumeAudio(); };
+    document.addEventListener("pointerdown", quietUnlock, { capture: true, passive: true });
+    document.addEventListener("keydown", quietUnlock, { capture: true });
+
+    /* ---------- START KITCHEN screen ---------- */
+    let startShown = true; // the page opens with it showing
+    function showStart() {
+      if (startShown) return;
+      startShown = true;
+      const again = session.get(STARTED_KEY) === "1";
+      $("start-title").textContent = again ? "Sound is paused" : "Kitchen is ready to open";
+      $("start-lead").textContent = again ? "Tap once to turn the new-order ring back on." : "Tap once. New orders will ring automatically.";
+      $("start").classList.remove("gone");
+      $("start").removeAttribute("aria-hidden");
+      $("start-btn").focus();
+    }
+    function hideStart(instant) {
+      const el = $("start");
+      startShown = false;
+      if (instant) el.style.transition = "none";
+      el.classList.add("gone");
+      el.setAttribute("aria-hidden", "true");
+      if (instant) requestAnimationFrame(() => { el.style.transition = ""; });
+    }
+    $("start-btn").addEventListener("click", async () => {
+      ensureAudio(); // created inside the tap, which is what browsers require
+      const ok = await resumeAudio();
+      session.set(STARTED_KEY, "1");
+      if (state.muted && ok) { state.muted = false; session.set(MUTE_KEY, "0"); renderMute(); }
+      testChime();
+      keepAwake();
+      hideStart(false);
+    });
+    // Shows the START screen only while sound is wanted but blocked; tries a quiet resume first.
+    async function checkSound() {
+      if (state.muted) { if (startShown) hideStart(true); return; }
+      if (audioState() !== "running" && audio) await resumeAudio();
+      if (startScreenNeeded({ audioState: audioState(), muted: state.muted })) showStart();
+      else if (startShown) hideStart(true);
+    }
 
     /* ---------- Keep the screen awake where the device allows it ---------- */
     let wakeLock = null;
@@ -459,6 +573,7 @@
       } finally {
         loading = false;
         renderStatus();
+        if (session.get(STARTED_KEY) === "1") checkSound(); // suspended since START? try to resume
       }
     }
 
@@ -480,22 +595,9 @@
     function lineItem(line) {
       const extra = [...line.options, ...line.contains];
       return h("li", null,
-        h("span", { class: "qty" }, `${line.quantity === null ? "?" : line.quantity} ×`), line.name,
-        extra.length ? h("div", { class: "opts" }, extra.join(" · ")) : null);
-    }
-
-    function itemList(order) {
-      const id = order.orderId;
-      const all = order.items;
-      const collapsible = all.length > ITEMS_SHOWN + 1;
-      const open = state.expanded.has(id);
-      const shown = collapsible && !open ? all.slice(0, ITEMS_SHOWN) : all;
-      const toggle = () => { if (open) state.expanded.delete(id); else state.expanded.add(id); render(); };
-      return [
-        h("ul", { class: "items" }, shown.map(lineItem)),
-        collapsible ? h("button", { class: "more", type: "button", "aria-expanded": String(open), onclick: toggle },
-          open ? "Show less" : `+${all.length - ITEMS_SHOWN} more`) : null,
-      ];
+        h("span", { class: "qty" }, line.quantity === null ? "?" : `${line.quantity}×`),
+        h("span", null, line.name),
+        extra.length ? h("span", { class: "opts" }, extra.join(" · ")) : null);
     }
 
     function buildCard(order) {
@@ -505,41 +607,39 @@
       const back = BACK[order.status];
       const pickupWhen = order.orderType === "pickup" ? (order.pickupTime ? `Pickup at ${order.pickupTime}` : "Pickup ASAP") : null;
       const telHref = order.customerPhone ? `tel:${order.customerPhone.replace(/[^\d+]/g, "")}` : null;
-      const who = order.customerName || order.customerPhone || order.address
-        ? h("div", { class: "who" },
-          order.customerName ? h("span", { class: "name" }, order.customerName) : null,
-          telHref ? h("a", { class: "tel", href: telHref, "aria-label": `Call ${order.customerPhone}` }, `📞 ${order.customerPhone}`) : null,
-          order.address ? h("span", { class: "addr" }, `📍 ${order.address}`) : null)
-        : null;
       return h("article", { class: "card", "data-id": id, "aria-label": `Order ${shortId(id)}` },
         h("div", { class: "card-top" },
           h("span", { class: "num" }, `#${shortId(id)}`),
           h("span", { class: `badge ${order.orderType}` }, order.orderType === "delivery" ? (order.deliveryFeeTbc ? "🛵 Delivery · fee TBC" : "🛵 Delivery") : "🛍 Pickup"),
           h("span", { class: "timer", title: "Waiting since the order came in" }, h("small", null, "wait"), h("span", { "data-timer": "" }, ""))),
         pickupWhen ? h("div", { class: "meta" }, pickupWhen) : null,
-        itemList(order),
+        h("ul", { class: "items" }, order.items.map(lineItem)),
+        order.customerName || telHref
+          ? h("div", { class: "who" },
+            order.customerName ? h("span", { class: "name" }, order.customerName) : null,
+            telHref ? h("a", { class: "tel", href: telHref, "aria-label": `Call ${order.customerPhone}` }, `📞 ${order.customerPhone}`) : null)
+          : null,
+        order.address ? h("div", { class: "addr" }, `📍 ${order.address}`) : null,
         order.note ? h("div", { class: "note" }, h("b", null, "Note: "), order.note) : null,
-        who,
         h("div", { class: "actions" },
-          back ? h("button", { class: "back", type: "button", disabled: busy, "aria-label": `Move back to ${back[1]}`, title: `Back to ${back[1]}`,
-            onclick: () => confirmMove(order, back[0], `Move order #${shortId(id)} back to ${back[1]}?`, false) }, "◀") : null,
           h("button", { class: "go", type: "button", disabled: busy, onclick: () => move(order, forwardTo) }, `${forwardLabel} ▶`),
-          h("button", { class: "cancel", type: "button", disabled: busy, "aria-label": "Cancel order",
-            onclick: () => confirmMove(order, "CANCELLED", `Cancel order #${shortId(id)}? It will leave the board and won't count as a sale.`, true) },
-            "✕", h("span", { class: "label" }, " Cancel"))));
+          h("div", { class: "sub-actions" },
+            back ? h("button", { class: "back", type: "button", disabled: busy,
+              onclick: () => confirmMove(order, back[0], `Move order #${shortId(id)} back to ${back[1]}?`, false) }, `◀ ${back[1]}`) : null,
+            h("button", { class: "cancel", type: "button", disabled: busy,
+              onclick: () => confirmMove(order, "CANCELLED", `Cancel order #${shortId(id)}? It will leave the board and won't count as a sale.`, true) }, "✕ Cancel"))));
     }
 
     function render() {
       const live = new Set(state.orders.map((o) => o.orderId));
       for (const id of state.cards.keys()) if (!live.has(id)) state.cards.delete(id);
       for (const id of state.flashUntil.keys()) if (!live.has(id)) state.flashUntil.delete(id);
-      for (const id of state.expanded) if (!live.has(id)) state.expanded.delete(id);
 
       for (const status of STATUSES) {
         const list = state.orders.filter((o) => o.status === status);
         const wanted = list.map((order) => {
           // A card is rebuilt only when what it shows changes, so a running flash isn't restarted.
-          const sig = JSON.stringify([order, state.busy.has(order.orderId), state.expanded.has(order.orderId)]);
+          const sig = JSON.stringify([order, state.busy.has(order.orderId)]);
           let entry = state.cards.get(order.orderId);
           if (!entry || entry.sig !== sig) {
             const el = buildCard(order);
@@ -551,13 +651,33 @@
         });
         const box = $(`c-${status}`);
         const current = [...box.children];
-        const same = current.length === wanted.length && current.every((el, i) => el === wanted[i]);
+        const same = current.length === wanted.length && current.length > 0 && current.every((el, i) => el === wanted[i]);
         if (!same) box.replaceChildren(...(wanted.length ? wanted : [h("div", { class: "empty-col" }, "No orders")]));
+        // Quiet columns (1 to 3 orders) let their cards grow; "many" uses the base size and scrolls.
+        box.parentElement.dataset.load = list.length && list.length <= 3 ? String(list.length) : "many";
         $(`n-${status}`).textContent = String(list.length);
         $(`t-${status}`).textContent = String(list.length);
       }
+      fitAll();
       tick();
     }
+
+    // With 1 to 3 orders, use the largest text step at which they all still fit the column, so the
+    // buttons stay on screen. With more orders, or a card too long to fit anyway, use the base size.
+    const K_STEPS = [1.3, 1.22, 1.15, 1.08, 1];
+    function fitColumn(col) {
+      if (!col.offsetParent) return; // a phone tab not on screen: fitted when it's opened
+      const box = col.querySelector(".cards");
+      const count = box.querySelectorAll(".card").length;
+      if (!count || count > 3) { col.style.setProperty("--k", "1"); return; }
+      for (const k of K_STEPS) {
+        col.style.setProperty("--k", String(k));
+        if (box.scrollHeight <= box.clientHeight + 1) return;
+      }
+    }
+    const fitAll = () => document.querySelectorAll(".col").forEach(fitColumn);
+    let fitTimer = null;
+    new ResizeObserver(() => { clearTimeout(fitTimer); fitTimer = setTimeout(fitAll, 100); }).observe($("board"));
 
     // Every second: timers, colours, the clock, flashes and the reminder ping. Nothing is rebuilt here.
     function tick() {
@@ -601,7 +721,7 @@
         showError(null);
         if (to === "COMPLETED" && order.orderType === "delivery") offerOnTheWay(order);
       } catch (error) {
-        // 409: another tablet changed it first; the reload below shows where it is now.
+        // 409: another device changed it first; the reload below shows where it is now.
         showError(error.message);
       } finally {
         state.busy.delete(id);
@@ -671,18 +791,25 @@
       $("board").dataset.tab = tab.dataset.status;
       for (const t of $("tabs").children) t.setAttribute("aria-selected", String(t === tab));
       $(`c-${tab.dataset.status}`).scrollTop = 0;
+      fitAll();
     });
 
     /* ---------- Sleep and wake ---------- */
-    // A sleeping device stops timers and network. On waking, reload at once, restart the poll and take
-    // the wake lock again; orders that came in while asleep are still new here, so they flash and ring.
+    // A sleeping device stops timers, network and often audio. On waking: reload, restart the poll,
+    // take the wake lock again and bring sound back (or show the START screen if it can't).
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") { load(); startPolling(); keepAwake(); }
+      if (document.visibilityState === "visible") { load(); startPolling(); keepAwake(); checkSound(); }
     });
     window.addEventListener("online", load);
-    window.addEventListener("pageshow", (e) => { if (e.persisted) { load(); startPolling(); keepAwake(); } });
+    window.addEventListener("pageshow", (e) => { if (e.persisted) { load(); startPolling(); keepAwake(); checkSound(); } });
 
     renderMute();
+    // Where the browser already allows sound (e.g. Chrome site setting "Sound: Allow"), skip START.
+    if (state.muted) hideStart(true);
+    else {
+      ensureAudio();
+      resumeAudio().then((ok) => { if (ok) { hideStart(true); session.set(STARTED_KEY, "1"); } });
+    }
     setInterval(tick, 1000);
     load();
     startPolling();
