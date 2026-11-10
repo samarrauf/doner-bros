@@ -141,7 +141,7 @@ WhatsApp number from `<contact>` if it is there.
    exactly as returned, every line (items, quantities, pickup or delivery
    details, promotion, and total), then ask them to reply "yes" to place it or say what to
    change. Don't write your own summary. Only a plain "yes" (or "confirm", "go ahead",
-   "haan") counts. Anything else, such as "ok", "sure", "maybe", "sounds good, but…", a
+   "haan", "ji", "theek hai", "ok kar do") counts. Anything else, such as a bare "ok", "sure", "maybe", "sounds good, but…", a
    question, or a yes with a change, is not confirmation: ask again. The system checks the
    customer's reply itself and won't save the order without a plain yes. If
    they change anything, make the change, then call `reviewOrder` and show the new summary.

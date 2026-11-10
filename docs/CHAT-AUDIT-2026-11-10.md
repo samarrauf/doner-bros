@@ -121,3 +121,6 @@ Regression tests for the extra changes:
 |---|---|
 | A2 server-side plain yes | `backend/chat-audit.test.js`: "a plain yes to the shown summary places the order with no model call" and "anything but a plain yes, or a summary not shown, still goes to the model" |
 | C2 language note | `backend/chat-price-guard.test.js`: "each request names the model once…" (the language note is the last message) |
+| Confirmation words (owner's rule, 2026-11-10): "haan", "ji", "theek hai", "confirm", "ok kar do" place the order; a bare "ok" or "theek" does not | `backend/confirmation.test.js`: "haan, ji, theek hai, confirm and ok kar do place the order"; `backend/chat-confirm.test.js`: one test per phrase, through `/api/chat`, counting saved orders |
+| A yes with a change never places the order ("yes but add a drink", "haan lekin pehle total batao") | `backend/confirmation.test.js`: "a yes that also asks for a change…"; `backend/chat-confirm.test.js`: `"… does NOT place the order"` |
+| Two yes messages place one order | `backend/chat-confirm.test.js`: "two yes messages one after the other…" and "two yes messages sent at the same time (a double tap)…" |

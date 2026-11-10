@@ -9,6 +9,10 @@ const AFFIRMATIVE = [
   "yes", "yeah", "yep", "yup", "yes please", "confirm", "confirmed", "i confirm",
   "place the order", "place my order", "place it", "go ahead", "correct", "that's correct",
   "that is correct", "that's right", "all correct", "haan", "han", "ji haan", "jee haan", "ji han",
+  // Roman Urdu: "ji" on its own, "theek hai" and "... kar do" are how a yes is said here. A bare
+  // "ok" or "theek" stays unclear (see NOT_CLEAR); only these whole phrases count.
+  "ji", "jee", "theek hai", "thik hai", "theek he", "ok kar do", "okay kar do", "ok kardo", "kar do", "kardo",
+  "haan kar do", "ji kar do", "order kar do", "place kar do", "confirm kar do",
   "ہاں", "جی ہاں",
 ];
 
@@ -26,6 +30,7 @@ const NOT_CLEAR = [
 // might be asking for a change, so the reply isn't a plain yes.
 const FILLER = ["please", "thank you", "thanks", "ji", "jee", "sir", "bhai"];
 const PLAIN_YES_PHRASES = [...AFFIRMATIVE, ...FILLER].sort((a, b) => b.length - a.length);
+const YES_PHRASES_LONGEST_FIRST = [...AFFIRMATIVE].sort((a, b) => b.length - a.length);
 
 function normalise(text) {
   return String(text || "")
@@ -38,6 +43,14 @@ function normalise(text) {
 
 function hasPhrase(text, phrase) {
   return ` ${text} `.includes(` ${phrase} `);
+}
+
+function withoutPhrases(text, phrases) {
+  let rest = ` ${text} `;
+  for (const phrase of phrases) {
+    while (rest.includes(` ${phrase} `)) rest = rest.replace(` ${phrase} `, " ");
+  }
+  return rest.trim();
 }
 
 // What's left of the reply once the yes phrases and polite words are taken out.
@@ -55,7 +68,10 @@ function checkConfirmation(reply) {
   if (!text) return { confirmed: false, reason: "the reply was empty." };
   if (text.length > MAX_CONFIRMATION_LENGTH) return { confirmed: false, reason: "the reply was too long to be a plain yes." };
   if (text.includes("?")) return { confirmed: false, reason: "the reply was a question." };
-  const unclear = NOT_CLEAR.find((phrase) => hasPhrase(text, phrase));
+  // Whole yes phrases ("ok kar do", "theek hai") are taken out first, so their words aren't read as
+  // hedges; anything unclear left beside them ("yes but", "haan nahi") still blocks the order.
+  const rest = withoutPhrases(text, YES_PHRASES_LONGEST_FIRST);
+  const unclear = NOT_CLEAR.find((phrase) => hasPhrase(rest, phrase));
   if (unclear) return { confirmed: false, reason: `the reply contains "${unclear}", so it isn't a clear yes.` };
   if (!AFFIRMATIVE.some((phrase) => hasPhrase(text, phrase))) {
     return { confirmed: false, reason: "the reply doesn't clearly say yes." };

@@ -14,12 +14,29 @@ test("plain, explicit confirmations count", () => {
 
 test("ambiguous, hedged or casual replies don't count", () => {
   for (const reply of [
-    "ok", "okay", "sure", "fine", "sounds good", "alright", "theek hai", "maybe", "I think so", "probably",
+    "ok", "okay", "sure", "fine", "sounds good", "alright", "theek", "maybe", "I think so", "probably",
     "hmm", "yes?", "is that everything?", "yes but no onions", "yes, and add a coke", "yes actually wait",
     "yes, change it to rice", "yes if it's ready by 9", "yes later", "yes probably", "not yet", "no", "nahi",
     "thanks", "great", "👍", "", "   ",
   ]) {
     assert.equal(checkConfirmation(reply).confirmed, false, JSON.stringify(reply));
+  }
+});
+
+// Owner's rule (2026-11-10): these place the order.
+test("haan, ji, theek hai, confirm and ok kar do place the order", () => {
+  for (const reply of ["haan", "Ji", "theek hai", "Theek hai ji", "confirm", "ok kar do", "OK kar do please", "haan kar do"]) {
+    assert.deepEqual(checkConfirmation(reply), { confirmed: true }, reply);
+  }
+});
+
+// Owner's rule (2026-11-10): a yes that also carries a change or a question never places the order.
+test("a yes that also asks for a change or something first doesn't place the order", () => {
+  for (const reply of [
+    "yes but add a drink", "haan lekin pehle total batao", "ji pehle total batao", "theek hai lekin drink bhi",
+    "ok kar do aur ek coke bhi", "ji nahi", "haan nahi", "cancel kar do", "deal 2 add kar do", "theek", "ok",
+  ]) {
+    assert.equal(checkConfirmation(reply).confirmed, false, reply);
   }
 });
 
