@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
 const express = require("express");
-const { createAuth, signSession, verifySession, safeNext, passwordMatches, COOKIE, SESSION_MS, MAX_FAILURES_GLOBAL } = require("./auth");
+const { createAuth, signSession, readSession, verifySession, safeNext, passwordMatches, COOKIE, SLIDE_MS, MAX_SESSION_MS, MAX_FAILURES_GLOBAL } = require("./auth");
 const { addAdminStatsRoutes } = require("./admin-stats");
 const { addKitchenRoutes } = require("./kitchen");
 const { addMenuImageRoutes } = require("./menu-images");
@@ -12,6 +12,8 @@ const { createMemoryRateLimiter } = require("./rate-limit");
 const ADMIN_DIR = path.join(__dirname, "..", "admin");
 const STAFF = "kitchen test password";
 const OWNER = "owner test password";
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 // The same wiring as server.js, with fakes behind the guards.
 async function startApp({ passwords = { staff: STAFF, owner: OWNER }, rateLimiter = createMemoryRateLimiter() } = {}) {
@@ -60,11 +62,12 @@ test("sessions carry their role, expire, and can't be forged or promoted", () =>
   const now = 1_000_000;
   const staff = signSession("staff", STAFF, now);
   assert.equal(verifySession(staff, passwords, now), "staff");
-  assert.equal(verifySession(staff, passwords, now + SESSION_MS.staff - 1), "staff");
-  assert.equal(verifySession(staff, passwords, now + SESSION_MS.staff), null, "staff sessions last 14 hours");
-  assert.equal(SESSION_MS.staff, 14 * 60 * 60 * 1000);
-  assert.equal(SESSION_MS.owner, 7 * 24 * 60 * 60 * 1000);
-  assert.equal(verifySession(signSession("owner", OWNER, now), passwords, now + SESSION_MS.owner - 1), "owner");
+  assert.equal(verifySession(staff, passwords, now + SLIDE_MS.staff - 1), "staff");
+  assert.equal(verifySession(staff, passwords, now + SLIDE_MS.staff), null, "an idle staff session ends after 24 hours");
+  assert.equal(SLIDE_MS.staff, 24 * HOUR);
+  assert.equal(MAX_SESSION_MS.staff, 7 * DAY);
+  assert.equal(SLIDE_MS.owner, 7 * DAY);
+  assert.equal(verifySession(signSession("owner", OWNER, now), passwords, now + SLIDE_MS.owner - 1), "owner");
 
   // Changing the role inside a staff token breaks its signature.
   const [payload, sig] = staff.split(".");
@@ -157,7 +160,7 @@ test("a correct password sets a secure session cookie and returns a safe next pa
     assert.deepEqual(await res.json(), { next: "/admin/kitchen" });
     const cookie = res.headers.get("set-cookie");
     assert.match(cookie, new RegExp(`^${COOKIE}=`));
-    for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/", "Max-Age=50400"]) assert.ok(cookie.includes(flag), flag);
+    for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/", "Max-Age=86400"]) assert.ok(cookie.includes(flag), flag);
     assert.ok(!cookie.includes(STAFF), "the password is not in the cookie");
     const session = cookie.split(";")[0];
     assert.equal((await get(base, "/admin/kitchen", session)).status, 200);
@@ -333,6 +336,103 @@ test("logout clears the cookie and points at the right login page", async () => 
     assert.match(res.headers.get("set-cookie"), new RegExp(`^${COOKIE}=;.*Max-Age=0`));
     const staff = await fetch(`${base}/api/logout`, { method: "POST", headers: { cookie: cookieFor("staff", STAFF) } });
     assert.deepEqual(await staff.json(), { next: "/kitchen/login" });
+  } finally {
+    close();
+  }
+});
+
+test("a refreshed session keeps its login time and never passes the hard limit", () => {
+  const passwords = { staff: STAFF, owner: OWNER };
+  const login = 5_000_000;
+  // Refreshed on day 3: another 24 hours from then, same login time.
+  const day3 = login + 3 * DAY;
+  const refreshed = readSession(signSession("staff", STAFF, day3, login), passwords, day3);
+  assert.deepEqual([refreshed.role, refreshed.issuedAt, refreshed.expires], ["staff", login, day3 + 24 * HOUR]);
+  // Refreshed 6.5 days in: capped at 7 days from login, then gone for good.
+  const late = login + 6.5 * DAY;
+  const capped = signSession("staff", STAFF, late, login);
+  assert.equal(readSession(capped, passwords, late).expires, login + 7 * DAY);
+  assert.equal(verifySession(capped, passwords, login + 7 * DAY), null);
+  // A token claiming an expiry past the hard limit is refused even if correctly signed.
+  assert.equal(verifySession(signSession("staff", STAFF, login + 7 * DAY, login), passwords, login + 7 * DAY), null);
+  // A token with no login time (or one from the future) is refused.
+  assert.equal(verifySession(signSession("staff", STAFF, login, login + DAY), passwords, login), null);
+});
+
+test("each successful kitchen request slides the session another 24 hours", async () => {
+  const { base, close } = await startApp();
+  try {
+    const now = Date.now();
+    // Logged in 3 days ago, last refreshed 23 hours ago: one hour left.
+    const old = `${COOKIE}=${signSession("staff", STAFF, now - 23 * HOUR, now - 3 * DAY)}`;
+    for (const url of ["/api/admin/orders/live", "/admin/kitchen"]) {
+      const res = await get(base, url, old);
+      assert.equal(res.status, 200, url);
+      const cookie = res.headers.get("set-cookie");
+      assert.ok(cookie, `${url} refreshes the cookie`);
+      for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"]) assert.ok(cookie.includes(flag), flag);
+      const maxAge = Number(/Max-Age=([0-9]+)/.exec(cookie)[1]);
+      assert.ok(Math.abs(maxAge - 24 * 60 * 60) <= 5, `Max-Age ${maxAge}`);
+      const session = readSession(cookie.split(";")[0].slice(COOKIE.length + 1), { staff: STAFF, owner: OWNER });
+      assert.equal(session.role, "staff");
+      assert.equal(session.issuedAt, now - 3 * DAY, "the login time is kept");
+    }
+  } finally {
+    close();
+  }
+});
+
+test("a failed request doesn't refresh the session, and a just-refreshed one isn't re-sent", async () => {
+  const { base, close } = await startApp();
+  try {
+    const now = Date.now();
+    const old = `${COOKIE}=${signSession("staff", STAFF, now - 2 * HOUR, now - 2 * HOUR)}`;
+    const bad = await fetch(`${base}/api/admin/orders/not-an-id/status`, { method: "POST", headers: { cookie: old } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.headers.get("set-cookie"), null, "an error response doesn't slide the session");
+    const forbidden = await get(base, "/api/admin/stats/today", old);
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.headers.get("set-cookie"), null);
+    const fresh = await get(base, "/api/admin/orders/live", cookieFor("staff", STAFF));
+    assert.equal(fresh.status, 200);
+    assert.equal(fresh.headers.get("set-cookie"), null, "no new cookie on every 10-second poll");
+  } finally {
+    close();
+  }
+});
+
+test("near the 7-day hard limit the session isn't extended, and after it a new login is needed", async () => {
+  const { base, close } = await startApp();
+  try {
+    const now = Date.now();
+    const loggedIn = now - 7 * DAY + 30 * 60 * 1000; // 30 minutes of the 7 days left
+    const nearEnd = `${COOKIE}=${signSession("staff", STAFF, now - 30 * 60 * 1000, loggedIn)}`;
+    const res = await get(base, "/api/admin/orders/live", nearEnd);
+    assert.equal(res.status, 200);
+    const cookie = res.headers.get("set-cookie");
+    if (cookie) {
+      const session = readSession(cookie.split(";")[0].slice(COOKIE.length + 1), { staff: STAFF, owner: OWNER });
+      assert.ok(session.expires <= loggedIn + 7 * DAY);
+    }
+    const expired = `${COOKIE}=${signSession("staff", STAFF, now - 25 * HOUR, now - 25 * HOUR)}`;
+    assert.equal((await get(base, "/api/admin/orders/live", expired)).status, 401);
+    const page = await get(base, "/admin/kitchen", expired);
+    assert.equal(page.status, 302);
+    assert.equal(page.headers.get("location"), "/kitchen/login?next=%2Fadmin%2Fkitchen");
+  } finally {
+    close();
+  }
+});
+
+test("owner sessions slide too: 7 days from the last visit", async () => {
+  const { base, close } = await startApp();
+  try {
+    const now = Date.now();
+    const old = `${COOKIE}=${signSession("owner", OWNER, now - 6 * DAY, now - 10 * DAY)}`;
+    const res = await get(base, "/api/admin/stats/today", old);
+    assert.equal(res.status, 200);
+    const maxAge = Number(/Max-Age=([0-9]+)/.exec(res.headers.get("set-cookie"))[1]);
+    assert.ok(Math.abs(maxAge - 7 * 24 * 60 * 60) <= 5, `Max-Age ${maxAge}`);
   } finally {
     close();
   }

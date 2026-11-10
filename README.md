@@ -57,8 +57,13 @@ There are two logins, each with its own password:
 - If kitchen staff open an owner page, they're sent to `/owner/login` and owner APIs answer 403.
 - If `OWNER_PASSWORD` is not set, owner login is off and says "Owner login is not configured". It
   never falls back to the staff password.
-- Sessions are signed, httpOnly, Secure, SameSite=Lax cookies: 14 hours for staff, 7 days for the owner.
-  Changing a password signs everyone with that role out. Both pages have a **Log out** button.
+- Sessions are signed, httpOnly, Secure, SameSite=Lax cookies that slide: every successful request
+  extends them. Kitchen: 24 hours after the last request, never more than 7 days after login (the
+  board polls every 10 seconds, so it stays logged in while open). Owner: 7 days after the last
+  visit, never more than 30 days after login. Changing a password signs everyone with that role
+  out. Both pages have a **Log out** button.
+- If the kitchen board's login ends, it covers the screen with "Session ended - log in again" and
+  keeps pinging every 30 seconds; sound, mute and the chosen column are kept for after logging in.
 - After 5 wrong passwords from one IP (or 50 from all IPs together), that login locks for 15 minutes.
 
 ## Test

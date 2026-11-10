@@ -97,3 +97,14 @@ test("the board has a START screen and no 'sound blocked' bar", () => {
   assert.doesNotMatch(html, /id="sound-notice"/);
   assert.match(html, /startScreenNeeded/, "the board uses the tested rule");
 });
+
+test("a rejected login covers the board with 'Session ended' instead of stopping silently", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "admin", "kitchen.html"), "utf8");
+  assert.match(html, /id="ended"[^>]*role="alertdialog"/);
+  assert.match(html, /Session ended - log in again/);
+  assert.match(html, /id="ended-btn" href="\/kitchen\/login\?next=%2Fadmin%2Fkitchen"/);
+  assert.match(html, /res\.status === 401\) \{\s*sessionEnded\(\);/, "a 401 shows the screen");
+  assert.doesNotMatch(html, /location\.assign\(`\/kitchen\/login/, "the board never navigates away by itself");
+  assert.match(html, /if \(loading \|\| state\.ended\) return;/, "polling stops once ended");
+  assert.match(html, /TAB_KEY = "kitchen\.tab"/, "the chosen column is remembered");
+});

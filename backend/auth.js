@@ -1,8 +1,11 @@
 // Doner Bros — sign-in for the admin pages. Two roles:
 //   staff: the kitchen board and its APIs only. Password: STAFF_PASSWORD.
 //   owner: everything (dashboard, photos, analytics, chats, CSV export, and the kitchen). Password: OWNER_PASSWORD.
-// A successful login sets one signed, httpOnly cookie holding the role and an expiry. The signing
-// key is derived from that role's password, so changing a password signs everyone of that role out.
+// A successful login sets one signed, httpOnly cookie holding the role, the login time and an
+// expiry. Sessions slide: every allowed request (the kitchen board polls every 10 seconds) pushes
+// the expiry out again, up to a hard maximum counted from the login, after which a new login is
+// needed. The signing key is derived from that role's password, so changing a password signs
+// everyone of that role out.
 // If OWNER_PASSWORD is not set, owner login is refused (it never falls back to the staff password).
 // Passwords are never logged, put in URLs, or sent back to the browser.
 
@@ -13,7 +16,13 @@ const { rateLimitKey, createMemoryRateLimiter } = require("./rate-limit");
 
 const COOKIE = "db_admin";
 const ROLES = ["staff", "owner"];
-const SESSION_MS = { staff: 14 * 60 * 60 * 1000, owner: 7 * 24 * 60 * 60 * 1000 };
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+// Idle limit: how long a session lasts after its last allowed request.
+const SLIDE_MS = { staff: 24 * HOUR, owner: 7 * DAY };
+// Hard limit from the login, however busy the session is.
+const MAX_SESSION_MS = { staff: 7 * DAY, owner: 30 * DAY };
+const REFRESH_AFTER_MS = 60 * 1000; // re-issue the cookie at most once a minute
 const LOGIN_PAGE = { staff: "/kitchen/login", owner: "/owner/login" };
 const HOME = { staff: "/admin/kitchen", owner: "/admin/dashboard" };
 const LOCK_MS = 15 * 60 * 1000;
@@ -40,16 +49,19 @@ function signingKey(role, password) {
   return crypto.createHmac("sha256", password).update(`doner-bros-admin-session-v1:${role}`).digest();
 }
 
-// "payload.signature": payload is base64url JSON { r: role, e: expiry ms, n: random }.
-function signSession(role, password, now = Date.now()) {
-  const payload = b64url(JSON.stringify({ r: role, e: now + SESSION_MS[role], n: crypto.randomBytes(9).toString("base64url") }));
+const expiryFor = (role, issuedAt, now) => Math.min(now + SLIDE_MS[role], issuedAt + MAX_SESSION_MS[role]);
+
+// "payload.signature": payload is base64url JSON { r: role, i: login time ms, e: expiry ms, n: random }.
+// issuedAt: the original login time when a session is refreshed.
+function signSession(role, password, now = Date.now(), issuedAt = now) {
+  const payload = b64url(JSON.stringify({ r: role, i: issuedAt, e: expiryFor(role, issuedAt, now), n: crypto.randomBytes(9).toString("base64url") }));
   const sig = b64url(crypto.createHmac("sha256", signingKey(role, password)).update(payload).digest());
   return `${payload}.${sig}`;
 }
 
-// passwords: { staff, owner }. Resolves to the role, or null for anything forged, expired or for a
-// role whose password isn't set.
-function verifySession(token, passwords, now = Date.now()) {
+// passwords: { staff, owner }. Resolves to { role, issuedAt, expires }, or null for anything forged,
+// expired, past its hard limit, or for a role whose password isn't set.
+function readSession(token, passwords, now = Date.now()) {
   if (typeof token !== "string" || token.length > 512) return null;
   const [payload, sig, extra] = token.split(".");
   if (!payload || !sig || extra !== undefined) return null;
@@ -64,8 +76,17 @@ function verifySession(token, passwords, now = Date.now()) {
   const expected = crypto.createHmac("sha256", signingKey(role, passwords[role])).update(payload).digest();
   const given = Buffer.from(sig, "base64url");
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
-  if (!Number.isFinite(data.e) || data.e <= now || data.e > now + SESSION_MS[role]) return null;
-  return role;
+  const { i: issuedAt, e: expires } = data;
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expires)) return null;
+  if (issuedAt > now + 60 * 1000) return null; // from the future (allowing a little clock skew)
+  if (expires <= now || expires > now + SLIDE_MS[role] || expires > issuedAt + MAX_SESSION_MS[role]) return null;
+  return { role, issuedAt, expires };
+}
+
+// Just the role, or null.
+function verifySession(token, passwords, now = Date.now()) {
+  const session = readSession(token, passwords, now);
+  return session ? session.role : null;
 }
 
 function readCookie(header, name) {
@@ -76,9 +97,10 @@ function readCookie(header, name) {
   return null;
 }
 
-function sessionCookie(token, role) {
-  return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(SESSION_MS[role] / 1000)}`;
+function sessionCookie(token, expires, now = Date.now()) {
+  return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(0, Math.floor((expires - now) / 1000))}`;
 }
+const cookieExpiry = (token) => JSON.parse(Buffer.from(token.split(".")[0], "base64url").toString("utf8")).e;
 const clearedCookie = () => `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 
 // A same-site return path for after login, or the role's home page. Rejects absolute and
@@ -124,16 +146,35 @@ function createAuth({ passwords, rateLimiter = createMemoryRateLimiter(), adminD
     await Promise.all([rateLimiter.hit(ipKey, LOCK_MS, true, now), rateLimiter.hit(globalKey, LOCK_MS, true, now)]);
   }
 
-  const roleOf = (req) => verifySession(readCookie(req.headers.cookie, COOKIE), passwords);
+  const sessionOf = (req) => readSession(readCookie(req.headers.cookie, COOKIE), passwords);
+  const roleOf = (req) => {
+    const session = sessionOf(req);
+    return session ? session.role : null;
+  };
+
+  // Slides the session on: once the response is known to be a success (status below 400), the
+  // cookie is re-issued with a fresh expiry, keeping the original login time and hard limit.
+  function refreshOnSuccess(res, session) {
+    const now = Date.now();
+    if (expiryFor(session.role, session.issuedAt, now) - session.expires < REFRESH_AFTER_MS) return;
+    const token = signSession(session.role, passwords[session.role], now, session.issuedAt);
+    const writeHead = res.writeHead;
+    res.writeHead = function (statusCode, ...rest) {
+      if (statusCode < 400 && !res.getHeader("Set-Cookie")) res.setHeader("Set-Cookie", sessionCookie(token, cookieExpiry(token), now));
+      return writeHead.call(this, statusCode, ...rest);
+    };
+  }
 
   // Pages: no session -> the right login page with ?next=; a staff session on an owner page ->
   // owner login. APIs: 401 without a session, 403 with the wrong role.
   function requireRole(allowed, loginRole) {
     return (req, res, next) => {
       res.setHeader("Cache-Control", "no-store"); // customer details must not be cached
-      const role = roleOf(req);
+      const session = sessionOf(req);
+      const role = session ? session.role : null;
       if (role && allowed.includes(role)) {
         req.adminRole = role;
+        refreshOnSuccess(res, session);
         return next();
       }
       if (req.path.startsWith("/api/")) {
@@ -195,7 +236,9 @@ function createAuth({ passwords, rateLimiter = createMemoryRateLimiter(), adminD
         console.error("Login limit check failed:", error.code || error.message);
         return res.status(503).json({ error: MESSAGES.unavailable });
       }
-      res.setHeader("Set-Cookie", sessionCookie(signSession(role, passwords[role]), role));
+      const now = Date.now();
+      const token = signSession(role, passwords[role], now);
+      res.setHeader("Set-Cookie", sessionCookie(token, cookieExpiry(token), now));
       console.log(`Admin login: ${role}.`);
       res.json({ next: safeNext(body.next, role) });
     });
@@ -213,6 +256,6 @@ function createAuth({ passwords, rateLimiter = createMemoryRateLimiter(), adminD
 }
 
 module.exports = {
-  COOKIE, SESSION_MS, MAX_FAILURES_PER_IP, MAX_FAILURES_GLOBAL, LOCK_MS,
-  passwordMatches, signSession, verifySession, safeNext, readCookie, createAuth,
+  COOKIE, SLIDE_MS, MAX_SESSION_MS, MAX_FAILURES_PER_IP, MAX_FAILURES_GLOBAL, LOCK_MS,
+  passwordMatches, signSession, readSession, verifySession, safeNext, readCookie, createAuth,
 };
