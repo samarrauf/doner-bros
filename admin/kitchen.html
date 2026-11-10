@@ -100,6 +100,11 @@
     .dialog .yes { background: #000; color: #fff; }
     .dialog .yes.danger { background: var(--red-bg); border-color: var(--red-bg); }
     .dialog .no { background: #fff; }
+    .dialog .wa { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 76px; border-radius: 12px; border: 3px solid #128c4a;
+                  background: #128c4a; color: #fff; font-size: 26px; font-weight: 900; text-decoration: none; text-align: center; }
+    .dialog .wa[hidden] { display: none; }
+    .dialog .preview { margin: 0; font-size: 18px; line-height: 1.4; background: #f1f1ee; border-radius: 10px; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .dialog .sub { font-size: 18px; font-weight: 600; }
 
     /* Who to call and where to go. */
     .who { display: flex; flex-direction: column; gap: 2px; font-size: 20px; font-weight: 600; }
@@ -160,7 +165,8 @@
 
       .dialog { padding: 18px; gap: 16px; }
       .dialog p { font-size: 22px; }
-      .dialog .row button { min-height: 56px; font-size: 18px; }
+      .dialog .row button, .dialog .wa { min-height: 56px; font-size: 18px; }
+      .dialog .preview, .dialog .sub { font-size: 16px; }
     }
   </style>
 </head>
@@ -202,6 +208,19 @@
       <div class="row">
         <button class="no" id="modal-no" type="button">No, keep it</button>
         <button class="yes" id="modal-yes" type="button">Yes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- After a delivery order is completed: open WhatsApp with the "on the way" message ready to send. -->
+  <div class="modal" id="wa-modal" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="wa-title">
+      <p id="wa-title"></p>
+      <p class="sub" id="wa-sub"></p>
+      <p class="preview" id="wa-text" dir="auto"></p>
+      <div class="row">
+        <button class="no" id="wa-skip" type="button">Skip</button>
+        <a class="wa" id="wa-send" href="#" target="_blank" rel="noopener noreferrer">💬 Send WhatsApp</a>
       </div>
     </div>
   </div>
@@ -349,6 +368,7 @@
         const data = await api("/api/admin/orders/live");
         state.clockOffsetMs = Date.parse(data.serverNow) - Date.now();
         state.thresholds = data.thresholds;
+        state.deliveryEta = data.deliveryEta || null;
         state.orders = data.orders;
         state.lastOk = Date.now();
         noticeNew(data.orders);
@@ -483,6 +503,7 @@
       try {
         await api(`/api/admin/orders/${encodeURIComponent(id)}/status`, { from: order.status, to });
         showError(null);
+        if (to === "COMPLETED" && order.orderType === "delivery") offerOnTheWay(order);
       } catch (error) {
         // 409: another tablet changed it first; the reload below shows where it is now.
         showError(error.message);
@@ -511,6 +532,41 @@
       if (p) move(p.order, p.to);
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) closeModal(); });
+
+    /* ---------- "On the way" WhatsApp message ---------- */
+    // Pakistani mobile numbers as WhatsApp wants them: 92 followed by 10 digits. Anything else: null.
+    function waNumber(phone) {
+      let d = String(phone || "").replace(/\D/g, "");
+      if (d.startsWith("0092")) d = d.slice(2);
+      if (/^03\d{9}$/.test(d)) d = "92" + d.slice(1);
+      else if (/^3\d{9}$/.test(d)) d = "92" + d;
+      return /^923\d{9}$/.test(d) ? d : null;
+    }
+    function onTheWayText(order) {
+      const eta = state.deliveryEta;
+      const hello = order.customerName ? `Assalam o Alaikum ${order.customerName}!` : "Assalam o Alaikum!";
+      const when = eta ? ` and should reach you in ${eta.minMinutes}–${eta.maxMinutes} minutes` : "";
+      return `${hello} Your Doner Bros order #${shortId(order.orderId)} is on the way${when}. Please keep your phone nearby for the rider's call. Thank you!`;
+    }
+    function offerOnTheWay(order) {
+      const number = waNumber(order.customerPhone);
+      const text = onTheWayText(order);
+      $("wa-title").textContent = `Order #${shortId(order.orderId)} is out for delivery`;
+      $("wa-sub").textContent = number
+        ? "Send the customer this message?"
+        : `This phone number can't be opened in WhatsApp${order.customerPhone ? ` (${order.customerPhone})` : ""}. Call or message them yourself.`;
+      $("wa-text").textContent = text;
+      const send = $("wa-send");
+      send.hidden = !number;
+      send.href = number ? `https://wa.me/${number}?text=${encodeURIComponent(text)}` : "#";
+      $("wa-modal").hidden = false;
+      (number ? send : $("wa-skip")).focus();
+    }
+    const closeWa = () => { $("wa-modal").hidden = true; };
+    $("wa-skip").addEventListener("click", closeWa);
+    $("wa-send").addEventListener("click", () => setTimeout(closeWa, 0));
+    $("wa-modal").addEventListener("click", (e) => { if (e.target === $("wa-modal")) closeWa(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("wa-modal").hidden) closeWa(); });
 
     /* ---------- Phone tabs ---------- */
     $("tabs").addEventListener("click", (e) => {

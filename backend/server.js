@@ -1443,7 +1443,7 @@ function menuRoute(read) {
   };
 }
 // Owner dashboard data, all behind the staff password.
-addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings });
+addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings, getDeliveryEta: menuService.getDeliveryEta });
 addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));

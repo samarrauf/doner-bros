@@ -124,6 +124,30 @@ test("getSettings still gives the backend the private settings", async () => {
   assert.equal((await menuService.getSettings()).internal_margin_bps, "1");
 });
 
+test("getDeliveryEta reads a valid min/max pair from settings", async () => {
+  useTables({ menu_settings: [{ key: "delivery_eta_min_minutes", value: "11" }, { key: "delivery_eta_max_minutes", value: "22" }] });
+  assert.deepEqual(await menuService.getDeliveryEta(), { minMinutes: 11, maxMinutes: 22 });
+});
+
+test("getDeliveryEta is null when the pair is missing or invalid, never a guess", async () => {
+  const cases = [
+    [],
+    [{ key: "delivery_eta_min_minutes", value: "11" }],
+    [{ key: "delivery_eta_min_minutes", value: "22" }, { key: "delivery_eta_max_minutes", value: "11" }],
+    [{ key: "delivery_eta_min_minutes", value: "0" }, { key: "delivery_eta_max_minutes", value: "22" }],
+    [{ key: "delivery_eta_min_minutes", value: "soon" }, { key: "delivery_eta_max_minutes", value: "22" }],
+  ];
+  for (const rows of cases) {
+    useTables({ menu_settings: rows });
+    assert.equal(await menuService.getDeliveryEta(), null, JSON.stringify(rows));
+  }
+});
+
+test("the delivery time settings stay private", async () => {
+  useTables({ menu_settings: [{ key: "delivery_eta_min_minutes", value: "11" }, { key: "delivery_eta_max_minutes", value: "22" }] });
+  assert.deepEqual(await menuService.getPublicSettings(), {});
+});
+
 // 2. Unavailable versus unknown items
 
 const finishedAndOpen = {

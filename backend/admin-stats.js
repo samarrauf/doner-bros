@@ -4,7 +4,7 @@
 
 const path = require("path");
 
-function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir, getKitchenSettings }) {
+function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir, getKitchenSettings, getDeliveryEta = async () => null }) {
   const guard = [requireStaff, requireDatabase];
 
   // The owner dashboard page itself.
@@ -32,10 +32,12 @@ function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, co
   app.get("/api/admin/stats/top-items", ...guard, route("top items", (req) => analytics.getTopItems(q(req, "from"), q(req, "to"), q(req, "limit"))));
   app.get("/api/admin/stats/deals", ...guard, route("deals", (req) => analytics.getDealPerformance(q(req, "from"), q(req, "to"))));
   app.get("/api/admin/stats/customers", ...guard, route("customers", (req) => analytics.getRepeatCustomers(q(req, "from"), q(req, "to"))));
-  // The kitchen board's feed: open orders plus its amber/red thresholds (null if not set).
+  // The kitchen board's feed: open orders plus its amber/red thresholds and the delivery time for
+  // the "on the way" message (each null if not set).
   app.get("/api/admin/orders/live", ...guard, route("live orders", async () => {
-    const [live, thresholds] = await Promise.all([analytics.getLiveOrders(), getKitchenSettings().catch(() => null)]);
-    return { ...live, thresholds };
+    const [live, thresholds, deliveryEta] = await Promise.all([
+      analytics.getLiveOrders(), getKitchenSettings().catch(() => null), getDeliveryEta().catch(() => null)]);
+    return { ...live, thresholds, deliveryEta };
   }));
 
   // Fixed paths before /chats/:id.

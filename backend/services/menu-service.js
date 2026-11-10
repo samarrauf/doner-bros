@@ -205,6 +205,17 @@ async function getKitchenSettings() {
   return amber !== null && red !== null && amber > 0 && red > amber ? { amberMinutes: amber, redMinutes: red } : null;
 }
 
+// How long a delivery takes once it leaves, for the kitchen's "on the way" WhatsApp message.
+// Read from delivery_eta_min_minutes and delivery_eta_max_minutes; a missing or invalid pair comes
+// back null, so the message leaves the time out rather than guessing one.
+async function getDeliveryEta() {
+  const { settings } = await loadSnapshot();
+  const minutes = (key) => (/^\d{1,3}$/.test(String(settings[key] || "")) ? Number(settings[key]) : null);
+  const min = minutes("delivery_eta_min_minutes");
+  const max = minutes("delivery_eta_max_minutes");
+  return min !== null && max !== null && min > 0 && max >= min ? { minMinutes: min, maxMinutes: max } : null;
+}
+
 // Every word of the search must appear in the item's name, in any order, ignoring case.
 async function findItems(searchText) {
   const { itemsById } = await loadSnapshot();
@@ -266,6 +277,7 @@ module.exports = {
   getSettings,
   getPublicSettings,
   getKitchenSettings,
+  getDeliveryEta,
   findItems,
   getPublicMenu,
   getPhotoChecklist,
