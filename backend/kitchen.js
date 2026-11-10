@@ -6,6 +6,7 @@
 
 const path = require("path");
 const { nextStatus } = require("./staff");
+const { WHATSAPP_COLUMNS, whatsappForOrder } = require("./whatsapp-message");
 
 const ORDER_ID_PATTERN = /^DB-\d{8}-[A-HJ-NP-Z2-9]{6}$/;
 const OPEN_STATUSES = ["NEW", "PREPARING", "READY"];
@@ -17,11 +18,35 @@ function isAllowedMove(from, to) {
   return to === nextStatus(from) || to === PREVIOUS[from] || to === "CANCELLED";
 }
 
-function addKitchenRoutes(app, { client, requireKitchen, requireDatabase, adminDir }) {
+// The WhatsApp message is offered once an order is READY (and still from "Send again" after that).
+const WHATSAPP_STATUSES = ["READY", "COMPLETED"];
+
+function addKitchenRoutes(app, { client, requireKitchen, requireDatabase, adminDir, getDeliveryEta = async () => null }) {
   const requireStaff = requireKitchen;
   app.get("/admin/kitchen", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen.html")));
   // The board's alert rules (when to ring and remind), shared with the tests.
   app.get("/admin/kitchen-alerts.js", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen-alerts.js")));
+  // The WhatsApp pop-up's rules (phone format, link, queue), shared with the server and the tests.
+  app.get("/admin/kitchen-whatsapp.js", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen-whatsapp.js")));
+
+  // The "ready" WhatsApp message for one order, built on the server from that order's saved row.
+  // Never logs the phone number or the message.
+  app.get("/api/admin/orders/:orderId/whatsapp", requireStaff, requireDatabase, async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    const { orderId } = req.params;
+    if (!ORDER_ID_PATTERN.test(orderId)) return res.status(400).json({ error: "That isn't a valid order ID." });
+    const [{ data, error }, eta] = await Promise.all([
+      client.from("orders").select(WHATSAPP_COLUMNS).eq("order_id", orderId).maybeSingle(),
+      getDeliveryEta().catch(() => null),
+    ]);
+    if (error) {
+      console.error("Kitchen WhatsApp message failed:", error.code || error.name);
+      return res.status(502).json({ error: "Couldn't load the WhatsApp message. Try again." });
+    }
+    if (!data) return res.status(404).json({ error: "That order wasn't found." });
+    if (!WHATSAPP_STATUSES.includes(data.status)) return res.status(409).json({ error: "This order isn't ready yet." });
+    res.json(whatsappForOrder(data, eta));
+  });
 
   // Changes the status only if the order is still in the status the board showed, so two tablets
   // tapping at once can't skip or undo a step: the second gets 409 and the board refreshes.

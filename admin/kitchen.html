@@ -193,11 +193,51 @@
     .dialog .yes { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
     .dialog .yes.danger { background: #d93a3a; border-color: #d93a3a; color: #fff; }
     .dialog .no { background: transparent; color: var(--text); }
-    .dialog .wa { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 60px; border-radius: 12px; background: #128c4a; color: #fff;
-                  font-size: 1.25rem; font-weight: 800; text-decoration: none; text-align: center; }
-    .dialog .wa[hidden] { display: none; }
-    .dialog .preview { font-size: 1.0625rem; font-weight: 500; line-height: 1.45; background: var(--card-2); border-radius: 10px; padding: 12px; white-space: pre-wrap; }
-    .dialog .sub { font-size: 1.0625rem; font-weight: 600; color: var(--text-2); }
+    /* ---------- WhatsApp pop-up: big and readable from a distance, never cut off ---------- */
+    .wa-dialog {
+      --wa: #25d366; --wa-ink: #062b14;
+      width: min(720px, 100%); max-height: 100%; padding: clamp(16px, 2.4vw, 28px); gap: clamp(10px, 1.6vh, 18px);
+      border-color: var(--wa); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+    }
+    .wa-dialog [hidden] { display: none !important; }
+    .wa-head { display: flex; flex-direction: column; gap: 4px; }
+    .wa-dialog h2 { margin: 0; font: 700 clamp(1.5rem, 1.1rem + 1.6vw, 2.4rem)/1.15 var(--font-display); }
+    .dialog .wa-kind { font: 800 clamp(1.05rem, 0.9rem + 0.6vw, 1.4rem)/1.3 var(--font-body); color: var(--accent); }
+    .wa-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; font-size: clamp(1.15rem, 1rem + 0.7vw, 1.6rem); font-weight: 800; }
+    .wa-phone { color: var(--link); font-variant-numeric: tabular-nums; }
+    .dialog .wa-problem { padding: 12px 14px; border-radius: 12px; background: var(--late-bg); border: 2px solid var(--late); color: #fff; font-size: clamp(1.1rem, 1rem + 0.5vw, 1.4rem); }
+    .wa-preview {
+      flex: 0 1 auto; min-height: 5em; overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap;
+      font-size: clamp(1rem, 0.92rem + 0.4vw, 1.25rem); font-weight: 600; line-height: 1.45;
+      background: #0f2a1c; color: #eafff2; border: 1px solid #1f5a39; border-radius: 12px; padding: clamp(10px, 1.4vw, 16px);
+    }
+    .wa-actions { flex: none; display: flex; gap: 12px; }
+    .wa-send {
+      flex: 2 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 64px; padding: 8px 18px;
+      border-radius: 14px; background: var(--wa); color: var(--wa-ink); text-decoration: none;
+      font: 800 clamp(1.25rem, 1.05rem + 0.8vw, 1.7rem)/1.1 var(--font-body); box-shadow: 0 8px 24px rgba(37, 211, 102, 0.35);
+    }
+    .wa-send svg { width: 1.6em; height: 1.6em; flex: none; }
+    .wa-send:hover { filter: brightness(1.06); }
+    .wa-send:active { transform: scale(0.98); }
+    .wa-send[hidden] { display: none; }
+    .wa-skip {
+      flex: 1 1 0; min-height: 64px; padding: 8px 18px; border-radius: 14px; border: 2px solid var(--line); background: transparent; color: var(--text);
+      font: 800 clamp(1.15rem, 1rem + 0.6vw, 1.5rem)/1.1 var(--font-body);
+    }
+    .dialog .wa-queue { font-size: 1rem; font-weight: 700; color: var(--text-2); text-align: center; }
+    @media (max-width: 560px) {
+      .wa-actions { flex-direction: column; }
+      .wa-send, .wa-skip { flex: none; width: 100%; }
+      .wa-skip { min-height: 52px; }
+    }
+    /* Short screens (landscape phones, small laptops): the preview gives up height first. */
+    @media (max-height: 560px) { .wa-preview { min-height: 3.5em; } .wa-send, .wa-skip { min-height: 56px; } }
+
+    /* On a READY card: what happened with the WhatsApp message. */
+    .wa-card { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: var(--t-small); font-weight: 800; }
+    .wa-sent { padding: 0.2em 0.6em; border-radius: 8px; background: #0f2a1c; color: #5ee69a; border: 1px solid #1f5a39; }
+    .wa-again { min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--link); font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
 
     /* ---------- START KITCHEN screen ---------- */
     .start {
@@ -330,16 +370,28 @@
     </div>
   </div>
 
-  <!-- After a delivery order is completed: open WhatsApp with the "on the way" message ready to send. -->
+  <!-- After staff move an order to READY: WhatsApp with the "on its way" (delivery) or "ready for
+       pickup" message ready to send. Staff press Send themselves; nothing is sent automatically. -->
   <div class="modal" id="wa-modal" hidden>
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="wa-title">
-      <p id="wa-title"></p>
-      <p class="sub" id="wa-sub"></p>
-      <p class="preview" id="wa-text" dir="auto"></p>
-      <div class="row">
-        <button class="no" id="wa-skip" type="button">Skip</button>
-        <a class="wa" id="wa-send" href="#" target="_blank" rel="noopener noreferrer">💬 Send WhatsApp</a>
+    <div class="dialog wa-dialog" id="wa-dialog" role="dialog" aria-modal="true" aria-labelledby="wa-title" aria-describedby="wa-kind">
+      <div class="wa-head">
+        <h2 id="wa-title">Send WhatsApp to customer</h2>
+        <p class="wa-kind" id="wa-kind"></p>
       </div>
+      <div class="wa-who" id="wa-who">
+        <span class="wa-name" id="wa-name"></span>
+        <span class="wa-phone" id="wa-phone"></span>
+      </div>
+      <p class="wa-problem" id="wa-problem" role="alert" hidden></p>
+      <div class="wa-preview" id="wa-text" dir="auto" tabindex="0" aria-label="Message preview"></div>
+      <div class="wa-actions">
+        <a class="wa-send" id="wa-send" href="#" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 3C8.8 3 3 8.7 3 15.8c0 2.5.7 4.8 2 6.8L3.3 29l6.6-1.7c1.9 1 4 1.6 6.1 1.6 7.2 0 13-5.7 13-12.8S23.2 3 16 3Zm0 23.5c-1.9 0-3.8-.5-5.4-1.5l-.4-.2-3.9 1 1-3.8-.3-.4a10.5 10.5 0 0 1-1.7-5.8C5.3 10 10.1 5.3 16 5.3s10.7 4.7 10.7 10.5S21.9 26.5 16 26.5Zm5.9-7.9c-.3-.2-1.9-.9-2.2-1-.3-.1-.5-.2-.7.2l-1 1.2c-.2.2-.4.2-.7.1-.3-.2-1.4-.5-2.6-1.6-1-.9-1.6-1.9-1.8-2.2-.2-.3 0-.5.1-.7l.5-.6.3-.5c.1-.2 0-.4 0-.6l-1-2.4c-.3-.6-.5-.5-.7-.5h-.6c-.2 0-.6.1-.9.4-.3.3-1.2 1.1-1.2 2.8s1.2 3.2 1.4 3.4c.2.2 2.4 3.6 5.8 5 .8.4 1.4.6 1.9.7.8.3 1.5.2 2.1.1.6-.1 1.9-.8 2.2-1.5.3-.7.3-1.4.2-1.5-.1-.2-.3-.3-.6-.4Z"/></svg>
+          <span>Send on WhatsApp</span>
+        </a>
+        <button class="wa-skip" id="wa-skip" type="button">Skip</button>
+      </div>
+      <p class="wa-queue" id="wa-queue" hidden></p>
     </div>
   </div>
 
@@ -374,6 +426,7 @@
   </div>
 
   <script src="/admin/kitchen-alerts.js"></script>
+  <script src="/admin/kitchen-whatsapp.js"></script>
   <script>
   (() => {
     "use strict";
@@ -387,6 +440,8 @@
     const MUTE_KEY = "kitchen.muted";
     const STARTED_KEY = "kitchen.started";
     const TAB_KEY = "kitchen.tab";
+    const WA_SENT_KEY = "kitchen.waSent"; // order ids whose WhatsApp message staff opened
+    const { waLink, createWhatsAppOffers } = window.KitchenWhatsApp;
     const ENDED_PING_MS = 30000; // while the session has ended, a reminder ping this often
 
     const $ = (id) => document.getElementById(id);
@@ -410,7 +465,6 @@
     const state = {
       orders: [],
       thresholds: null,
-      deliveryEta: null,
       clockOffsetMs: 0,      // server time minus this device's time, so timers don't drift with a wrong clock
       lastOk: 0,
       busy: new Set(),       // order ids with a request in flight
@@ -421,6 +475,11 @@
       muted: session.get(MUTE_KEY) === "1",
       ended: false,          // the server stopped accepting this board's login
     };
+    // WhatsApp pop-ups: which orders to offer, in what order, and which were already sent.
+    const offers = createWhatsAppOffers({ sent: readSentIds() });
+    function readSentIds() {
+      try { const ids = JSON.parse(session.get(WA_SENT_KEY) || "[]"); return Array.isArray(ids) ? ids.filter((x) => typeof x === "string") : []; } catch { return []; }
+    }
 
     const now = () => Date.now() + state.clockOffsetMs;
     const mmss = (ms) => {
@@ -612,7 +671,8 @@
       clearInterval(polling);
       polling = null;
       hideStart(true);
-      for (const id of ["modal", "wa-modal"]) $(id).hidden = true;
+      $("modal").hidden = true;
+      closeWa(false);
       $("ended").hidden = false;
       $("ended-btn").focus();
       renderStatus();
@@ -630,7 +690,6 @@
         const data = await api("/api/admin/orders/live");
         state.clockOffsetMs = Date.parse(data.serverNow) - Date.now();
         state.thresholds = data.thresholds;
-        state.deliveryEta = data.deliveryEta || null;
         state.orders = data.orders;
         state.lastOk = Date.now();
         noticeNew(data.orders);
@@ -690,6 +749,12 @@
           : null,
         order.address ? h("div", { class: "addr" }, `📍 ${order.address}`) : null,
         order.note ? h("div", { class: "note" }, h("b", null, "Note: "), order.note) : null,
+        order.status === "READY"
+          ? h("div", { class: "wa-card" },
+            offers.isSent(id) ? h("span", { class: "wa-sent" }, "WhatsApp sent ✓") : null,
+            h("button", { class: "wa-again", type: "button", onclick: () => { offers.offerAgain(id); showNextWa(); } },
+              offers.isSent(id) ? "Send again" : "Send WhatsApp"))
+          : null,
         h("div", { class: "actions" },
           h("button", { class: "go", type: "button", disabled: busy, onclick: () => move(order, forwardTo) }, `${forwardLabel} ▶`),
           h("div", { class: "sub-actions" },
@@ -708,7 +773,7 @@
         const list = state.orders.filter((o) => o.status === status);
         const wanted = list.map((order) => {
           // A card is rebuilt only when what it shows changes, so a running flash isn't restarted.
-          const sig = JSON.stringify([order, state.busy.has(order.orderId)]);
+          const sig = JSON.stringify([order, state.busy.has(order.orderId), offers.isSent(order.orderId)]);
           let entry = state.cards.get(order.orderId);
           if (!entry || entry.sig !== sig) {
             const el = buildCard(order);
@@ -789,7 +854,8 @@
       try {
         await api(`/api/admin/orders/${encodeURIComponent(id)}/status`, { from: order.status, to });
         showError(null);
-        if (to === "COMPLETED" && order.orderType === "delivery") offerOnTheWay(order);
+        // Only this tap on the status button can open the WhatsApp pop-up, and only for READY.
+        if (offers.onStatusMoved({ orderId: id, to, source: "button" })) showNextWa();
       } catch (error) {
         // 409: another device changed it first; the reload below shows where it is now.
         if (!error.ended) showError(error.message);
@@ -819,40 +885,84 @@
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) closeModal(); });
 
-    /* ---------- "On the way" WhatsApp message ---------- */
-    // Pakistani mobile numbers as WhatsApp wants them: 92 followed by 10 digits. Anything else: null.
-    function waNumber(phone) {
-      let d = String(phone || "").replace(/\D/g, "");
-      if (d.startsWith("0092")) d = d.slice(2);
-      if (/^03\d{9}$/.test(d)) d = "92" + d.slice(1);
-      else if (/^3\d{9}$/.test(d)) d = "92" + d;
-      return /^923\d{9}$/.test(d) ? d : null;
+    /* ---------- WhatsApp pop-up (click-to-chat only) ---------- */
+    // Opened only from a tap on READY (see move) or "Send again" on a card, one at a time from the
+    // queue. The message and number come from the server, built from that order's saved row.
+    let waOpen = null;      // order id shown in the pop-up, or null
+    let waOpening = false;  // a message is being fetched
+    let waReturnFocus = null;
+    async function showNextWa() {
+      if (waOpen || waOpening || state.ended) return;
+      const id = offers.next();
+      if (!id) return;
+      waOpening = true;
+      let info = null;
+      let problem = null;
+      try {
+        info = await api(`/api/admin/orders/${encodeURIComponent(id)}/whatsapp`);
+      } catch (error) {
+        if (error.ended) { waOpening = false; return; }
+        problem = `Couldn't load the WhatsApp message: ${error.message}`;
+      }
+      waOpening = false;
+      if (state.ended) return;
+      openWa(id, info, problem);
     }
-    function onTheWayText(order) {
-      const eta = state.deliveryEta;
-      const hello = order.customerName ? `Assalam o Alaikum ${order.customerName}!` : "Assalam o Alaikum!";
-      const when = eta ? ` and should reach you in ${eta.minMinutes}–${eta.maxMinutes} minutes` : "";
-      return `${hello} Your Doner Bros order #${shortId(order.orderId)} is on the way${when}. Please keep your phone nearby for the rider's call. Thank you!`;
-    }
-    function offerOnTheWay(order) {
-      const number = waNumber(order.customerPhone);
-      const text = onTheWayText(order);
-      $("wa-title").textContent = `Order #${shortId(order.orderId)} is out for delivery`;
-      $("wa-sub").textContent = number
-        ? "Send the customer this message?"
-        : `This phone number can't be opened in WhatsApp${order.customerPhone ? ` (${order.customerPhone})` : ""}. Call or message them yourself.`;
-      $("wa-text").textContent = text;
+    function openWa(id, info, problem) {
+      const link = info ? waLink(info.waNumber, info.text) : null;
+      if (!problem && !link) problem = "No valid phone number for this customer";
+      waOpen = id;
+      waReturnFocus = document.activeElement;
+      const kind = info && info.orderType === "delivery" ? "🛵 Delivery: rider on the way" : info ? "🛍 Pickup: ready to collect" : "";
+      $("wa-kind").textContent = `Order #${shortId(id)}${kind ? ` · ${kind}` : ""}`;
+      $("wa-name").textContent = (info && info.customerName) || "";
+      $("wa-phone").textContent = info && info.customerPhone ? `📞 ${info.customerPhone}` : "";
+      $("wa-who").hidden = !(info && (info.customerName || info.customerPhone));
+      $("wa-problem").textContent = problem || "";
+      $("wa-problem").hidden = !problem;
+      $("wa-text").textContent = info ? info.text : "";
+      $("wa-text").hidden = !info;
       const send = $("wa-send");
-      send.hidden = !number;
-      send.href = number ? `https://wa.me/${number}?text=${encodeURIComponent(text)}` : "#";
+      send.hidden = !link;
+      if (link) send.href = link; else send.removeAttribute("href");
+      $("wa-skip").textContent = link ? "Skip" : "Close";
+      const more = offers.pending();
+      $("wa-queue").textContent = more ? `${more} more WhatsApp message${more > 1 ? "s" : ""} waiting` : "";
+      $("wa-queue").hidden = !more;
       $("wa-modal").hidden = false;
-      (number ? send : $("wa-skip")).focus();
+      (link ? send : $("wa-skip")).focus();
     }
-    const closeWa = () => { $("wa-modal").hidden = true; };
-    $("wa-skip").addEventListener("click", closeWa);
-    $("wa-send").addEventListener("click", () => setTimeout(closeWa, 0));
+    // next: go on to the next queued pop-up (false when the session ended).
+    function closeWa(next = true) {
+      if ($("wa-modal").hidden) { waOpen = null; return; }
+      $("wa-modal").hidden = true;
+      waOpen = null;
+      if (waReturnFocus && document.contains(waReturnFocus)) waReturnFocus.focus();
+      waReturnFocus = null;
+      if (next) setTimeout(showNextWa, 250);
+    }
+    $("wa-skip").addEventListener("click", () => closeWa());
+    // The link opens WhatsApp in a new tab by itself; this only records it and moves on.
+    $("wa-send").addEventListener("click", () => {
+      if (!waOpen) return;
+      offers.markSent(waOpen);
+      session.set(WA_SENT_KEY, JSON.stringify(offers.sentIds().slice(-200)));
+      setTimeout(() => { closeWa(); render(); }, 0);
+    });
     $("wa-modal").addEventListener("click", (e) => { if (e.target === $("wa-modal")) closeWa(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("wa-modal").hidden) closeWa(); });
+    // Escape closes it; Tab and Shift+Tab stay inside it.
+    document.addEventListener("keydown", (e) => {
+      if ($("wa-modal").hidden) return;
+      if (e.key === "Escape") { e.preventDefault(); closeWa(); return; }
+      if (e.key !== "Tab") return;
+      const focusable = [...$("wa-dialog").querySelectorAll("a[href], button, [tabindex='0']")].filter((el) => !el.hidden && el.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!$("wa-dialog").contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
 
     /* ---------- Phone tabs ---------- */
     $("tabs").addEventListener("click", (e) => {
