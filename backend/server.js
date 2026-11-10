@@ -1368,6 +1368,18 @@ function unbackedPrices(reply, turn, stage) {
   return prices;
 }
 
+// A budget list that was cut short must say so. If the reply doesn't give the server's count of
+// hidden items and the top of their price range, the server's own line (find_items_within_budget's
+// moreLine) is added, so the customer always hears that more exist and how to see them.
+function withBudgetMoreLine(text, turn) {
+  const budget = [...turn.toolResults].reverse().find((result) => result && result.moreLine && result.notShown);
+  if (!budget || !text) return text;
+  const plain = text.replace(/,/g, "");
+  const mentionsCount = new RegExp(`(^|\\D)${budget.notShown.count}(\\D|$)`).test(plain);
+  const mentionsTop = plain.includes(budget.notShown.to.replace(/[^\d]/g, ""));
+  return mentionsCount && mentionsTop ? text : `${text}\n\n${budget.moreLine}`;
+}
+
 // No reply reaches the customer with a rupee amount that this turn's tool results don't contain.
 async function askModel(history, message, orderState, turn, buttonNote) {
   const contents = toClaudeMessages(history, message);
@@ -1377,11 +1389,12 @@ async function askModel(history, message, orderState, turn, buttonNote) {
   const note = notes.filter(Boolean).join("\n");
   if (note) contents.push({ role: "system", content: note });
   const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS, correction: buttonNote });
-  if (first.fromServer || unbackedPrices(first, turn, "regenerating").length === 0) return first.text;
+  if (first.fromServer) return first.text;
+  if (unbackedPrices(first, turn, "regenerating").length === 0) return withBudgetMoreLine(first.text, turn);
 
   dropThinking(contents);
   const second = await runModel(contents, orderState, turn, { tools: LOOKUP_TOOLS, correction: [buttonNote, PRICE_CORRECTION].filter(Boolean).join("\n\n") });
-  if (unbackedPrices(second, turn, "sending fallback").length === 0) return second.text;
+  if (unbackedPrices(second, turn, "sending fallback").length === 0) return withBudgetMoreLine(second.text, turn);
 
   return `Sorry, I can't confirm that price right now. Please ${await reachUs()}.`;
 }

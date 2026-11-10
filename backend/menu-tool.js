@@ -137,7 +137,23 @@ async function listDeals() {
   };
 }
 
-const MAX_BUDGET_RESULTS = 15;
+// Each category shows its cheapest few, so no category is ever left out; one category asked for
+// by slug is shown in full. Whatever isn't shown is counted by the server, never by the model.
+const BUDGET_ITEMS_PER_CATEGORY = 2;
+
+function priceRange(items) {
+  const prices = items.map((item) => item.pricePaisa);
+  return { from: menuService.formatPrice(Math.min(...prices)), to: menuService.formatPrice(Math.max(...prices)) };
+}
+
+// The line the customer must see when the list is cut short. Written here, from the menu, so the
+// count and both amounts come from a tool result and pass the price guard.
+function budgetMoreLine(hidden, categories) {
+  const { from, to } = priceRange(hidden);
+  const between = from === to ? `at ${from}` : `between ${from} and ${to}`;
+  const noun = hidden.length === 1 ? "item" : "items";
+  return `...and ${hidden.length} more ${noun} ${between}. Would you like to see them by category (${categories.join(", ")})?`;
+}
 
 // Only whole rupees are taken in; the comparison is done in paisa on the menu's own prices.
 async function findItemsWithinBudget(maxRupees, categorySlug) {
@@ -147,21 +163,47 @@ async function findItemsWithinBudget(maxRupees, categorySlug) {
   const maxPaisa = maxRupees * 100;
   const [categories, deals] = await Promise.all([menuService.getMenu(), menuService.getDeals()]);
   const chosen = categorySlug ? categories.filter((c) => c.slug === categorySlug) : categories;
-  const items = chosen
-    .flatMap((c) => c.items)
-    .filter((item) => item.isAvailable && item.pricePaisa <= maxPaisa)
-    .map(toToolItem);
-  const withinDeals = categorySlug
-    ? []
-    : deals
+  const groups = chosen.map((c) => ({
+    category: c.name,
+    slug: c.slug,
+    items: c.items.filter((item) => item.isAvailable && item.pricePaisa <= maxPaisa).map(toToolItem),
+  }));
+  if (!categorySlug) {
+    groups.push({
+      category: "Deals",
+      slug: "deals",
+      items: deals
         .filter((deal) => deal.isAvailable && deal.pricePaisa <= maxPaisa)
-        .map((deal) => ({ id: deal.id, name: deal.name, pricePaisa: deal.pricePaisa, priceDisplay: deal.priceDisplay, contains: deal.items.map((d) => d.label) }));
-  const all = [...items, ...withinDeals].sort((a, b) => a.pricePaisa - b.pricePaisa);
+        .map((deal) => ({ id: deal.id, name: deal.name, pricePaisa: deal.pricePaisa, priceDisplay: deal.priceDisplay, contains: deal.items.map((d) => d.label) })),
+    });
+  }
+  const matching = groups.filter((g) => g.items.length > 0).map((g) => ({ ...g, items: [...g.items].sort((a, b) => a.pricePaisa - b.pricePaisa) }));
+  const limit = categorySlug ? Infinity : BUDGET_ITEMS_PER_CATEGORY;
+  const hidden = matching.flatMap((g) => g.items.slice(limit));
+  const shown = matching.map((g) => ({
+    category: g.category,
+    slug: g.slug,
+    items: g.items.slice(0, limit),
+    ...(g.items.length > limit ? { moreInCategory: g.items.length - limit } : {}),
+  }));
+  const totalMatching = matching.reduce((sum, g) => sum + g.items.length, 0);
+  const result = { budget: menuService.formatPrice(maxPaisa), found: totalMatching > 0, totalMatching, groups: shown };
+  if (hidden.length === 0) {
+    return {
+      ...result,
+      instruction: "Every matching item is listed. Show them by category, every item with its priceDisplay. Don't say there are more.",
+    };
+  }
+  const moreCategories = shown.filter((g) => g.moreInCategory).map((g) => g.category);
   return {
-    budget: menuService.formatPrice(maxPaisa),
-    found: all.length > 0,
-    items: all.slice(0, MAX_BUDGET_RESULTS),
-    ...(all.length > MAX_BUDGET_RESULTS ? { more: all.length - MAX_BUDGET_RESULTS } : {}),
+    ...result,
+    notShown: { count: hidden.length, ...priceRange(hidden), categories: moreCategories },
+    moreLine: budgetMoreLine(hidden, moreCategories),
+    instruction:
+      "Show every item in groups, by category, with its priceDisplay; don't drop any. Then give moreLine: you may put it in " +
+      "the customer's language, but keep its number and both amounts exactly. When you offer categories to see, name " +
+      "only ones from notShown.categories (all of them, or say \"any of these categories\"), never any other. Never work out a count or a price range " +
+      "yourself. If they pick a category, call find_items_within_budget again with its slug to list it in full.",
   };
 }
 

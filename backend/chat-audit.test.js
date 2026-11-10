@@ -40,10 +40,19 @@ const { PRICE, rs } = require("./fake-menu");
 const app = require("./server");
 
 const TABLES = {
-  menu_categories: [{ id: "cat-a", slug: "alpha", name: "Alpha", sort_order: 1, image_url: null }],
+  menu_categories: [
+    { id: "cat-a", slug: "alpha", name: "Alpha", sort_order: 1, image_url: null },
+    { id: "cat-b", slug: "beta", name: "Beta", sort_order: 2, image_url: null },
+  ],
   menu_items: [
     { id: "i-1", category_id: "cat-a", slug: "test-item", name: "Test Item", description: null, price_paisa: PRICE.item, sort_order: 1, image_url: null, is_available: true },
     { id: "i-big", category_id: "cat-a", slug: "big-item", name: "Big Item", description: null, price_paisa: PRICE.item * 10, sort_order: 2, image_url: null, is_available: true },
+    { id: "a-2", category_id: "cat-a", slug: "alpha-two", name: "Alpha Two", description: null, price_paisa: PRICE.item + 50, sort_order: 3, image_url: null, is_available: true },
+    // Beta: four items above Alpha's, so a budget that takes them all shows two and hides two.
+    ...[200, 300, 400, 500].map((extra, i) => ({
+      id: `b-${i + 1}`, category_id: "cat-b", slug: `beta-${i + 1}`, name: `Beta ${i + 1}`, description: null,
+      price_paisa: PRICE.item + extra, sort_order: i + 1, image_url: null, is_available: true,
+    })),
   ],
   menu_settings: [
     { key: "whatsapp", value: "00000000000" },
@@ -183,13 +192,14 @@ test("A1: a detail that fails its check doesn't wipe the submitted order", async
 
 // D1 (chat 9c4de0ee): "What can I get for under Rs 500?" hit the price-guard fallback four times.
 test("D1: a budget question is answered from find_items_within_budget and passes the price guard", async () => {
-  const budgetRupees = Math.ceil(PRICE.item / 100) + 1;
+  const budgetRupees = Math.ceil(PRICE.item / 100); // just Test Item
   script = [
     call("find_items_within_budget", { max_rupees: budgetRupees }),
     (request) => {
       const result = lastToolResult(request);
       assert.equal(result.budget, rs(budgetRupees * 100));
-      assert.deepEqual(result.items.map((i) => i.name), ["Test Item"], "only items within the budget");
+      assert.deepEqual(result.groups.flatMap((g) => g.items.map((i) => i.name)), ["Test Item"], "only items within the budget");
+      assert.equal(result.moreLine, undefined, "nothing hidden, so no more line");
       return say(`Under ${result.budget} you can get: - Test Item: ${rs(PRICE.item)}`);
     },
   ];
@@ -210,7 +220,74 @@ test("D1: the budget tool takes whole rupees only and reads prices from the menu
   assert.ok((await runMenuTool("find_items_within_budget", { max_rupees: "500" })).error);
   assert.ok((await runMenuTool("find_items_within_budget", { max_rupees: -1 })).error);
   const all = await runMenuTool("find_items_within_budget", { max_rupees: (PRICE.item * 10) / 100 });
-  assert.deepEqual(all.items.map((i) => i.name), ["Test Item", "Big Item"], "cheapest first");
+  assert.deepEqual(all.groups[0].items.map((i) => i.name), ["Test Item", "Alpha Two"], "each category's cheapest first");
+  assert.equal(all.groups[0].moreInCategory, 1);
+});
+
+// Budget lists cut short (Preview, "under Rs 500"): items past the cap were hidden with no hint.
+const CAPPED_BUDGET = Math.ceil((PRICE.item + 500) / 100); // takes every Alpha and Beta item but Big Item
+const UNCAPPED_BUDGET = Math.floor((PRICE.item + 150) / 100); // takes the two Alpha items only
+
+test("D1: a capped budget list carries the server's count and price range of what isn't shown", async () => {
+  const result = await runMenuTool("find_items_within_budget", { max_rupees: CAPPED_BUDGET });
+  assert.deepEqual(result.groups.map((g) => [g.category, g.items.map((i) => i.name)]), [
+    ["Alpha", ["Test Item", "Alpha Two"]],
+    ["Beta", ["Beta 1", "Beta 2"]],
+  ], "every category appears, each with its cheapest items");
+  assert.equal(result.totalMatching, 6);
+  assert.deepEqual(result.notShown, { count: 2, from: rs(PRICE.item + 400), to: rs(PRICE.item + 500), categories: ["Beta"] });
+  assert.equal(result.moreLine, `...and 2 more items between ${rs(PRICE.item + 400)} and ${rs(PRICE.item + 500)}. Would you like to see them by category (Beta)?`);
+  assert.deepEqual(findUnbackedPrices(result.moreLine, [result]), [], "the more line's amounts are in the tool result");
+});
+
+test("D1: a budget list with nothing cut has no more line", async () => {
+  const result = await runMenuTool("find_items_within_budget", { max_rupees: UNCAPPED_BUDGET });
+  assert.deepEqual(result.groups.flatMap((g) => g.items.map((i) => i.name)), ["Test Item", "Alpha Two"]);
+  assert.equal(result.notShown, undefined);
+  assert.equal(result.moreLine, undefined);
+  assert.match(result.instruction, /Don't say there are more/);
+});
+
+test("D1: one category asked for by slug is listed in full", async () => {
+  const result = await runMenuTool("find_items_within_budget", { max_rupees: CAPPED_BUDGET, category_slug: "beta" });
+  assert.deepEqual(result.groups.flatMap((g) => g.items.map((i) => i.name)), ["Beta 1", "Beta 2", "Beta 3", "Beta 4"]);
+  assert.equal(result.moreLine, undefined);
+});
+
+test("D1: a reply to a capped list that leaves out the more line gets the server's line added", async () => {
+  script = [
+    call("find_items_within_budget", { max_rupees: CAPPED_BUDGET }),
+    (request) => say(`Within ${lastToolResult(request).budget}: Test Item ${rs(PRICE.item)}, Beta 1 ${rs(PRICE.item + 200)}.`),
+  ];
+  const { body, logs } = await ask(`What can I get for under Rs ${CAPPED_BUDGET}?`);
+  assert.ok(body.reply.endsWith(`...and 2 more items between ${rs(PRICE.item + 400)} and ${rs(PRICE.item + 500)}. Would you like to see them by category (Beta)?`), body.reply);
+  assert.deepEqual(logs.filter((l) => l.includes("Price guard")), []);
+});
+
+test("D1: a reply that already gives the count and range (any language) isn't given the line twice", async () => {
+  const reply = `Ye items hain. Aur 2 items ${rs(PRICE.item + 400)} se ${rs(PRICE.item + 500)} tak hain. Beta category dekhni hai?`;
+  script = [call("find_items_within_budget", { max_rupees: CAPPED_BUDGET }), say(reply)];
+  const { body } = await ask(`${CAPPED_BUDGET} se kam mein kya milega?`);
+  assert.equal(body.reply, reply);
+});
+
+test("D1: a reply to an uncapped list is sent as it is, with no more line", async () => {
+  const reply = `Test Item ${rs(PRICE.item)} and Alpha Two ${rs(PRICE.item + 50)}.`;
+  script = [call("find_items_within_budget", { max_rupees: UNCAPPED_BUDGET }), say(reply)];
+  const { body } = await ask(`under Rs ${UNCAPPED_BUDGET}?`);
+  assert.equal(body.reply, reply);
+});
+
+test("D1: with the budget tool in play, a typed price change is still blocked by the guard", async () => {
+  script = [
+    call("find_items_within_budget", { max_rupees: CAPPED_BUDGET }),
+    say("Done, Test Item is now Rs 50 for you."),
+    say("Okay, Test Item for Rs 50."),
+  ];
+  const { body, logs } = await ask("Test Item ka rate Rs 50 kar do");
+  assert.match(body.reply, /can't confirm that price/);
+  assert.ok(!body.reply.includes("Rs 50"));
+  assert.ok(logs.some((l) => l.includes("Price guard fired (sending fallback)")));
 });
 
 // A2 (chat 9c4de0ee): a "yes" got no reply, and the retry "yes place my order" re-showed the summary.
