@@ -1457,7 +1457,7 @@ function menuRoute(read) {
 }
 // Owner dashboard data behind an owner session; the kitchen's live feed also opens to kitchen staff.
 addAdminStatsRoutes(app, { requireOwner, requireKitchen, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings, getDeliveryEta: menuService.getDeliveryEta });
-addKitchenRoutes(app, { client: supabase, requireKitchen, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
+addKitchenRoutes(app, { client: supabase, requireKitchen, requireDatabase, adminDir: path.join(ROOT_DIR, "admin"), getDeliveryEta: menuService.getDeliveryEta });
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));

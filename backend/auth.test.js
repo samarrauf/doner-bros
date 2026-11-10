@@ -46,7 +46,7 @@ const login = (base, body, ip = "10.0.0.1", headers = {}) =>
 
 const OWNER_PAGES = ["/admin/dashboard", "/admin/photos"];
 const OWNER_APIS = ["/api/admin/stats/today", "/api/admin/stats/range", "/api/admin/chats", "/api/admin/chats/live", "/api/admin/chats/abc", "/api/admin/stats/export.csv", "/api/admin/photos"];
-const KITCHEN_PAGES = ["/admin/kitchen", "/admin/kitchen-alerts.js"];
+const KITCHEN_PAGES = ["/admin/kitchen", "/admin/kitchen-alerts.js", "/admin/kitchen-whatsapp.js"];
 
 test("passwords are compared exactly, and an empty password never matches", () => {
   assert.equal(passwordMatches(STAFF, STAFF), true);
@@ -112,6 +112,7 @@ test("signed-out visitors go to the right login page with a safe ?next=; APIs an
     }
     const post = await fetch(`${base}/api/admin/orders/DB-20261030-K7M2QX/status`, { method: "POST" });
     assert.equal(post.status, 401);
+    assert.equal((await get(base, "/api/admin/orders/DB-20261030-K7M2QX/whatsapp")).status, 401, "the WhatsApp message needs a login");
   } finally {
     close();
   }
@@ -125,6 +126,7 @@ test("staff can use only the kitchen: owner pages redirect to /owner/login and o
     assert.equal((await get(base, "/api/admin/orders/live", staff)).status, 200);
     const move = await fetch(`${base}/api/admin/orders/not-an-id/status`, { method: "POST", headers: { cookie: staff } });
     assert.equal(move.status, 400, "past the guard: only the order ID is wrong");
+    assert.equal((await get(base, "/api/admin/orders/not-an-id/whatsapp", staff)).status, 400, "staff get past the WhatsApp guard");
     for (const url of OWNER_PAGES) {
       const res = await get(base, url, staff);
       assert.equal(res.status, 302, url);
