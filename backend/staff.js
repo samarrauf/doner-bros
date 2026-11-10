@@ -1,16 +1,10 @@
-// Doner Bros — staff dashboard: the /staff page and the API it uses to list orders from Supabase
-// and move them through NEW -> PREPARING -> READY -> COMPLETED. Everything here is behind the
-// staff password (STAFF_PASSWORD in .env), checked on the server.
-
-const crypto = require("crypto");
-const path = require("path");
-const { rateLimitKey, createMemoryRateLimiter } = require("./rate-limit");
+// Doner Bros — the order-list API: lists orders from Supabase and moves them through
+// NEW -> PREPARING -> READY -> COMPLETED. Behind a kitchen or owner session (auth.js), checked on
+// the server. The old /staff page now redirects to /kitchen/login (auth.js).
 
 const STATUS_FLOW = ["NEW", "PREPARING", "READY", "COMPLETED"];
 const ORDER_ID_PATTERN = /^DB-\d{8}-[A-HJ-NP-Z2-9]{6}$/;
 const MAX_ORDERS = 100;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILED_LOGINS = 10;
 const ORDER_FIELDS =
   "order_id, created_at, status, order_type, customer_name, customer_phone, delivery_address, delivery_unit, " +
   "delivery_instructions, pickup_time, items, subtotal_paisa, discount_paisa, tax_paisa, delivery_fee_paisa, total_paisa, chat_session_id";
@@ -21,54 +15,15 @@ function nextStatus(status) {
   return index >= 0 && index < STATUS_FLOW.length - 1 ? STATUS_FLOW[index + 1] : null;
 }
 
-// HTTP Basic auth: any username, the staff password. Compared in constant time.
-function isStaffPassword(authorizationHeader, password) {
-  const match = /^Basic ([A-Za-z0-9+/=]+)$/.exec(String(authorizationHeader || ""));
-  if (!match || !password) return false;
-  const decoded = Buffer.from(match[1], "base64").toString("utf8");
-  const given = decoded.slice(decoded.indexOf(":") + 1);
-  const a = crypto.createHash("sha256").update(given).digest();
-  const b = crypto.createHash("sha256").update(password).digest();
-  return crypto.timingSafeEqual(a, b);
-}
-
-// rateLimiter: from rate-limit.js, so failures are counted across every copy of the server.
-function createLoginLimiter(rateLimiter, { windowMs = LOGIN_WINDOW_MS, maxFailures = MAX_FAILED_LOGINS } = {}) {
-  const key = (ip) => rateLimitKey("staff-login", ip);
-  return {
-    isBlocked: async (ip, now) => (await rateLimiter.hit(key(ip), windowMs, false, now)) >= maxFailures,
-    recordFailure: (ip, now) => rateLimiter.hit(key(ip), windowMs, true, now),
-  };
-}
-
 // app: the Express app. client: Supabase client using the service role key, or null if not set up.
-// rateLimiter: from rate-limit.js; in memory if not given.
-function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createMemoryRateLimiter() }) {
-  const limiter = createLoginLimiter(rateLimiter);
-
-  async function requireStaff(req, res, next) {
-    res.setHeader("Cache-Control", "no-store"); // customer details must not be cached
-    if (!password) return res.status(503).json({ error: "Staff dashboard isn't set up: add STAFF_PASSWORD to .env." });
-    let allowed;
-    try {
-      if (await limiter.isBlocked(req.ip)) return res.status(429).json({ error: "Too many wrong passwords. Try again in 15 minutes." });
-      allowed = isStaffPassword(req.headers.authorization, password);
-      if (!allowed && req.headers.authorization) await limiter.recordFailure(req.ip);
-    } catch (error) {
-      console.error("Staff login limit check failed:", error.code || error.message);
-      return res.status(503).json({ error: "Couldn't check the password right now. Try again in a minute." });
-    }
-    if (allowed) return next();
-    res.setHeader("WWW-Authenticate", 'Basic realm="Doner Bros staff", charset="UTF-8"');
-    return res.status(401).json({ error: "Staff password required." });
-  }
+// requireKitchen: from auth.js (a staff or owner session).
+function addStaffRoutes(app, { client, requireKitchen }) {
+  const requireStaff = requireKitchen;
 
   function requireDatabase(req, res, next) {
     if (!client) return res.status(503).json({ error: "Orders database isn't configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)." });
     return next();
   }
-
-  app.get("/staff", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "index.html")));
 
   // Active orders (not completed), oldest first so the kitchen works top down; or recent completed ones.
   app.get("/api/staff/orders", requireStaff, requireDatabase, async (req, res) => {
@@ -110,7 +65,7 @@ function addStaffRoutes(app, { client, password, adminDir, rateLimiter = createM
     res.json({ order: data });
   });
 
-  return { requireStaff, requireDatabase };
+  return { requireDatabase };
 }
 
-module.exports = { STATUS_FLOW, nextStatus, isStaffPassword, createLoginLimiter, addStaffRoutes };
+module.exports = { STATUS_FLOW, nextStatus, addStaffRoutes };

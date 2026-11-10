@@ -1,5 +1,5 @@
 // Doner Bros — kitchen order board: the /admin/kitchen page and the one route it uses to change an
-// order's status. Behind the staff password (requireStaff, checked on the server). The board reads
+// order's status. Behind a kitchen or owner session (requireKitchen from auth.js, checked on the server). The board reads
 // its orders from /api/admin/orders/live (admin-stats.js).
 //
 // The database trigger in supabase/migrations/0004_kitchen.sql stamps the time of every change.
@@ -17,7 +17,8 @@ function isAllowedMove(from, to) {
   return to === nextStatus(from) || to === PREVIOUS[from] || to === "CANCELLED";
 }
 
-function addKitchenRoutes(app, { client, requireStaff, requireDatabase, adminDir }) {
+function addKitchenRoutes(app, { client, requireKitchen, requireDatabase, adminDir }) {
+  const requireStaff = requireKitchen;
   app.get("/admin/kitchen", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen.html")));
   // The board's alert rules (when to ring and remind), shared with the tests.
   app.get("/admin/kitchen-alerts.js", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "kitchen-alerts.js")));

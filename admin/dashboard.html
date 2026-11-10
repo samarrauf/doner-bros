@@ -66,6 +66,13 @@
     .top-links { display: flex; gap: 14px; font-size: var(--t-xs); }
     .top-links a { color: var(--muted); text-decoration: none; }
     .top-links a:hover { color: var(--ink); }
+    .top-links { align-items: center; }
+    .logout {
+      display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border-radius: 999px;
+      border: 1px solid var(--border); background: transparent; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .logout svg { width: 15px; height: 15px; }
+    .logout:hover { border-color: var(--accent); }
 
     /* ---------- Filter row: the only controls above the panels ---------- */
     .filters { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
@@ -306,8 +313,8 @@
       </div>
       <nav class="top-links" aria-label="Other staff pages">
         <a href="/admin/kitchen">Kitchen board</a>
-        <a href="/staff">Order list</a>
         <a href="/admin/photos">Menu photos</a>
+        <button class="logout" id="logout" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>Log out</button>
       </nav>
     </div>
   </header>
@@ -511,12 +518,28 @@
       return { from, to };
     }
 
+
+    /* ---------- Log out ---------- */
+    document.getElementById("logout").addEventListener("click", async () => {
+      document.getElementById("logout").disabled = true;
+      let target = "/owner/login";
+      try {
+        const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+        const data = await res.json();
+        if (data && typeof data.next === "string" && data.next.startsWith("/") && !data.next.startsWith("//")) target = data.next;
+      } catch { /* the cookie may still be cleared; go to the login page either way */ }
+      location.assign(target);
+    });
+
     /* ---------- API ---------- */
     class ApiError extends Error {}
     async function api(path) {
       // Resolved against the origin, which never carries a user:password@ part from the address bar.
       const res = await fetch(new URL(path, location.origin), { cache: "no-store", credentials: "same-origin" });
-      if (res.status === 401) throw new ApiError("Your sign-in has expired. Reload the page to sign in again.");
+      if (res.status === 401 || res.status === 403) {
+        location.assign(`/owner/login?next=${encodeURIComponent(location.pathname)}`);
+        throw new ApiError("Your sign-in has expired. Opening the login page…");
+      }
       let body = null;
       try { body = await res.json(); } catch { /* not JSON */ }
       if (!res.ok) throw new ApiError((body && body.error) || "Couldn't load this right now.");

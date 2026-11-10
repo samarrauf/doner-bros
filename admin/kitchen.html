@@ -67,6 +67,13 @@
       background: var(--card); font-size: 1.25rem; line-height: 1; padding: 0;
     }
     .sound[aria-pressed="false"] { opacity: 0.7; }
+    .logout {
+      flex: none; min-width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px;
+      border-radius: 999px; border: 2px solid var(--line); background: transparent; color: var(--text); font: 700 0.9375rem var(--font-body); cursor: pointer;
+    }
+    .logout svg { width: 18px; height: 18px; }
+    .logout:hover { border-color: var(--accent); color: var(--accent); }
+    @media (max-width: 480px) { .logout { padding: 0; } .logout span { display: none; } }
 
     .notice { flex: none; padding: 6px var(--edge); font-size: 0.9375rem; font-weight: 700; text-align: center; }
     .notice.warn { background: #2c2416; color: #ffe2a8; border-bottom: 1px solid #4a3a1c; }
@@ -203,6 +210,12 @@
       transition: opacity 0.4s ease, visibility 0.4s;
     }
     .start.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    /* Session ended: the same full-screen look, above everything, until staff log in again. */
+    .start.ended { z-index: 60; }
+    .start.ended[hidden] { display: none; }
+    .start.ended h2 { color: #fff; }
+    .start.ended .warn-line { margin: 0; padding: 10px 18px; border-radius: 12px; background: var(--late-bg); color: #fff; font: 700 clamp(1rem, 0.9rem + 0.6vw, 1.3rem)/1.35 var(--font-body); }
+    a.start-btn { text-decoration: none; }
     /* Two soft warm lights drifting slowly behind the content. */
     .start::before, .start::after {
       content: ""; position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(60px); opacity: 0.35; pointer-events: none;
@@ -281,6 +294,7 @@
     <span class="status" id="status" role="status" aria-live="polite">Loading…</span>
     <span class="clock" id="clock" aria-hidden="true"></span>
     <button class="sound" id="mute" type="button" aria-pressed="true" aria-label="Sound is on. Turn sound off">🔔</button>
+    <button class="logout" id="logout" type="button" aria-label="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg><span>Log out</span></button>
   </header>
   <div class="notice warn" id="threshold-notice" hidden>Card colours are off: set kitchen_amber_minutes and kitchen_red_minutes in settings.</div>
   <div class="notice err" id="error" role="alert" hidden></div>
@@ -343,6 +357,22 @@
     <p class="start-foot">Keep this screen open and awake all day.</p>
   </div>
 
+  <!-- Shown when the server no longer accepts this board's login (expired or rejected). The board
+       stops polling and keeps a reminder sound going until someone logs in again. -->
+  <div class="start ended" id="ended" role="alertdialog" aria-modal="true" aria-labelledby="ended-title" aria-describedby="ended-lead" hidden>
+    <div class="start-inner">
+      <img class="start-logo" src="/images/logo.png" alt="Doner Bros" width="168" height="168">
+      <h2 id="ended-title">Session ended - log in again</h2>
+      <p class="warn-line">New orders are not showing until you log in.</p>
+      <p class="lead" id="ended-lead">Ask the owner for the kitchen password if you don't have it.</p>
+      <a class="start-btn" id="ended-btn" href="/kitchen/login?next=%2Fadmin%2Fkitchen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+        Log in again
+      </a>
+    </div>
+    <p class="start-foot">Your sound and column settings are kept.</p>
+  </div>
+
   <script src="/admin/kitchen-alerts.js"></script>
   <script>
   (() => {
@@ -356,6 +386,8 @@
     // Remembered for this browser session only.
     const MUTE_KEY = "kitchen.muted";
     const STARTED_KEY = "kitchen.started";
+    const TAB_KEY = "kitchen.tab";
+    const ENDED_PING_MS = 30000; // while the session has ended, a reminder ping this often
 
     const $ = (id) => document.getElementById(id);
     // Every value is added as text, never as HTML, so nothing a customer typed can run as markup.
@@ -387,6 +419,7 @@
       detector: createNewOrderDetector(),
       lastPingAt: null,
       muted: session.get(MUTE_KEY) === "1",
+      ended: false,          // the server stopped accepting this board's login
     };
 
     const now = () => Date.now() + state.clockOffsetMs;
@@ -484,7 +517,7 @@
     /* ---------- START KITCHEN screen ---------- */
     let startShown = true; // the page opens with it showing
     function showStart() {
-      if (startShown) return;
+      if (startShown || state.ended) return;
       startShown = true;
       const again = session.get(STARTED_KEY) === "1";
       $("start-title").textContent = again ? "Sound is paused" : "Kitchen is ready to open";
@@ -528,6 +561,19 @@
       } catch { /* not allowed (e.g. battery saver): the board still works */ }
     }
 
+
+    /* ---------- Log out ---------- */
+    $("logout").addEventListener("click", async () => {
+      $("logout").disabled = true;
+      let target = "/kitchen/login";
+      try {
+        const res = await fetch("/api/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+        const data = await res.json();
+        if (data && typeof data.next === "string" && data.next.startsWith("/") && !data.next.startsWith("//")) target = data.next;
+      } catch { /* the cookie may still be cleared; go to the login page either way */ }
+      location.assign(target);
+    });
+
     /* ---------- API ---------- */
     class ApiError extends Error {}
     async function api(path, body) {
@@ -538,7 +584,10 @@
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (res.status === 401) throw new ApiError("Signed out. Reload the page to sign in again.");
+      if (res.status === 401) {
+        sessionEnded();
+        throw Object.assign(new ApiError("Session ended. Log in again."), { ended: true });
+      }
       let data = null;
       try { data = await res.json(); } catch { /* not JSON */ }
       if (!res.ok) throw Object.assign(new ApiError((data && data.error) || "Couldn't reach the server."), { status: res.status });
@@ -552,11 +601,30 @@
       el.hidden = false;
     }
 
+    /* ---------- Session ended ---------- */
+    // Never fails silently: stop polling (the data would be stale), cover the board with a clear
+    // message and a login button, and keep sound going so someone notices. Sound, mute and column
+    // choices stay in sessionStorage, so the board comes back the same after logging in.
+    let endedPings = null;
+    function sessionEnded() {
+      if (state.ended) return;
+      state.ended = true;
+      clearInterval(polling);
+      polling = null;
+      hideStart(true);
+      for (const id of ["modal", "wa-modal"]) $(id).hidden = true;
+      $("ended").hidden = false;
+      $("ended-btn").focus();
+      renderStatus();
+      ring();
+      endedPings = setInterval(ping, ENDED_PING_MS);
+    }
+
     /* ---------- Board ---------- */
     let polling = null;
     let loading = false;
     async function load() {
-      if (loading) return;
+      if (loading || state.ended) return;
       loading = true;
       try {
         const data = await api("/api/admin/orders/live");
@@ -569,7 +637,7 @@
         showError(null);
         render();
       } catch (error) {
-        showError(error.message, error.message.startsWith("Signed out") ? null : load);
+        if (!error.ended) showError(error.message, load);
       } finally {
         loading = false;
         renderStatus();
@@ -589,6 +657,7 @@
 
     function startPolling() {
       clearInterval(polling);
+      if (state.ended) return;
       polling = setInterval(load, POLL_MS);
     }
 
@@ -692,7 +761,7 @@
         if (flashing && !el.classList.contains("flash")) el.classList.add("flash");
         if (!flashing && el.classList.contains("flash")) el.classList.remove("flash");
       }
-      if (state.lastOk && reminderDue(state.orders, t, state.lastPingAt)) {
+      if (!state.ended && state.lastOk && reminderDue(state.orders, t, state.lastPingAt)) {
         state.lastPingAt = t;
         ping();
       }
@@ -703,6 +772,7 @@
 
     function renderStatus() {
       const el = $("status");
+      if (state.ended) { el.textContent = "Logged out"; el.className = "status bad"; return; }
       if (!state.lastOk) { el.textContent = "Loading…"; el.className = "status"; return; }
       const age = Math.floor((Date.now() - state.lastOk) / 1000);
       const stale = age > POLL_MS / 1000 * 3;
@@ -722,7 +792,7 @@
         if (to === "COMPLETED" && order.orderType === "delivery") offerOnTheWay(order);
       } catch (error) {
         // 409: another device changed it first; the reload below shows where it is now.
-        showError(error.message);
+        if (!error.ended) showError(error.message);
       } finally {
         state.busy.delete(id);
         await load();
@@ -788,11 +858,16 @@
     $("tabs").addEventListener("click", (e) => {
       const tab = e.target.closest(".tab");
       if (!tab) return;
-      $("board").dataset.tab = tab.dataset.status;
-      for (const t of $("tabs").children) t.setAttribute("aria-selected", String(t === tab));
+      selectTab(tab.dataset.status);
+      session.set(TAB_KEY, tab.dataset.status);
       $(`c-${tab.dataset.status}`).scrollTop = 0;
       fitAll();
     });
+    function selectTab(status) {
+      $("board").dataset.tab = status;
+      for (const t of $("tabs").children) t.setAttribute("aria-selected", String(t.dataset.status === status));
+    }
+    if (STATUSES.includes(session.get(TAB_KEY))) selectTab(session.get(TAB_KEY));
 
     /* ---------- Sleep and wake ---------- */
     // A sleeping device stops timers, network and often audio. On waking: reload, restart the poll,

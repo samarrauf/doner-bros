@@ -7,7 +7,7 @@ dashboard for orders. Orders are saved to Supabase.
 
 ```
 frontend/   customer-facing site (index.html, styles.css, app.js)
-admin/      staff dashboard, served at /staff
+admin/      login pages, kitchen board, owner dashboard and photo pages
 backend/    Express server and API code
 data/       menu, pricing and restaurant details
 prompts/    AI Order Taker system prompt
@@ -42,7 +42,29 @@ cd backend
 npm start
 ```
 
-The site is at http://localhost:3000 (or the `PORT` you set) and the staff dashboard is at `/staff`.
+The site is at http://localhost:3000 (or the `PORT` you set).
+
+## Logins
+
+There are two logins, each with its own password:
+
+| Page | Who | Password | After login | Can open |
+|------|-----|----------|-------------|----------|
+| `/kitchen/login` | Kitchen staff | `STAFF_PASSWORD` | `/admin/kitchen` | The kitchen board and its APIs only (live orders, status changes, cancel) |
+| `/owner/login` | The owner | `OWNER_PASSWORD` | `/admin/dashboard` | Everything: dashboard, menu photos, analytics, conversations, CSV export, and the kitchen |
+
+- The old `/staff` address now redirects to `/kitchen/login`.
+- If kitchen staff open an owner page, they're sent to `/owner/login` and owner APIs answer 403.
+- If `OWNER_PASSWORD` is not set, owner login is off and says "Owner login is not configured". It
+  never falls back to the staff password.
+- Sessions are signed, httpOnly, Secure, SameSite=Lax cookies that slide: every successful request
+  extends them. Kitchen: 24 hours after the last request, never more than 7 days after login (the
+  board polls every 10 seconds, so it stays logged in while open). Owner: 7 days after the last
+  visit, never more than 30 days after login. Changing a password signs everyone with that role
+  out. Both pages have a **Log out** button.
+- If the kitchen board's login ends, it covers the screen with "Session ended - log in again" and
+  keeps pinging every 30 seconds; sound, mute and the chosen column are kept for after logging in.
+- After 5 wrong passwords from one IP (or 50 from all IPs together), that login locks for 15 minutes.
 
 ## Test
 
@@ -59,7 +81,8 @@ npm test
 | `GEMINI_API_KEY` | No | No longer used; kept until Stage 13. |
 | `SUPABASE_URL` | Yes | Your Supabase project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Secret. Server only, never sent to the browser. |
-| `STAFF_PASSWORD` | Yes | Password for `/staff`. Use a long, unique one. |
+| `STAFF_PASSWORD` | Yes | Kitchen login (`/kitchen/login`). Use a long, unique one. |
+| `OWNER_PASSWORD` | Yes | Owner login (`/owner/login`). Must be different from `STAFF_PASSWORD`. Owner login is off while it's empty. |
 | `PORT` | No | Defaults to 3000. |
 | `CHAT_MODEL` | No | Defaults to `claude-haiku-5-5`. |
 

@@ -23,6 +23,7 @@ const { orderFingerprint, buildOrderSummary } = require("./order-summary");
 const { checkConfirmation } = require("./confirmation");
 const { createSupabaseOrderStore, submissionKey } = require("./supabase-orders");
 const { addStaffRoutes } = require("./staff");
+const { createAuth } = require("./auth");
 const { createSupabaseSessionStore, sessionRowId } = require("./supabase-sessions");
 const { addAdminStatsRoutes } = require("./admin-stats");
 const { addKitchenRoutes } = require("./kitchen");
@@ -1425,10 +1426,22 @@ if (process.env.VERCEL) app.set("trust proxy", 1);
 app.use(express.static(FRONTEND_DIR));
 app.use(express.json({ limit: "100kb" }));
 
-// Staff dashboard at /staff, behind STAFF_PASSWORD. Uses the same server-only Supabase client.
-if (!process.env.STAFF_PASSWORD) console.warn("STAFF_PASSWORD is not set; the staff dashboard at /staff is disabled.");
-const { requireStaff, requireDatabase } = addStaffRoutes(app, { client: supabase, password: process.env.STAFF_PASSWORD, adminDir: path.join(ROOT_DIR, "admin"), rateLimiter });
-addMenuImageRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin"), getPhotoChecklist: menuService.getPhotoChecklist });
+// Admin sign-in: kitchen staff (STAFF_PASSWORD) at /kitchen/login, the owner (OWNER_PASSWORD) at
+// /owner/login. Each login is off while its password is unset; owner never falls back to staff.
+const adminPasswords = { staff: process.env.STAFF_PASSWORD || "", owner: process.env.OWNER_PASSWORD || "" };
+if (!adminPasswords.staff) console.warn("STAFF_PASSWORD is not set; kitchen login is disabled.");
+if (!adminPasswords.owner) console.warn("OWNER_PASSWORD is not set; owner login is disabled.");
+if (adminPasswords.staff && adminPasswords.staff === adminPasswords.owner) console.warn("OWNER_PASSWORD is the same as STAFF_PASSWORD; kitchen staff can open the owner pages. Use a different one.");
+const auth = createAuth({
+  passwords: adminPasswords,
+  rateLimiter,
+  adminDir: path.join(ROOT_DIR, "admin"),
+  getFooter: async () => (await menuService.getPublicSettings()).address,
+});
+auth.addRoutes(app);
+const { requireKitchen, requireOwner } = auth;
+const { requireDatabase } = addStaffRoutes(app, { client: supabase, requireKitchen });
+addMenuImageRoutes(app, { client: supabase, requireStaff: requireOwner, requireDatabase, adminDir: path.join(ROOT_DIR, "admin"), getPhotoChecklist: menuService.getPhotoChecklist });
 
 // Public and read-only. Not cached by browsers: the service's own cache already sets how fresh it is.
 function menuRoute(read) {
@@ -1442,9 +1455,9 @@ function menuRoute(read) {
     }
   };
 }
-// Owner dashboard data, all behind the staff password.
-addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings, getDeliveryEta: menuService.getDeliveryEta });
-addKitchenRoutes(app, { client: supabase, requireStaff, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
+// Owner dashboard data behind an owner session; the kitchen's live feed also opens to kitchen staff.
+addAdminStatsRoutes(app, { requireOwner, requireKitchen, requireDatabase, analytics, conversations, adminDir: path.join(ROOT_DIR, "admin"), getKitchenSettings: menuService.getKitchenSettings, getDeliveryEta: menuService.getDeliveryEta });
+addKitchenRoutes(app, { client: supabase, requireKitchen, requireDatabase, adminDir: path.join(ROOT_DIR, "admin") });
 
 app.get("/api/menu", menuRoute(menuService.getPublicMenu));
 app.get("/api/menu/health", menuRoute(menuService.getHealth));

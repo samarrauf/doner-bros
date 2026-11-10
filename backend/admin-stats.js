@@ -1,14 +1,15 @@
 // Doner Bros — owner dashboard API: sales figures and AI Order Taker chats. Every route is behind
-// the staff password (requireStaff, checked on the server), so a request without it gets 401.
+// an owner session (requireOwner, auth.js), except the kitchen board's live feed, which a kitchen
+// session may read too (requireKitchen). Checked on the server: 401 signed out, 403 wrong role.
 // Dates are "YYYY-MM-DD" Asia/Karachi days; with none given, the range is today in Karachi.
 
 const path = require("path");
 
-function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, conversations, adminDir, getKitchenSettings, getDeliveryEta = async () => null }) {
-  const guard = [requireStaff, requireDatabase];
+function addAdminStatsRoutes(app, { requireOwner, requireKitchen, requireDatabase, analytics, conversations, adminDir, getKitchenSettings, getDeliveryEta = async () => null }) {
+  const guard = [requireOwner, requireDatabase];
 
   // The owner dashboard page itself.
-  app.get("/admin/dashboard", requireStaff, (req, res) => res.sendFile(path.join(adminDir, "dashboard.html")));
+  app.get("/admin/dashboard", requireOwner, (req, res) => res.sendFile(path.join(adminDir, "dashboard.html")));
 
   // Runs read(req) and sends its JSON. A bad date range is the caller's fault (400).
   const route = (label, read) => async (req, res) => {
@@ -34,7 +35,7 @@ function addAdminStatsRoutes(app, { requireStaff, requireDatabase, analytics, co
   app.get("/api/admin/stats/customers", ...guard, route("customers", (req) => analytics.getRepeatCustomers(q(req, "from"), q(req, "to"))));
   // The kitchen board's feed: open orders plus its amber/red thresholds and the delivery time for
   // the "on the way" message (each null if not set).
-  app.get("/api/admin/orders/live", ...guard, route("live orders", async () => {
+  app.get("/api/admin/orders/live", requireKitchen, requireDatabase, route("live orders", async () => {
     const [live, thresholds, deliveryEta] = await Promise.all([
       analytics.getLiveOrders(), getKitchenSettings().catch(() => null), getDeliveryEta().catch(() => null)]);
     return { ...live, thresholds, deliveryEta };

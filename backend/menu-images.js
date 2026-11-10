@@ -1,4 +1,4 @@
-// Doner Bros — admin endpoints for menu photos. Staff password only (requireStaff from staff.js).
+// Doner Bros — admin endpoints for menu photos. Owner session only (requireOwner from auth.js).
 // Every upload is decoded and re-encoded here, so what reaches the bucket is always a webp we made,
 // never the file as sent. Re-encoding also drops EXIF data, including any GPS location from a phone.
 
@@ -69,7 +69,7 @@ function rejectCrossSite(req, res, next) {
   return res.status(403).json({ error: "This request came from another site." });
 }
 
-// client: Supabase client using the service role key. requireStaff, requireDatabase: from addStaffRoutes.
+// client: Supabase client using the service role key. requireStaff: the owner guard from auth.js. requireDatabase: from addStaffRoutes.
 // adminDir: folder holding photos.html. getPhotoChecklist: from the menu service.
 function addMenuImageRoutes(app, { client, requireStaff, requireDatabase, adminDir, getPhotoChecklist }) {
   const bucket = () => client.storage.from(BUCKET);
