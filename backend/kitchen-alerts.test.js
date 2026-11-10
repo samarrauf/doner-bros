@@ -2,7 +2,9 @@
 // order waiting in New gets a reminder ping.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { CONFIG, createNewOrderDetector, reminderDue } = require("../admin/kitchen-alerts");
+const fs = require("node:fs");
+const path = require("node:path");
+const { CONFIG, createNewOrderDetector, reminderDue, startScreenNeeded } = require("../admin/kitchen-alerts");
 
 const order = (orderId, status = "NEW", at = "2026-11-10T10:00:00Z") => ({ orderId, status, createdAt: at, statusChangedAt: at });
 const ID_A = "DB-20261110-AAAAAA";
@@ -75,4 +77,23 @@ test("the timings live in one config object and can't be changed by accident", (
   assert.ok(Object.isFrozen(CONFIG));
   assert.ok(CONFIG.RING_MS >= 2500 && CONFIG.RING_MS <= 3500, "ring lasts about 3 seconds");
   assert.equal(CONFIG.REMINDER_AFTER_MS, 2 * 60 * 1000);
+});
+
+test("the START screen shows while sound is wanted but the browser blocks it", () => {
+  for (const audioState of ["none", "suspended", "interrupted", "closed"]) {
+    assert.equal(startScreenNeeded({ audioState, muted: false }), true, audioState);
+  }
+});
+
+test("the START screen goes away once sound is allowed, or if staff turned sound off", () => {
+  assert.equal(startScreenNeeded({ audioState: "running", muted: false }), false);
+  assert.equal(startScreenNeeded({ audioState: "suspended", muted: true }), false);
+});
+
+test("the board has a START screen and no 'sound blocked' bar", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "admin", "kitchen.html"), "utf8");
+  assert.match(html, /id="start-btn"/);
+  assert.match(html, /Start kitchen/);
+  assert.doesNotMatch(html, /id="sound-notice"/);
+  assert.match(html, /startScreenNeeded/, "the board uses the tested rule");
 });

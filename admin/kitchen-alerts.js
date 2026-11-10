@@ -48,5 +48,11 @@
     return lastPingMs === null || lastPingMs === undefined || nowMs - lastPingMs >= config.REMINDER_EVERY_MS;
   }
 
-  return { CONFIG, createNewOrderDetector, reminderDue };
+  // The full-screen START KITCHEN overlay is needed whenever sound is wanted but the browser has not
+  // let it play yet: on first open, and again if the audio is suspended later and can't resume.
+  function startScreenNeeded({ audioState, muted }) {
+    return !muted && audioState !== "running";
+  }
+
+  return { CONFIG, createNewOrderDetector, reminderDue, startScreenNeeded };
 });
