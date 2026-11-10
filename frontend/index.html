@@ -121,6 +121,7 @@
     <symbol id="i-scooter" viewBox="0 0 24 24"><circle cx="6" cy="17" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="17" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 17h6l-2-8h3M13 9l-1-3H9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 2.5v3.5M9 2.5h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><rect x="4" y="6" width="16" height="13" rx="4" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="9" cy="12" r="2" fill="currentColor"/><circle cx="15" cy="12" r="2" fill="currentColor"/><path d="M9.5 15.8h5M2 10.5v5M22 10.5v5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l-1 13H6L5 8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
   </svg>
 
@@ -209,6 +210,19 @@
           <li><a href="#visit">Visit</a></li>
         </ul>
       </nav>
+
+      <!-- Staff and owner sign-in. Links only to the login pages, never straight to /admin pages. -->
+      <div class="login-menu" id="login-menu">
+        <button type="button" class="login-btn" id="login-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="login-list" aria-label="Login">
+          <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
+          <span class="login-btn-text">Login</span>
+          <svg class="icon icon-sm login-caret" aria-hidden="true"><use href="#i-chevron"/></svg>
+        </button>
+        <ul class="login-list" id="login-list" role="menu" aria-labelledby="login-btn" hidden>
+          <li role="none"><a role="menuitem" href="/kitchen/login" rel="nofollow">Kitchen (Staff)</a></li>
+          <li role="none"><a role="menuitem" href="/owner/login" rel="nofollow">Owner</a></li>
+        </ul>
+      </div>
 
       <a class="btn btn-small header-call" data-phone-link>
         <svg class="icon"><use href="#i-phone"/></svg>
@@ -336,6 +350,8 @@
           <li><a href="#about">About</a></li>
           <li><a href="#visit">Hours &amp; Location</a></li>
           <li><a data-phone-link data-phone-text></a></li>
+          <li class="footer-login"><a href="/kitchen/login" rel="nofollow">Staff login</a></li>
+          <li class="footer-login"><a href="/owner/login" rel="nofollow">Owner login</a></li>
         </ul>
       </nav>
     </div>

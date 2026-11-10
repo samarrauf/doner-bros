@@ -353,6 +353,103 @@ select {
   color: var(--accent);
 }
 
+/* ---------- Login menu (staff and owner) ---------- */
+
+/* Quiet outline style, so it never competes with the orange Call to order button. */
+.login-menu {
+  position: relative;
+  flex: none;
+}
+
+.login-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.login-btn:hover,
+.login-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--white);
+}
+
+.login-caret {
+  transition: transform 0.2s;
+}
+
+.login-btn[aria-expanded="true"] .login-caret {
+  transform: rotate(180deg);
+}
+
+.login-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 70;
+  min-width: 190px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: var(--charcoal);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.login-list[hidden] {
+  display: none;
+}
+
+.login-list a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  color: var(--white);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.login-list a:hover,
+.login-list a:focus-visible {
+  background: rgba(245, 166, 35, 0.16);
+  color: var(--accent);
+  outline: none;
+}
+
+/* Phones: an icon-only button with the same dropdown. */
+@media (max-width: 767px) {
+  .login-btn {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .login-btn-text,
+  .login-caret {
+    display: none;
+  }
+}
+
+.footer-links .footer-login a {
+  font-size: var(--text-sm);
+  color: rgba(255, 255, 255, 0.55);
+}
+
 /* ---------- Location popup ---------- */
 
 .location-modal {
@@ -1128,7 +1225,7 @@ address {
     display: none;
   }
 
-  .header-call {
+  .login-menu {
     margin-left: auto;
   }
 

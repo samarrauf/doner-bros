@@ -484,6 +484,79 @@ async function loadMenu() {
   }
 }
 
+/* ---------- Login menu (staff and owner) ---------- */
+
+// A small menu button: Enter, Space or ArrowDown opens it on the first item; arrows, Home and End
+// move between items; Escape closes it and returns focus to the button; Tab or a click outside closes it.
+function setupLoginMenu() {
+  const menu = document.getElementById("login-menu");
+  const button = document.getElementById("login-btn");
+  const list = document.getElementById("login-list");
+  if (!menu || !button || !list) {
+    return;
+  }
+  const items = () => Array.from(list.querySelectorAll('[role="menuitem"]'));
+  const isOpen = () => button.getAttribute("aria-expanded") === "true";
+
+  function open(focusIndex) {
+    list.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    if (focusIndex !== undefined) {
+      const all = items();
+      all[(focusIndex + all.length) % all.length].focus();
+    }
+  }
+
+  function close(returnFocus) {
+    if (!isOpen()) {
+      return;
+    }
+    list.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    if (returnFocus) {
+      button.focus();
+    }
+  }
+
+  button.addEventListener("click", () => (isOpen() ? close(false) : open(0)));
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      open(0);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      open(-1);
+    }
+  });
+
+  list.addEventListener("keydown", (event) => {
+    const all = items();
+    const index = all.indexOf(document.activeElement);
+    const moves = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: all.length - 1 };
+    if (event.key in moves) {
+      event.preventDefault();
+      all[(moves[event.key] + all.length) % all.length].focus();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close(true);
+    } else if (event.key === "Tab") {
+      close(false);
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!menu.contains(event.target)) {
+      close(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isOpen()) {
+      close(true);
+    }
+  });
+}
+
 applyPhone(FALLBACK_WHATSAPP);
+setupLoginMenu();
 setupLocationPopup();
 loadMenu();
