@@ -124,3 +124,27 @@ Regression tests for the extra changes:
 | Confirmation words (owner's rule, 2026-11-10): "haan", "ji", "theek hai", "confirm", "ok kar do" place the order; a bare "ok" or "theek" does not | `backend/confirmation.test.js`: "haan, ji, theek hai, confirm and ok kar do place the order"; `backend/chat-confirm.test.js`: one test per phrase, through `/api/chat`, counting saved orders |
 | A yes with a change never places the order ("yes but add a drink", "haan lekin pehle total batao") | `backend/confirmation.test.js`: "a yes that also asks for a change…"; `backend/chat-confirm.test.js`: `"… does NOT place the order"` |
 | Two yes messages place one order | `backend/chat-confirm.test.js`: "two yes messages one after the other…" and "two yes messages sent at the same time (a double tap)…" |
+
+## Follow-up: budget lists cut short (found on the Preview)
+
+**Cause:**
+- `find_items_within_budget` sorted every matching item cheapest first and cut the list at 15. It returned only a bare `more` count, with no price range and no instruction to mention it.
+- Under Rs 1,000, 53 items match, but only items up to Rs 390 were shown, so whole categories were hidden.
+
+**Fix:**
+- Results are grouped by category, with each category's 2 cheapest items, so no category is ever hidden.
+- The server counts what isn't shown and writes `notShown` (the count, the price range from and to, and the categories) and a `moreLine`, e.g. "...and 8 more items between Rs 90 and Rs 450. Would you like to see them by category (...)?".
+- If a reply leaves out that count or the top amount, the server adds `moreLine` itself.
+- Asking for one category by its slug lists that category in full.
+
+| Check | Test |
+|---|---|
+| A capped list carries the count, the range and the categories; its amounts pass the guard | `backend/chat-audit.test.js`: "a capped budget list carries the server's count and price range…" |
+| The reply mentions it (added by the server if missing; not added twice) | "…leaves out the more line gets the server's line added", "…isn't given the line twice" |
+| Nothing cut means no more line | "a budget list with nothing cut has no more line", "a reply to an uncapped list is sent as it is" |
+| A typed price change is still blocked | "with the budget tool in play, a typed price change is still blocked by the guard" |
+
+Live runs on `claude-haiku-5-5` passed, about $0.002 and 2 model calls each:
+- "under Rs 500": 8 more, between Rs 90 and Rs 450.
+- "500 se kam": the same, in Roman Urdu.
+- "under 1000": 29 more, between Rs 90 and Rs 990.
