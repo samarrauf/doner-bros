@@ -7,6 +7,9 @@
   <meta name="theme-color" content="#111111">
   <title>Kitchen Board</title>
   <link rel="icon" type="image/png" href="/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
   <style>
     /* Built for a cheap tablet in a bright food court: light background, near-black text, strong
        status colours, everything big enough to read from a metre away, nothing that needs hover. */
@@ -24,7 +27,11 @@
       --delivery: #6d28d9;
       --pickup: #0b0b0b;
       --gap: 12px;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      /* Same type as the customer site: Karla for text, Playfair Display for headings,
+         Noto Naskh Arabic for any Urdu script. */
+      --font-body: "Karla", "Noto Naskh Arabic", "Noto Nastaliq Urdu", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --font-display: "Playfair Display", "Noto Naskh Arabic", "Noto Nastaliq Urdu", Georgia, "Times New Roman", serif;
+      font-family: var(--font-body);
       -webkit-text-size-adjust: 100%;
     }
     * { box-sizing: border-box; }
@@ -34,7 +41,7 @@
 
     /* ---------- Top bar ---------- */
     .bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #111; color: #fff; flex: none; }
-    .bar h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.01em; }
+    .bar h1 { margin: 0; font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
     .bar .clock { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
     .status { font-size: 18px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: #2a2a2a; }
     .status.bad { background: var(--red-bg); }
@@ -96,6 +103,7 @@
     .modal[hidden] { display: none; }
     .dialog { background: #fff; color: #000; border-radius: 16px; padding: 24px; width: min(560px, 100%); display: flex; flex-direction: column; gap: 20px; border: 4px solid #000; }
     .dialog p { margin: 0; font-size: 28px; font-weight: 800; line-height: 1.25; }
+    .dialog > p:first-child { font-family: var(--font-display); font-weight: 700; }
     .dialog .row button { flex: 1; min-height: 76px; border-radius: 12px; font-size: 26px; font-weight: 900; border: 3px solid #000; }
     .dialog .yes { background: #000; color: #fff; }
     .dialog .yes.danger { background: var(--red-bg); border-color: var(--red-bg); }
