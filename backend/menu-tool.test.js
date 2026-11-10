@@ -48,8 +48,8 @@ function fakeClient(tables, error = null) {
 
 test.beforeEach(() => menuService.setClient(fakeClient(TABLES)));
 
-test("exposes exactly the five menu tools, none of which takes a price", () => {
-  assert.deepEqual(MENU_TOOL_NAMES, ["list_categories", "list_items", "search_items", "get_item", "list_deals"]);
+test("exposes exactly the six menu tools, none of which takes a price", () => {
+  assert.deepEqual(MENU_TOOL_NAMES, ["list_categories", "list_items", "search_items", "get_item", "find_items_within_budget", "list_deals"]);
   for (const tool of MENU_TOOLS) {
     const inputs = Object.keys(tool.parametersJsonSchema?.properties || {});
     assert.ok(!inputs.some((name) => /price|paisa|amount|total/i.test(name)), `${tool.name} takes a price`);
@@ -108,7 +108,7 @@ test("list_deals gives only available deals, with their contents", async () => {
 test("a failed read tells the model to give up on the menu, with no items", async () => {
   menuService.setClient(fakeClient(TABLES, new Error("down")));
   for (const name of MENU_TOOL_NAMES) {
-    const result = await runMenuTool(name, { category_slug: "alpha", text: "red", item_id: "i-1" });
+    const result = await runMenuTool(name, { category_slug: "alpha", text: "red", item_id: "i-1", max_rupees: 500 });
     assert.equal(result.error, "menu_unavailable", name);
     assert.ok(!JSON.stringify(result).includes("Widget"));
   }

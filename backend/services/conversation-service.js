@@ -240,4 +240,11 @@ function createConversationService({ client, now = () => new Date() }) {
   };
 }
 
-module.exports = { createConversationService, normaliseQuery, topQueries, SESSION_ID_PATTERN };
+// Logged as the assistant's side of a turn that failed, so the chat log shows the customer got no
+// answer and why. Only the failure kind from classifyModelError: never the error text or request.
+function failedTurnNote(failure) {
+  const kind = /^[a-z_]{1,30}$/.test(String(failure)) ? failure : "other";
+  return `[no reply: the AI Order Taker failed (${kind}); the customer was shown an error message]`;
+}
+
+module.exports = { createConversationService, normaliseQuery, topQueries, failedTurnNote, SESSION_ID_PATTERN };

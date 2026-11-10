@@ -28,13 +28,14 @@ const { createSupabaseSessionStore, sessionRowId } = require("./supabase-session
 const { addAdminStatsRoutes } = require("./admin-stats");
 const { addKitchenRoutes } = require("./kitchen");
 const { createAnalyticsService } = require("./services/analytics-service");
-const { createConversationService } = require("./services/conversation-service");
+const { createConversationService, failedTurnNote } = require("./services/conversation-service");
 const { rateLimitKey, createMemoryRateLimiter, createSupabaseRateLimiter } = require("./rate-limit");
 const { addMenuImageRoutes } = require("./menu-images");
 const {
   createMemorySessionStore,
   upgradeOrderState,
   recordOrderAttempt,
+  startNewOrderIfSubmitted,
   addToCart,
   isClickApplied,
   recordClick,
@@ -257,7 +258,12 @@ async function formatOrderState(state) {
       : `, to ${deliveryAddress}${deliveryUnit ? `, ${deliveryUnit}` : ""}`;
   const summary = [...lines, `For ${state.orderType}${when}. For its total, call get_order_totals.`].join("\n");
   if (state.status === "saved") {
-    return `Order ${state.orderNumber} was saved in this chat:\n${summary}\nDon't submit it again. For changes, the customer must call. Only submit a new order if they clearly ask for a separate one.`;
+    return (
+      `Order ${state.orderNumber} was saved in this chat:\n${summary}\nDon't submit it again, and never say it can be changed in chat. ` +
+      "To change or cancel it, or to ask where it is, the customer must message the WhatsApp number in <contact>. If they want " +
+      "another order, call addItemToCart or setPickupDetails/setDeliveryDetails as usual: that starts a new, separate order " +
+      "with an empty cart, and the saved order stays as it is."
+    );
   }
   return `The last order could not be saved, and the customer was told to call:\n${summary}\nOnly submit it again if the customer asks to retry.`;
 }
@@ -768,10 +774,20 @@ const SET_PICKUP_DETAILS_TOOL = {
   },
 };
 
+// After a submitted order, details are for a new, separate order. Nothing is reset until the details
+// pass their checks, so a typo can't wipe the record of the order just placed.
+function newOrderFields(started, previousOrderNumber) {
+  if (!started) return {};
+  return {
+    newOrderStarted: true,
+    newOrderInstruction:
+      `This starts a new, separate order. ${previousOrderNumber ? `Order ${previousOrderNumber}` : "The earlier order"} is ` +
+      "unchanged. If the customer wanted to change or cancel that earlier order, tell them to message the WhatsApp number " +
+      "in <contact>. Otherwise ask which items they want in the new order, unless they already said.",
+  };
+}
+
 function setPickup(args, orderState) {
-  if (orderState.status === "saved" || orderState.status === "not_saved") {
-    return { saved: false, error: "that order was already submitted, so its details can't be changed in chat." };
-  }
   const checked = validatePickupDetails(args);
   if (checked.error) {
     return { saved: false, error: checked.error, instruction: "Nothing was changed. Ask the customer to check it; don't guess." };
@@ -787,9 +803,12 @@ function setPickup(args, orderState) {
     details.pickupTime = time.time;
   }
 
+  const previousOrderNumber = orderState.orderNumber;
+  const started = startNewOrderIfSubmitted(orderState);
   setPickupDetails(orderState, details);
   const missing = missingCheckoutDetails(orderState);
   return {
+    ...newOrderFields(started, previousOrderNumber),
     saved: true,
     orderType: "pickup",
     customerName: orderState.customer.name,
@@ -823,20 +842,20 @@ const SET_DELIVERY_DETAILS_TOOL = {
 };
 
 function setDelivery(args, orderState) {
-  if (orderState.status === "saved" || orderState.status === "not_saved") {
-    return { saved: false, error: "that order was already submitted, so its details can't be changed in chat." };
-  }
   const checked = validateDeliveryDetails(args);
   if (checked.error) {
     return { saved: false, error: checked.error, instruction: "Nothing was changed. Ask the customer to check it; don't guess." };
   }
 
+  const previousOrderNumber = orderState.orderNumber;
+  const started = startNewOrderIfSubmitted(orderState);
   setDeliveryDetails(orderState, checked.details);
   const { name, phone, deliveryAddress, deliveryUnit, deliveryInstructions } = orderState.customer;
   const missing = missingCheckoutDetails(orderState);
   const readBack = deliveryAddressReadBack(orderState);
   const onlyConfirmationLeft = missing.length === 1 && !orderState.deliveryAddressConfirmed && readBack;
   return {
+    ...newOrderFields(started, previousOrderNumber),
     saved: true,
     orderType: "delivery",
     customerName: name,
@@ -1025,9 +1044,14 @@ async function addFromOrderButton(orderItem, orderState, turn) {
   turn.toolResults.push(result);
   if (result.added) recordClick(orderState, orderItem.click_id);
   turn.clickStatus = result.added ? "applied" : "not_added";
+  const outcome = result.added
+    ? "The server has JUST ADDED this item to the cart for the customer, because of this click. It was not in the cart " +
+      "before and this is not a repeat: never say it was already in the cart or that you didn't add it. Confirm briefly " +
+      "that it was added."
+    : "The server tried to add it but couldn't; explain why from the result.";
   return (
-    "The customer's message came from an Order button on the menu. The server has already handled it, so don't call " +
-    `addItemToCart for it. Reply to the customer using this result: ${JSON.stringify(result)}`
+    `The customer's message came from an Order button on the menu. ${outcome} Don't call addItemToCart for it. ` +
+    `Reply to the customer using this result: ${JSON.stringify(result)}`
   );
 }
 
@@ -1213,6 +1237,33 @@ function orderLogDetails(result, cartItems) {
   return `items=[${items.join(",")}] total_paisa=${total}`;
 }
 
+// A plain yes to the summary the customer was just shown places the order straight away. It goes
+// through the same checks as submit_order: reviewed as it stands, shown in the last reply, plain
+// yes, not a duplicate. This is the moment a slow or confused model reply would cost the order.
+// null means the model handles the message as usual.
+async function submitOnPlainYes(message, orderState, turn) {
+  if (orderState.status !== "open" && orderState.status !== "needs_changes") return null;
+  if (!checkConfirmation(message).confirmed || duplicateSubmission(orderState)) return null;
+  try {
+    if (await checkReviewedOrder(orderState)) return null;
+  } catch (error) {
+    if (error.code === "MENU_UNAVAILABLE") return null;
+    throw error;
+  }
+  const cartItems = [...orderState.items];
+  const result = await submitCheckedOrder({ name: SUBMIT_ORDER_TOOL.name, args: { customerConfirmed: true } }, [{ role: "user", content: message }], orderState, turn);
+  console.log(`Plain yes to the shown summary, submit_order: ${result.status} ${orderLogDetails(result, cartItems)}`);
+  if (result.status === "invalid") return null;
+  recordOrderAttempt(orderState, result);
+  if (result.status === "saved") {
+    orderState.savedOrderCount = (orderState.savedOrderCount || 0) + 1;
+    console.log(`Order ${result.orderNumber} saved.`);
+  } else {
+    console.error(`Order not saved (${result.reason}).`);
+  }
+  return result.reply;
+}
+
 // fromServer marks the server's own fixed order messages, which the price guard doesn't check.
 async function handleOrderCall(call, contents, response, orderState, turn, { system, tools }) {
   const cartItems = [...(orderState.items || [])];
@@ -1297,6 +1348,14 @@ const EARLIER_REPLIES_NOTE =
   "from a tool result at the time. Don't correct, doubt or apologise for them. Any price you state in this reply " +
   "must still come from a tool result in this turn.";
 
+// Tool results and instructions are in English, which pulls replies into English; this comes last,
+// right after the customer's message, so their language wins. A reviewOrder summary is still shown
+// exactly as returned.
+const LANGUAGE_NOTE =
+  "Write your reply in the same language and script as the customer's latest message: Roman Urdu if they wrote " +
+  "Roman Urdu, Urdu script if they wrote Urdu script, English if English. Keep item names and any reviewOrder " +
+  "summary text exactly as the tools give them.";
+
 const PRICE_CORRECTION =
   "Your last draft stated a price that did not come from a tool result in this turn, so it was not sent. Call a menu " +
   "tool or get_order_totals for any price you need, then answer. State only amounts from those results. Don't repeat a " +
@@ -1314,7 +1373,7 @@ async function askModel(history, message, orderState, turn, buttonNote) {
   const contents = toClaudeMessages(history, message);
   // Server facts about the earlier turns, as a system message right after the customer's reply,
   // where the model weighs them most. Only ever appended, so nothing before it changes.
-  const notes = [history.some((entry) => entry.role === "assistant") ? EARLIER_REPLIES_NOTE : "", formatShownSummary(orderState).trim()];
+  const notes = [history.some((entry) => entry.role === "assistant") ? EARLIER_REPLIES_NOTE : "", formatShownSummary(orderState).trim(), LANGUAGE_NOTE];
   const note = notes.filter(Boolean).join("\n");
   if (note) contents.push({ role: "system", content: note });
   const first = await runModel(contents, orderState, turn, { tools: ALL_TOOLS, correction: buttonNote });
@@ -1600,7 +1659,8 @@ app.post("/api/chat", async (req, res) => {
       });
     }
     const buttonNote = orderItem ? await addFromOrderButton(orderItem, orderState, turn) : null;
-    const reply = await askModel(conversationHistory, message.trim(), orderState, turn, buttonNote);
+    const placed = orderItem ? null : await submitOnPlainYes(message.trim(), orderState, turn);
+    const reply = placed || (await askModel(conversationHistory, message.trim(), orderState, turn, buttonNote));
     // Kept on the server, not taken from the browser's history, so confirmDeliveryAddress can
     // check what the customer was really shown.
     orderState.lastReply = reply || null;
@@ -1634,6 +1694,12 @@ app.post("/api/chat", async (req, res) => {
     logModelError(failure, error);
     // Tools may have changed the cart before the failure; keep those changes.
     const sessionSaved = await saveOrderSession(session);
+    // The failed turn goes in the chat log too, so the dashboard and audits see a message that got no reply.
+    if (sessionSaved) {
+      await recordForDashboard("failed turn log", (c) =>
+        c.logMessages(sessionRowId(session.id), [{ role: "customer", content: message.trim() }, { role: "assistant", content: failedTurnNote(failure) }])
+      );
+    }
 
     // The item went in and the only thing missing is the model's words, so say so plainly. A customer
     // left with no reply is what leads to a second click on Order.
